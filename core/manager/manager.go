@@ -9,6 +9,7 @@ import (
 var _ core.Manager = (*manager)(nil)
 
 type manager struct {
+	options   core.ManagerOptionsFetcher
 	host      core.Host                             // 主机地址
 	root      core.Process                          // 根进程
 	processes *xsync.MapOf[core.Path, core.Process] // 用于存储所有进程的映射表
@@ -18,8 +19,12 @@ func (mgr *manager) GetHost() core.Host {
 	return mgr.host
 }
 
-func (mgr *manager) init() {
+func (mgr *manager) Run() (err error) {
+	if err = mgr.initServer(); err != nil {
+		return
+	}
 
+	return
 }
 
 func (mgr *manager) RegisterProcess(process core.Process) (id core.ID, exist bool) {
@@ -81,4 +86,19 @@ func (mgr *manager) GetProcess(id core.ID) (process core.Process) {
 	} else {
 		return mgr.root
 	}
+}
+
+func (mgr *manager) initServer() error {
+	server := mgr.options.FetchServer()
+	if server == nil {
+		return nil
+	}
+
+	go func(server core.Server) {
+		for envelope := range server.GetEnvelopeChannel() {
+			mgr.GetProcess(envelope.ReceiverID()).Send(envelope)
+		}
+	}(server)
+
+	return nil
 }

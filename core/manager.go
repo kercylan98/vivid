@@ -3,12 +3,14 @@ package core
 type ManagerBuilder interface {
 	Build() Manager
 
-	OptionsOf(options ...ManagerOptions) Manager
+	OptionsOf(options ManagerOptions) Manager
 
 	ConfiguratorOf(configurator ...ManagerConfigurator) Manager
 }
 
 type Manager interface {
+	Run() error
+
 	GetHost() Host
 
 	RegisterProcess(process Process) (id ID, exist bool)

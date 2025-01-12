@@ -3,19 +3,23 @@ package manager
 import "github.com/kercylan98/vivid/core"
 
 var (
-	_ core.ManagerOptions        = (*Options)(nil)
-	_ core.ManagerOptionsFetcher = (*Options)(nil)
+	_ core.ManagerOptions        = (*options)(nil)
+	_ core.ManagerOptionsFetcher = (*options)(nil)
 )
 
-type Options struct {
+func Options() core.ManagerOptions {
+	return &options{}
+}
+
+type options struct {
 	server core.Server
 }
 
-func (opts *Options) WithServer(server core.Server) core.ManagerOptions {
+func (opts *options) WithServer(server core.Server) core.ManagerOptions {
 	opts.server = server
 	return opts
 }
 
-func (opts *Options) FetchServer() core.Server {
+func (opts *options) FetchServer() core.Server {
 	return opts.server
 }

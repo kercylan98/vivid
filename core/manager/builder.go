@@ -16,14 +16,19 @@ func Builder() core.ManagerBuilder {
 
 type builder struct{}
 
-func (i *builder) OptionsOf(options ...core.ManagerOptions) core.Manager {
-	//TODO implement me
-	panic("implement me")
+func (i *builder) OptionsOf(options core.ManagerOptions) core.Manager {
+	mgr := i.Build().(*manager)
+	mgr.options = options.(core.ManagerOptionsFetcher)
+	return mgr
 }
 
 func (i *builder) ConfiguratorOf(configurator ...core.ManagerConfigurator) core.Manager {
-	//TODO implement me
-	panic("implement me")
+	opts := Options()
+	for _, c := range configurator {
+		c.Configure(opts)
+	}
+
+	return i.OptionsOf(opts)
 }
 
 func (i *builder) Build() core.Manager {
