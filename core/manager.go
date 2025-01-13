@@ -31,3 +31,9 @@ type ManagerOptionsFetcher interface {
 type ManagerConfigurator interface {
 	Configure(options ManagerOptions)
 }
+
+type FnManagerConfigurator func(options ManagerOptions)
+
+func (c FnManagerConfigurator) Configure(options ManagerOptions) {
+	c(options)
+}

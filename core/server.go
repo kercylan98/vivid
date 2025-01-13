@@ -6,6 +6,8 @@ import (
 
 type ServerBuilder interface {
 	Build(decoderBuilder DecoderBuilder, provider EnvelopeProvider, channelSize int) Server
+
+	DefaultOf() Server
 }
 
 type Server interface {
