@@ -11,7 +11,7 @@ import (
 func TestOptions_WithServer(t *testing.T) {
 	mgr := manager.Builder().ConfiguratorOf(core.FnManagerConfigurator(func(options core.ManagerOptions) {
 		options.WithServer(
-			server.Builder().DefaultOf(),
+			server.Builder().Build(),
 		)
 	}))
 

@@ -10,9 +10,8 @@ import (
 var _ core.Server = (*server)(nil)
 
 type server struct {
-	decoderBuilder   core.DecoderBuilder
-	envelopeProvider core.EnvelopeProvider
-	envelopeChannel  chan core.Envelope
+	options         core.ServerOptionsFetcher
+	envelopeChannel chan core.Envelope
 }
 
 func (srv *server) GetEnvelopeChannel() <-chan core.Envelope {
@@ -20,6 +19,8 @@ func (srv *server) GetEnvelopeChannel() <-chan core.Envelope {
 }
 
 func (srv *server) Serve(listener net.Listener) error {
+	srv.envelopeChannel = make(chan core.Envelope, srv.options.GetChannelSize())
+	
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -33,7 +34,7 @@ func (srv *server) Serve(listener net.Listener) error {
 func (srv *server) handle(conn net.Conn) {
 	var err error
 	var buffer bytes.Buffer
-	var decoder = srv.decoderBuilder.Build(&buffer, srv.envelopeProvider)
+	var decoder = srv.options.GetDecoderBuilder().Build(&buffer, srv.options.GetEnvelopeProvider())
 	var lengthBytes = make([]byte, 4)
 	var packetBytes = make([]byte, 2048)
 	var packetLength int32

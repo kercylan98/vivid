@@ -2,8 +2,6 @@ package server
 
 import (
 	"github.com/kercylan98/vivid/core"
-	"github.com/kercylan98/vivid/core/envelope"
-	"github.com/kercylan98/vivid/core/server/decoder"
 )
 
 var _builder core.ServerBuilder = &builder{}
@@ -14,20 +12,24 @@ func Builder() core.ServerBuilder {
 
 type builder struct{}
 
-func (b *builder) DefaultOf() core.Server {
-	return b.Build(
-		decoder.Builder(),
-		core.FnEnvelopeProvider(func() core.Envelope {
-			return envelope.Builder().EmptyOf()
-		}),
-		1024,
-	)
+func (b *builder) Build() core.Server {
+	return &server{
+		options: Options().(core.ServerOptionsFetcher),
+	}
 }
 
-func (b *builder) Build(decoderBuilder core.DecoderBuilder, provider core.EnvelopeProvider, channelSize int) core.Server {
+func (b *builder) OptionsOf(options core.ServerOptions) core.Server {
 	return &server{
-		envelopeProvider: provider,
-		decoderBuilder:   decoderBuilder,
-		envelopeChannel:  make(chan core.Envelope, channelSize),
+		options: options.(core.ServerOptionsFetcher),
+	}
+}
+
+func (b *builder) ConfiguratorOf(configurator ...core.ServerConfigurator) core.Server {
+	opts := Options()
+	for _, c := range configurator {
+		c.Configure(opts)
+	}
+	return &server{
+		options: opts.(core.ServerOptionsFetcher),
 	}
 }
