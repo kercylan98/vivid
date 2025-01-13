@@ -5,16 +5,20 @@ import (
 	"sync/atomic"
 )
 
+func init() {
+	core.GetMessageRegister().Register(new(id))
+}
+
 var _ core.ID = (*id)(nil)
 
 type id struct {
-	host  core.Host
-	path  core.Path
+	Host  core.Host
+	Path  core.Path
 	cache atomic.Pointer[core.Process]
 }
 
 func (id *id) GetPath() core.Path {
-	return id.path
+	return id.Path
 }
 
 func (id *id) GetProcessCache() core.Process {

@@ -1,4 +1,4 @@
-package encoder
+package decoder
 
 import (
 	"encoding/gob"

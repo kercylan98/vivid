@@ -5,24 +5,24 @@ import "github.com/kercylan98/vivid/core"
 var _ core.Envelope = (*envelope)(nil)
 
 type envelope struct {
-	senderID    core.ID
-	receiverID  core.ID
-	message     core.Message
-	messageType core.MessageType
+	SenderID    core.ID
+	ReceiverID  core.ID
+	Message     core.Message
+	MessageType core.MessageType
 }
 
-func (e *envelope) SenderID() core.ID {
-	return e.senderID
+func (e *envelope) GetSender() core.ID {
+	return e.SenderID
 }
 
-func (e *envelope) ReceiverID() core.ID {
-	return e.receiverID
+func (e *envelope) GetReceiver() core.ID {
+	return e.ReceiverID
 }
 
-func (e *envelope) Message() core.Message {
-	return e.message
+func (e *envelope) GetMessage() core.Message {
+	return e.Message
 }
 
-func (e *envelope) MessageType() core.MessageType {
-	return e.messageType
+func (e *envelope) GetMessageType() core.MessageType {
+	return e.MessageType
 }

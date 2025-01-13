@@ -12,11 +12,15 @@ func Builder() core.EnvelopeBuilder {
 
 type builder struct{}
 
+func (b *builder) EmptyOf() core.Envelope {
+	return &envelope{}
+}
+
 func (b *builder) Build(senderID core.ID, receiverID core.ID, message core.Message, messageType core.MessageType) core.Envelope {
 	return &envelope{
-		senderID:    senderID,
-		receiverID:  receiverID,
-		message:     message,
-		messageType: messageType,
+		SenderID:    senderID,
+		ReceiverID:  receiverID,
+		Message:     message,
+		MessageType: messageType,
 	}
 }

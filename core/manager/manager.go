@@ -96,7 +96,7 @@ func (mgr *manager) initServer() error {
 
 	go func(server core.Server) {
 		for envelope := range server.GetEnvelopeChannel() {
-			mgr.GetProcess(envelope.ReceiverID()).Send(envelope)
+			mgr.GetProcess(envelope.GetReceiver()).Send(envelope)
 		}
 	}(server)
 
