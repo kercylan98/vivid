@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	core.GetMessageRegister().Register(new(id))
+	core.GetMessageRegister().RegisterName("_vivid.core.id", new(id))
 }
 
 var _ core.ID = (*id)(nil)

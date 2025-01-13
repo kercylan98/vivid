@@ -2,6 +2,10 @@ package envelope
 
 import "github.com/kercylan98/vivid/core"
 
+func init() {
+	core.GetMessageRegister().RegisterName("_vivid.core.envelope", new(envelope))
+}
+
 var _ core.Envelope = (*envelope)(nil)
 
 type envelope struct {
