@@ -1,9 +1,5 @@
 package vivid
 
-func init() {
-	RegisterMessageName("vivid.OnLaunch", onLaunch)
-}
-
 var (
 	onLaunch         = new(OnLaunch)
 	onSuspendMailbox = new(onSuspendMailboxMessage)

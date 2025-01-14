@@ -139,67 +139,66 @@ type actorContext struct {
 	children              map[ActorRef]Actor // 子 Actor
 	root                  bool               // 是否是根 Actor
 	parent                ActorRef           // 父 Actor
-	envelope              Envelope           // 当前消息
 }
 
-func (a *actorContext) Sender() ActorRef {
-	if a.envelope == nil {
+func (ctx *actorContext) Sender() ActorRef {
+	if ctx.envelope == nil {
 		return nil
 	}
-	return a.envelope.GetSender()
+	return ctx.envelope.GetSender()
 }
 
-func (a *actorContext) Message() Message {
-	if a.envelope == nil {
+func (ctx *actorContext) Message() Message {
+	if ctx.envelope == nil {
 		return nil
 	}
-	return a.envelope.GetMessage()
+	return ctx.envelope.GetMessage()
 }
 
-func (a *actorContext) Ref() ActorRef {
-	return a.ref
+func (ctx *actorContext) Ref() ActorRef {
+	return ctx.ref
 }
 
-func (a *actorContext) Parent() ActorRef {
-	return a.parent
+func (ctx *actorContext) Parent() ActorRef {
+	return ctx.parent
 }
 
-func (a *actorContext) GetLoggerFetcher() LoggerFetcher {
-	return a.config.FetchLoggerFetcher()
+func (ctx *actorContext) GetLoggerFetcher() LoggerFetcher {
+	return ctx.config.FetchLoggerFetcher()
 }
 
-func (a *actorContext) Logger() *Logger {
-	return a.config.FetchLogger()
+func (ctx *actorContext) Logger() *Logger {
+	return ctx.config.FetchLogger()
 }
 
-func (a *actorContext) ActorOf(provider ActorProvider, configurator ...ActorConfigurator) ActorRef {
-	config := NewActorConfig(a)
+func (ctx *actorContext) ActorOf(provider ActorProvider, configurator ...ActorConfigurator) ActorRef {
+	config := NewActorConfig(ctx)
 	for _, c := range configurator {
 		c.Configure(config)
 	}
-	return a.ActorOfConfig(provider, config)
+	return ctx.ActorOfConfig(provider, config)
 }
 
-func (a *actorContext) ActorOfFn(provider ActorProviderFn, configurator ...ActorConfiguratorFn) ActorRef {
+func (ctx *actorContext) ActorOfFn(provider ActorProviderFn, configurator ...ActorConfiguratorFn) ActorRef {
 	var c = make([]ActorConfigurator, len(configurator))
 	for i, f := range configurator {
 		c[i] = f
 	}
-	return a.ActorOf(provider, c...)
+	return ctx.ActorOf(provider, c...)
 }
 
-func (a *actorContext) ChainOf(provider ActorProvider) ActorSpawnChain {
-	return newActorSpawnChain(a, provider)
+func (ctx *actorContext) ChainOf(provider ActorProvider) ActorSpawnChain {
+	return newActorSpawnChain(ctx, provider)
 }
 
-func (a *actorContext) ActorOfConfig(provider ActorProvider, config ActorConfiguration) ActorRef {
-	ctx := actorOf(a.actorSystem, a, provider, config)
-	return ctx.Ref()
+func (ctx *actorContext) ActorOfConfig(provider ActorProvider, config ActorConfiguration) ActorRef {
+	return actorOf(ctx.actorSystem, ctx, provider, config).Ref()
 }
 
 func generateRootActorContext(system *actorSystem, provider ActorProvider, configurator ...ActorConfigurator) *actorContext {
 	config := NewActorConfig(nil)
-	config.WithLoggerFetcher(system.GetLoggerFetcher())
+	systemLoggerFetcher := system.config.FetchLoggerFetcher()
+	config.WithLoggerFetcher(systemLoggerFetcher)
 	for _, c := range configurator {
 		c.Configure(config)
 	}
@@ -251,14 +250,15 @@ func newInternalActorContext(system *actorSystem, parent *actorContext, name str
 
 	if parent != nil {
 		internal.ref = parent.internalActorContext.ref.Sub(name)
+		_, exist, err := system.processManager.registerProcess(internal)
+		if exist {
+			return nil, fmt.Errorf("actor [%s] already exists", internal.ref)
+		}
+		return internal, err
 	} else {
+		// Root 不注册，设置为守护进程
 		internal.ref = GetIDBuilder().RootOf(system.processManager.getHost())
 	}
 
-	_, exist, err := system.processManager.registerProcess(internal)
-	if exist {
-		return nil, fmt.Errorf("actor [%s] already exists", internal.ref)
-	}
-
-	return internal, err
+	return internal, nil
 }

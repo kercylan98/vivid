@@ -31,6 +31,9 @@ type EnvelopeBuilder interface {
 
 	// StandardOf 构建一个标准的消息包装，它包含了消息的发送者、接收者、消息内容及消息类型
 	StandardOf(senderID ID, receiverID ID, messageType MessageType, message Message) Envelope
+
+	// ConvertTypeOf 根据传入的消息包装构建一个新的消息包装，但消息类型将被替换为新的类型
+	ConvertTypeOf(envelope Envelope, messageType MessageType) Envelope
 }
 
 // Envelope 是进程间通信的消息包装，包含原始消息内容和附加的头部信息，支持跨网络传输。
@@ -61,6 +64,15 @@ func (d *defaultEnvelopeBuilder) StandardOf(senderID ID, receiverID ID, messageT
 		Sender:      senderID,
 		Receiver:    receiverID,
 		Message:     message,
+		MessageType: messageType,
+	}
+}
+
+func (d *defaultEnvelopeBuilder) ConvertTypeOf(envelope Envelope, messageType MessageType) Envelope {
+	return &defaultEnvelope{
+		Sender:      envelope.GetSender(),
+		Receiver:    envelope.GetReceiver(),
+		Message:     envelope.GetMessage(),
 		MessageType: messageType,
 	}
 }

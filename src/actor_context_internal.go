@@ -1,6 +1,16 @@
 package vivid
 
-import "sync/atomic"
+import (
+	"log/slog"
+	"sync/atomic"
+)
+
+const (
+	actorStatusAlive       uint32 = iota // Actor 存活状态
+	actorStatusRestarting                // Actor 正在重启
+	actorStatusTerminating               // Actor 正在终止
+	actorStatusTerminated                // Actor 已终止
+)
 
 var (
 	_ Recipient = (*internalActorContext)(nil) // 确保 internalActorContext 实现了 Recipient 接口
@@ -9,47 +19,95 @@ var (
 
 type internalActorContext struct {
 	*actorContext
-	ref        ActorRef
-	mailbox    Mailbox
-	terminated atomic.Bool
+	ref        ActorRef      // Actor 引用
+	mailbox    Mailbox       // Actor 的邮箱
+	terminated atomic.Bool   // Actor 是否已终止
+	status     atomic.Uint32 // Actor 状态
+	envelope   Envelope      // 当前消息
 }
 
-func (a *internalActorContext) init(ctx *actorContext, mailbox Mailbox) {
-	a.actorContext = ctx
-	a.mailbox = mailbox
+func (ctx *internalActorContext) init(actorContext *actorContext, mailbox Mailbox) {
+	ctx.actorContext = actorContext
+	ctx.mailbox = mailbox
 
-	a.Send(getEnvelopeBuilder().StandardOf(a.ref, a.ref, SystemMessage, onLaunch))
+	ctx.Send(getEnvelopeBuilder().StandardOf(ctx.ref, ctx.ref, SystemMessage, onLaunch))
 }
 
-func (a *internalActorContext) GetID() ID {
-	return a.ref
+func (ctx *internalActorContext) GetID() ID {
+	return ctx.ref
 }
 
-func (a *internalActorContext) Send(envelope Envelope) {
+func (ctx *internalActorContext) Send(envelope Envelope) {
 	switch envelope.GetMessage().(type) {
 	case *onResumeMailboxMessage:
-		a.mailbox.Resume()
+		ctx.mailbox.Resume()
 	case *onSuspendMailboxMessage:
-		a.mailbox.Suspend()
+		ctx.mailbox.Suspend()
 	default:
-		a.mailbox.Delivery(envelope)
+		ctx.mailbox.Delivery(envelope)
 	}
 }
 
-func (a *internalActorContext) Terminated() bool {
-	return a.terminated.Load()
+func (ctx *internalActorContext) Terminated() bool {
+	return ctx.terminated.Load()
 }
 
-func (a *internalActorContext) OnTerminate(operator ID) {
-	a.terminated.Store(true)
+func (ctx *internalActorContext) OnTerminate(operator ID) {
+	ctx.terminated.Store(true)
 }
 
-func (a *internalActorContext) OnReceiveEnvelope(envelope Envelope) {
-	a.envelope = envelope
-	a.actor.OnReceive(a)
+func (ctx *internalActorContext) sendToProcess(envelope Envelope) {
+	process, daemon := ctx.actorSystem.processManager.getProcess(envelope.GetReceiver())
+	if daemon {
+		ctx.Logger().Warn("sendToProcess", slog.Any("process not found", envelope))
+		return
+	}
+	process.Send(envelope)
 }
 
-func (a *internalActorContext) OnAccident(reason any) {
+func (ctx *internalActorContext) onAccident(reason any) {
 	//TODO implement me
 	panic("implement me")
+}
+
+func (ctx *internalActorContext) OnReceiveEnvelope(envelope Envelope) {
+	if ctx.status.Load() >= actorStatusTerminating {
+		ctx.Logger().Warn("OnReceiveEnvelope", slog.String("actor is terminating", ctx.ref.GetPath()))
+		ctx.sendToProcess(getEnvelopeBuilder().StandardOf(ctx.ref, ctx.actorSystem.Ref(), UserMessage, envelope))
+		return
+	}
+
+	ctx.onProcessMessage(envelope)
+}
+
+func (ctx *internalActorContext) onProcessMessage(envelope Envelope) {
+	ctx.envelope = envelope
+	switch envelope.GetMessageType() {
+	case SystemMessage:
+		ctx.onProcessSystemMessage(envelope)
+	case UserMessage:
+		ctx.onProcessUserMessage(envelope)
+	default:
+		panic("unknown message type")
+	}
+}
+
+func (ctx *internalActorContext) onProcessSystemMessage(envelope Envelope) {
+	switch envelope.GetMessage().(type) {
+	case *OnLaunch:
+		ctx.onProcessMessage(getEnvelopeBuilder().ConvertTypeOf(envelope, UserMessage))
+	default:
+		panic("unknown system message")
+	}
+}
+
+func (ctx *internalActorContext) onProcessUserMessage(envelope Envelope) {
+	defer func() {
+		// 系统消息事故需严格确保正常，必须抛出异常，所以仅在用户消息中处理
+		if reason := recover(); reason != nil {
+			ctx.onAccident(reason)
+		}
+	}()
+
+	ctx.actor.OnReceive(ctx)
 }

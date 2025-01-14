@@ -22,9 +22,6 @@ func defaultMailboxProvider() Mailbox {
 type Recipient interface {
 	// OnReceiveEnvelope 处理收到的信封
 	OnReceiveEnvelope(envelope Envelope)
-
-	// OnAccident 处理意外情况
-	OnAccident(reason any)
 }
 
 type Mailbox interface {
@@ -113,12 +110,6 @@ func (m *defaultMailbox) process() {
 }
 
 func (m *defaultMailbox) processHandle() {
-	defer func() {
-		if reason := recover(); reason != nil {
-			m.recipient.OnAccident(reason)
-		}
-	}()
-
 	var envelope Envelope
 	for {
 		if ptr := m.systemQueue.Pop(); ptr != nil {

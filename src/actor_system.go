@@ -6,6 +6,17 @@ var (
 	actorSystemBuilder ActorSystemBuilder                        // ActorSystem 的全局构建器
 )
 
+// NewActorSystem 该函数是综合了 ActorSystemBuilder 的快捷创建方法
+//   - 如果不传入任何配置器，则会使用默认配置创建 ActorSystem 实例
+//   - 如果传入配置器，则会使用配置器创建 ActorSystem 实例
+func NewActorSystem(configurator ...ActorSystemConfigurator) ActorSystem {
+	builder := GetActorSystemBuilder()
+	if len(configurator) > 0 {
+		return builder.ConfiguratorOf(configurator...)
+	}
+	return builder.Build()
+}
+
 // GetActorSystemBuilder 返回 ActorSystem 的构建器
 func GetActorSystemBuilder() ActorSystemBuilder {
 	return actorSystemBuilder
@@ -51,6 +62,9 @@ type ActorSystem interface {
 
 	// Start 启动 Actor 系统
 	Start() error
+
+	// StartP 启动 Actor 系统，并在发生异常时 panic
+	StartP() ActorSystem
 }
 
 type actorSystem struct {
@@ -65,11 +79,21 @@ func (sys *actorSystem) Start() error {
 	sys.processManager = newProcessManager("localhost")
 
 	// 初始化 Root Actor
-	sys.ActorContext = generateRootActorContext(sys, ActorProviderFn(func() Actor {
+	daemon := generateRootActorContext(sys, ActorProviderFn(func() Actor {
 		return new(rootActor)
 	}), ActorConfiguratorFn(func(config ActorConfiguration) {
 		config.WithLoggerFetcher(sys.config.FetchLoggerFetcher())
 	}))
+	sys.ActorContext = daemon
+	sys.processManager.setDaemon(daemon)
 
 	return nil
+}
+
+// StartP 启动 Actor 系统，并在发生异常时 panic
+func (sys *actorSystem) StartP() ActorSystem {
+	if err := sys.Start(); err != nil {
+		panic(err)
+	}
+	return sys
 }

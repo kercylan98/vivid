@@ -20,6 +20,9 @@ func newProcessManager(host Host) *processManagerImpl {
 // processManager 是内部对于 Process 的管理器的抽象，它管理了所有进程的生命周期，并以接口的形式确保可测试性
 type processManager interface {
 
+	// setDaemon 设置守护进程
+	setDaemon(process Process)
+
 	// registerProcess 注册一个进程到管理器中，当 id 为 nil 时将返回错误。
 	//   - 如果进程已经存在则返回 true，并且返回已有进程的 ID
 	//   - 如果进程不存在则返回 false，并且返回新进程的 ID
@@ -30,16 +33,21 @@ type processManager interface {
 	//   - 如果进程存在则调用进程的 OnTerminate 方法
 	unregisterProcess(operator, id ID)
 
-	// getProcess 获取一个进程，当 id 为 nil 时返回根进程。
-	getProcess(id ID) (process Process)
+	// getProcess 获取一个进程，当 id 为 nil 时返回守护进程。
+	getProcess(id ID) (process Process, daemon bool)
 
 	// getHost 获取主机地址
 	getHost() Host
 }
 
 type processManagerImpl struct {
+	daemon    Process                     // 守护进程
 	host      Host                        // 主机地址
 	processes *xsync.MapOf[Path, Process] // 用于存储所有进程的映射表
+}
+
+func (mgr *processManagerImpl) setDaemon(process Process) {
+	mgr.daemon = process
 }
 
 func (mgr *processManagerImpl) registerProcess(process Process) (id ID, exist bool, err error) {
@@ -65,15 +73,15 @@ func (mgr *processManagerImpl) unregisterProcess(operator, id ID) {
 	p.OnTerminate(operator)
 }
 
-func (mgr *processManagerImpl) getProcess(id ID) (process Process) {
+func (mgr *processManagerImpl) getProcess(id ID) (process Process, daemon bool) {
 	if id == nil {
-		return nil
+		return mgr.daemon, true
 	}
 
 	processCache := id.GetProcessCache()
 	if processCache != nil {
 		if !processCache.Terminated() {
-			return process
+			return process, false
 		}
 
 		id.SetProcessCache(nil)
@@ -96,9 +104,9 @@ func (mgr *processManagerImpl) getProcess(id ID) (process Process) {
 	process, exist = mgr.processes.Load(id.GetPath())
 	if exist {
 		id.SetProcessCache(process)
-		return process
+		return process, false
 	} else {
-		return nil
+		return mgr.daemon, true
 	}
 }
 
