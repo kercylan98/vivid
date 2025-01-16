@@ -48,6 +48,14 @@ func (builder ActorSystemBuilder) FromConfigurators(configurators ...ActorSystem
 	return builder.FromConfiguration(config)
 }
 
+// FromCustomize 通过自定义配置构建 ActorSystem 实例
+func (builder ActorSystemBuilder) FromCustomize(configuration ActorSystemConfiguration, configurators ...ActorSystemConfigurator) ActorSystem {
+	for _, configurator := range configurators {
+		configurator.Configure(configuration)
+	}
+	return builder.FromConfiguration(configuration)
+}
+
 // ActorSystem 是完整的 Actor 系统的接口，它包含了对于 Actor Model 的完整实现。
 //   - Actor 系统是基于 Actor 模式的并发编程模型，负责管理和调度 Actor 实例。
 //   - 它提供了创建、监控、发送消息、以及终止 Actor 的功能。
