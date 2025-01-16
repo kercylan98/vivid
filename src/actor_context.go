@@ -16,6 +16,7 @@ type ActorContext interface {
 	ActorContextSpawner
 	ActorContextLogger
 	ActorContextLife
+	ActorContextExternalRelations
 	ActorContextTransport
 }
 
@@ -48,7 +49,10 @@ type ActorContextLogger interface {
 type ActorContextLife interface {
 	// Ref 获取当前 Actor 的 ActorRef
 	Ref() ActorRef
+}
 
+// ActorContextExternalRelations 是 ActorContext 的子集，它确保了 Actor 的外界关系
+type ActorContextExternalRelations interface {
 	// Parent 获取父 Actor 的 ActorRef
 	Parent() ActorRef
 }

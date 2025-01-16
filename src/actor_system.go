@@ -1,9 +1,8 @@
 package vivid
 
 var (
-	_                  ActorSystem         = (*actorSystem)(nil) // 确保 actorSystem 实现了 ActorSystem 接口
-	_                  ActorContextSpawner = (*actorSystem)(nil) // 确保 actorSystem 实现了 ActorContextSpawner 接口
-	actorSystemBuilder ActorSystemBuilder                        // ActorSystem 的全局构建器
+	_                  ActorSystem        = (*actorSystem)(nil) // 确保 actorSystem 实现了 ActorSystem 接口
+	actorSystemBuilder ActorSystemBuilder                       // ActorSystem 的全局构建器
 )
 
 // NewActorSystem 该函数是综合了 ActorSystemBuilder 的快捷创建方法
@@ -66,7 +65,8 @@ func (builder ActorSystemBuilder) FromCustomize(configuration ActorSystemConfigu
 // 同时避免传统线程模型中的共享状态问题和锁竞争问题。
 // 这使得 Actor 系统在需要高并发、分布式计算和容错的场景中非常适用。
 type ActorSystem interface {
-	ActorContext
+	ActorContextSpawner
+	ActorContextLife
 
 	// Start 启动 Actor 系统
 	Start() error
@@ -76,7 +76,10 @@ type ActorSystem interface {
 }
 
 type actorSystem struct {
-	ActorContext                            // 根 Actor
+	ActorContextSpawner
+	ActorContextLife
+	ActorContextLogger
+	daemon         *actorContext            // 根 Actor
 	config         ActorSystemConfiguration // 配置
 	processManager processManager           // 进程管理器
 }
@@ -92,7 +95,10 @@ func (sys *actorSystem) Start() error {
 	}), ActorConfiguratorFn(func(config ActorConfiguration) {
 		config.WithLoggerProvider(sys.config.FetchLoggerProvider())
 	}))
-	sys.ActorContext = daemon
+	sys.daemon = daemon
+	sys.ActorContextSpawner = daemon
+	sys.ActorContextLife = daemon
+	sys.ActorContextLogger = daemon
 	sys.processManager.setDaemon(daemon)
 
 	return nil
