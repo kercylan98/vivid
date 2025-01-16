@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/internal/utils/options"
 	"log/slog"
 )
@@ -11,12 +12,12 @@ var (
 
 // NewActorConfig 创建 Actor 的配置
 func NewActorConfig(parent ActorContext) ActorConfiguration {
-	var loggerFetcher LoggerFetcher
+	var loggerProvider log.Provider
 	if parent != nil {
-		loggerFetcher = parent.GetLoggerFetcher()
+		loggerProvider = parent.GetLoggerProvider()
 	}
 	c := &defaultActorConfig{
-		loggerFetcher:      loggerFetcher,
+		loggerProvider:     loggerProvider,
 		dispatcherProvider: DispatcherProviderFn(defaultDispatcherProvider),
 		mailboxProvider:    MailboxProviderFn(defaultMailboxProvider),
 	}
@@ -52,19 +53,19 @@ type ActorOptions interface {
 	options.LogicOptions[ActorOptionsFetcher, ActorOptions]
 
 	// WithReadOnly 设置 Actor 的配置为只读
-	WithReadOnly() ActorOptionsFetcher
+	WithReadOnly() ActorConfiguration
 
-	// WithLoggerFetcher 设置 Actor 的日志记录器获取器
-	WithLoggerFetcher(fetcher LoggerFetcher) ActorOptions
+	// WithLoggerProvider 设置 Actor 的日志记录器获取器
+	WithLoggerProvider(provider log.Provider) ActorConfiguration
 
 	// WithName 设置 Actor 的名称
-	WithName(name string) ActorOptions
+	WithName(name string) ActorConfiguration
 
 	// WithDispatcher 设置 Actor 的调度器
-	WithDispatcher(provider DispatcherProvider) ActorOptions
+	WithDispatcher(provider DispatcherProvider) ActorConfiguration
 
 	// WithMailbox 设置 Actor 的邮箱
-	WithMailbox(provider MailboxProvider) ActorOptions
+	WithMailbox(provider MailboxProvider) ActorConfiguration
 }
 
 // ActorOptionsFetcher 是 Actor 的配置获取接口
@@ -73,11 +74,8 @@ type ActorOptionsFetcher interface {
 	// FetchReadOnly 获取 Actor 的配置是否为只读
 	FetchReadOnly() bool
 
-	// FetchLoggerFetcher 获取 Actor 的日志记录器获取器
-	FetchLoggerFetcher() LoggerFetcher
-
-	// FetchLogger 获取 Actor 的日志记录器
-	FetchLogger() *Logger
+	// FetchLogger 获取 Actor 的日志记录器获取器
+	FetchLogger() log.Logger
 
 	// FetchName 获取 Actor 的名称
 	FetchName() string
@@ -87,25 +85,32 @@ type ActorOptionsFetcher interface {
 
 	// FetchMailbox 获取 Actor 的邮箱
 	FetchMailbox() MailboxProvider
+
+	// FetchLoggerProvider 获取 Actor 的日志记录器获取器
+	FetchLoggerProvider() log.Provider
 }
 
 type defaultActorConfig struct {
 	options.LogicOptions[ActorOptionsFetcher, ActorOptions]
 	readOnly           bool               // 是否只读
-	loggerFetcher      LoggerFetcher      // 日志记录器获取器
+	loggerProvider     log.Provider       // 日志记录器提供者
 	name               string             // 名称
 	dispatcherProvider DispatcherProvider // 调度器
 	mailboxProvider    MailboxProvider    // 邮箱
 }
 
-func (d *defaultActorConfig) WithDispatcher(provider DispatcherProvider) ActorOptions {
+func (d *defaultActorConfig) FetchLoggerProvider() log.Provider {
+	return d.loggerProvider
+}
+
+func (d *defaultActorConfig) WithDispatcher(provider DispatcherProvider) ActorConfiguration {
 	if !d.modifyReadOnlyCheck() {
 		d.dispatcherProvider = provider
 	}
 	return d
 }
 
-func (d *defaultActorConfig) WithMailbox(provider MailboxProvider) ActorOptions {
+func (d *defaultActorConfig) WithMailbox(provider MailboxProvider) ActorConfiguration {
 	if !d.modifyReadOnlyCheck() {
 		d.mailboxProvider = provider
 	}
@@ -120,7 +125,7 @@ func (d *defaultActorConfig) FetchMailbox() MailboxProvider {
 	return d.mailboxProvider
 }
 
-func (d *defaultActorConfig) WithName(name string) ActorOptions {
+func (d *defaultActorConfig) WithName(name string) ActorConfiguration {
 	if !d.modifyReadOnlyCheck() {
 		d.name = name
 	}
@@ -131,33 +136,29 @@ func (d *defaultActorConfig) FetchName() string {
 	return d.name
 }
 
-func (d *defaultActorConfig) WithLoggerFetcher(fetcher LoggerFetcher) ActorOptions {
+func (d *defaultActorConfig) WithLoggerProvider(provider log.Provider) ActorConfiguration {
 	if !d.modifyReadOnlyCheck() {
-		d.loggerFetcher = fetcher
+		d.loggerProvider = provider
 	}
 	return d
 }
 
-func (d *defaultActorConfig) FetchLoggerFetcher() LoggerFetcher {
-	return d.loggerFetcher
-}
-
-func (d *defaultActorConfig) FetchLogger() *Logger {
-	if d.loggerFetcher == nil {
-		logger := defaultLoggerFetcher()
+func (d *defaultActorConfig) FetchLogger() log.Logger {
+	if d.loggerProvider == nil {
+		logger := defaultLoggerProvider()
 		logger.Warn("FetchLogger", slog.String("info", "LoggerFetcher is nil, use default logger"))
 		return logger
 	}
-	logger := d.loggerFetcher.Fetch()
+	logger := d.loggerProvider.Provide()
 	if logger == nil {
-		logger = defaultLoggerFetcher()
+		logger = defaultLoggerProvider()
 		logger.Warn("FetchLogger", slog.String("info", "nil Logger from LoggerFetcher, use default logger"))
-		return defaultLoggerFetcher()
+		return defaultLoggerProvider()
 	}
 	return logger
 }
 
-func (d *defaultActorConfig) WithReadOnly() ActorOptionsFetcher {
+func (d *defaultActorConfig) WithReadOnly() ActorConfiguration {
 	if !d.modifyReadOnlyCheck() {
 		d.readOnly = true
 	}

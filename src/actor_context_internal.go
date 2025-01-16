@@ -30,6 +30,8 @@ func (ctx *internalActorContext) init(actorContext *actorContext, mailbox Mailbo
 	ctx.actorContext = actorContext
 	ctx.mailbox = mailbox
 
+	ctx.Logger().Debug("generated", slog.String("actor", ctx.ref.String()))
+
 	ctx.Send(getEnvelopeBuilder().StandardOf(ctx.ref, ctx.ref, SystemMessage, onLaunch))
 }
 

@@ -83,6 +83,9 @@ type defaultID struct {
 }
 
 func (id *defaultID) Sub(path Path) ID {
+	if id.Path == "/" {
+		return GetIDBuilder().Build(id.Host, "/"+path)
+	}
 	return GetIDBuilder().Build(id.Host, strings.TrimRight(id.Path+"/"+path, "/"))
 }
 

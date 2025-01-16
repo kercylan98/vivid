@@ -12,7 +12,7 @@ var (
 func NewActorSystem(configurator ...ActorSystemConfigurator) ActorSystem {
 	builder := GetActorSystemBuilder()
 	if len(configurator) > 0 {
-		return builder.ConfiguratorOf(configurator...)
+		return builder.FromConfigurators(configurator...)
 	}
 	return builder.Build()
 }
@@ -32,20 +32,20 @@ func (builder ActorSystemBuilder) Build() ActorSystem {
 	}
 }
 
-// ConfigOf 通过配置构建 ActorSystem 实例
-func (builder ActorSystemBuilder) ConfigOf(config ActorSystemConfiguration) ActorSystem {
+// FromConfiguration 通过配置构建 ActorSystem 实例
+func (builder ActorSystemBuilder) FromConfiguration(config ActorSystemConfiguration) ActorSystem {
 	sys := builder.Build().(*actorSystem)
 	sys.config = config.InitDefault()
 	return sys
 }
 
-// ConfiguratorOf 通过配置器构建 ActorSystem 实例
-func (builder ActorSystemBuilder) ConfiguratorOf(configurator ...ActorSystemConfigurator) ActorSystem {
+// FromConfigurators 通过配置器构建 ActorSystem 实例
+func (builder ActorSystemBuilder) FromConfigurators(configurators ...ActorSystemConfigurator) ActorSystem {
 	var config = NewActorSystemConfig()
-	for _, c := range configurator {
+	for _, c := range configurators {
 		c.Configure(config)
 	}
-	return builder.ConfigOf(config)
+	return builder.FromConfiguration(config)
 }
 
 // ActorSystem 是完整的 Actor 系统的接口，它包含了对于 Actor Model 的完整实现。
@@ -82,7 +82,7 @@ func (sys *actorSystem) Start() error {
 	daemon := generateRootActorContext(sys, ActorProviderFn(func() Actor {
 		return new(rootActor)
 	}), ActorConfiguratorFn(func(config ActorConfiguration) {
-		config.WithLoggerFetcher(sys.config.FetchLoggerFetcher())
+		config.WithLoggerProvider(sys.config.FetchLoggerProvider())
 	}))
 	sys.ActorContext = daemon
 	sys.processManager.setDaemon(daemon)

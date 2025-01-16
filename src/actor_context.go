@@ -2,6 +2,7 @@ package vivid
 
 import (
 	"fmt"
+	"github.com/kercylan98/go-log/log"
 	"strconv"
 )
 
@@ -37,10 +38,10 @@ type ActorContextSpawner interface {
 // ActorContextLogger 是 ActorContext 的子集，它确保了对日志的记录
 type ActorContextLogger interface {
 	// Logger 获取日志记录器
-	Logger() *Logger
+	Logger() log.Logger
 
-	// GetLoggerFetcher 获取日志记录器提供者
-	GetLoggerFetcher() LoggerFetcher
+	// GetLoggerProvider 获取日志记录器提供者
+	GetLoggerProvider() log.Provider
 }
 
 // ActorContextLife 是 ActorContext 的子集，它确保了对 Actor 生命周期的控制
@@ -163,11 +164,11 @@ func (ctx *actorContext) Parent() ActorRef {
 	return ctx.parent
 }
 
-func (ctx *actorContext) GetLoggerFetcher() LoggerFetcher {
-	return ctx.config.FetchLoggerFetcher()
+func (ctx *actorContext) GetLoggerProvider() log.Provider {
+	return ctx.config.FetchLoggerProvider()
 }
 
-func (ctx *actorContext) Logger() *Logger {
+func (ctx *actorContext) Logger() log.Logger {
 	return ctx.config.FetchLogger()
 }
 
@@ -197,8 +198,8 @@ func (ctx *actorContext) ActorOfConfig(provider ActorProvider, config ActorConfi
 
 func generateRootActorContext(system *actorSystem, provider ActorProvider, configurator ...ActorConfigurator) *actorContext {
 	config := NewActorConfig(nil)
-	systemLoggerFetcher := system.config.FetchLoggerFetcher()
-	config.WithLoggerFetcher(systemLoggerFetcher)
+	systemLoggerProvider := system.config.FetchLoggerProvider()
+	config.WithLoggerProvider(systemLoggerProvider)
 	for _, c := range configurator {
 		c.Configure(config)
 	}

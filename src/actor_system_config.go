@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/internal/utils/hash"
 	"github.com/kercylan98/vivid/src/internal/utils/options"
 	"log/slog"
@@ -13,8 +14,10 @@ var (
 // NewActorSystemConfig 创建一个用于 ActorSystem 的默认配置器
 func NewActorSystemConfig() ActorSystemConfiguration {
 	c := &defaultActorSystemConfig{
-		name:          hash.GenerateHash(),
-		loggerFetcher: LoggerFetcherFn(defaultLoggerFetcher),
+		name: hash.GenerateHash(),
+		loggerProvider: log.ProviderFn(func() log.Logger {
+			return log.GetDefault()
+		}),
 	}
 	c.LogicOptions = options.NewLogicOptions[ActorSystemOptionsFetcher, ActorSystemOptions](c, c)
 	return c
@@ -47,13 +50,14 @@ type ActorSystemOptions interface {
 	options.LogicOptions[ActorSystemOptionsFetcher, ActorSystemOptions]
 
 	// WithReadOnly 设置 ActorSystem 的配置为只读
-	WithReadOnly() ActorSystemOptions
+	WithReadOnly() ActorSystemOptionsFetcher
 
 	// WithName 设置 ActorSystem 的名称
-	WithName(name string) ActorSystemOptions
+	WithName(name string) ActorSystemConfiguration
 
-	// WithLoggerFetcher 设置 ActorSystem 的日志记录器获取器
-	WithLoggerFetcher(fetcher LoggerFetcher) ActorSystemOptions
+	// WithLoggerProvider 设置 ActorSystem 的日志记录器提供者
+	//   - 提供者不应在每次都返回一个新的示例，应返回当前所使用的示例
+	WithLoggerProvider(provider log.Provider) ActorSystemConfiguration
 }
 
 // ActorSystemOptionsFetcher 是 ActorSystem 的配置选项获取器
@@ -64,42 +68,42 @@ type ActorSystemOptionsFetcher interface {
 	// FetchName 获取 ActorSystem 的名称
 	FetchName() string
 
-	// FetchLoggerFetcher 获取 ActorSystem 的日志记录器获取器
-	FetchLoggerFetcher() LoggerFetcher
-
 	// FetchLogger 获取 ActorSystem 的日志记录器
-	FetchLogger() *Logger
+	FetchLogger() log.Logger
+
+	// FetchLoggerProvider 获取 ActorSystem 的日志记录器提供者
+	FetchLoggerProvider() log.Provider
 }
 
 type defaultActorSystemConfig struct {
 	options.LogicOptions[ActorSystemOptionsFetcher, ActorSystemOptions]
-	readOnly      bool          // 是否只读
-	name          string        // ActorSystem 的名称
-	loggerFetcher LoggerFetcher // 日志记录器获取器
+	readOnly       bool         // 是否只读
+	name           string       // ActorSystem 的名称
+	loggerProvider log.Provider // 日志记录器获取器
 }
 
-func (d *defaultActorSystemConfig) WithLoggerFetcher(fetcher LoggerFetcher) ActorSystemOptions {
+func (d *defaultActorSystemConfig) FetchLoggerProvider() log.Provider {
+	return d.loggerProvider
+}
+
+func (d *defaultActorSystemConfig) WithLoggerProvider(provider log.Provider) ActorSystemConfiguration {
 	if !d.modifyReadOnlyCheck() {
-		d.loggerFetcher = fetcher
+		d.loggerProvider = provider
 	}
 	return d
 }
 
-func (d *defaultActorSystemConfig) FetchLoggerFetcher() LoggerFetcher {
-	return d.loggerFetcher
-}
-
-func (d *defaultActorSystemConfig) FetchLogger() *Logger {
-	if d.loggerFetcher == nil {
-		logger := defaultLoggerFetcher()
-		logger.Warn("FetchLogger", slog.String("info", "LoggerFetcher is nil, use default logger"))
+func (d *defaultActorSystemConfig) FetchLogger() log.Logger {
+	if d.loggerProvider == nil {
+		logger := defaultLoggerProvider()
+		logger.Warn("FetchLogger", slog.String("info", "nil LoggerProvider, use default logger"))
 		return logger
 	}
-	logger := d.loggerFetcher.Fetch()
+	logger := d.loggerProvider.Provide()
 	if logger == nil {
-		logger = defaultLoggerFetcher()
+		logger = defaultLoggerProvider()
 		logger.Warn("FetchLogger", slog.String("info", "nil Logger from LoggerFetcher, use default logger"))
-		return defaultLoggerFetcher()
+		return logger
 	}
 	return logger
 }
@@ -109,7 +113,7 @@ func (d *defaultActorSystemConfig) InitDefault() ActorSystemConfiguration {
 	return d
 }
 
-func (d *defaultActorSystemConfig) WithReadOnly() ActorSystemOptions {
+func (d *defaultActorSystemConfig) WithReadOnly() ActorSystemOptionsFetcher {
 	if !d.modifyReadOnlyCheck() {
 		d.readOnly = true
 	}
@@ -120,7 +124,7 @@ func (d *defaultActorSystemConfig) FetchReadOnly() bool {
 	return d.readOnly
 }
 
-func (d *defaultActorSystemConfig) WithName(name string) ActorSystemOptions {
+func (d *defaultActorSystemConfig) WithName(name string) ActorSystemConfiguration {
 	if !d.modifyReadOnlyCheck() {
 		d.name = name
 	}
