@@ -1,5 +1,10 @@
 package vivid
 
+import (
+	"github.com/kercylan98/vivid/src/internal/dedicated"
+	"time"
+)
+
 const (
 	// UserMessage 表示用户消息，该类型消息优先级将低于 SystemMessage
 	UserMessage MessageType = iota
@@ -8,59 +13,268 @@ const (
 )
 
 var (
-	_                       Envelope        = (*defaultEnvelope)(nil)   // 确保 defaultEnvelope 实现了 Envelope 接口
-	_defaultEnvelopeBuilder EnvelopeBuilder = &defaultEnvelopeBuilder{} // 默认的 EnvelopeBuilder 实现，并确保实现了 EnvelopeBuilder 接口
+	_defaultRemoteMessageBuilder RemoteMessageBuilder = &defaultRemoteMessageBuilder{}
 )
 
 // MessageType 是消息的类型，它用于区分消息的优先级及执行方式
 type MessageType = int8
 
-func init() {
-	RegisterMessageName("vivid.defaultEnvelope", &defaultEnvelope{})
+func getDefaultRemoteMessageBuilder() RemoteMessageBuilder {
+	return _defaultRemoteMessageBuilder
 }
 
-// getEnvelopeBuilder 获取默认的 EnvelopeBuilder 实现，该函数在外部不应该被调用
-func getEnvelopeBuilder() EnvelopeBuilder {
-	return _defaultEnvelopeBuilder
+type RemoteMessageBuilder interface {
+	EnvelopeBuilder
+	IDBuilder
+	OnKillBuilder
+	OnKilledBuilder
+	OnWatchBuilder
+	OnWatchStoppedBuilder
+	OnUnwatchBuilder
 }
 
-// EnvelopeBuilder 是 Envelope 的构建器，由于 Envelope 支持不同的实现，且包含多种构建方式，因此需要通过构建器来进行创建
-type EnvelopeBuilder interface {
-	// Build 构建一个空的消息包装，它不包含任何头部信息及消息内容，适用于反序列化场景
-	Build() Envelope
-
-	// StandardOf 构建一个标准的消息包装，它包含了消息的发送者、接收者、消息内容及消息类型
-	StandardOf(senderID ID, receiverID ID, messageType MessageType, message Message) Envelope
-
-	// ConvertTypeOf 根据传入的消息包装构建一个新的消息包装，但消息类型将被替换为新的类型
-	ConvertTypeOf(envelope Envelope, messageType MessageType) Envelope
+type defaultRemoteMessageBuilder struct {
+	defaultEnvelopeBuilder
+	defaultIDBuilder
+	defaultOnKillBuilder
+	defaultOnKilledBuilder
+	defaultOnWatchBuilder
+	defaultOnWatchStoppedBuilder
+	defaultOnUnwatchBuilder
 }
 
-// Envelope 是进程间通信的消息包装，包含原始消息内容和附加的头部信息，支持跨网络传输。
-//   - 如果需要支持其他序列化方式，可以通过实现 Envelope 接口并自定义消息包装，同时实现 EnvelopeBuilder 接口来提供构建方式。
-type Envelope interface {
-	// GetSender 获取消息发送者的 ID
-	GetSender() ID
+var (
+	_ OnUnwatch = (*onUnwatch)(nil)
+)
 
-	// GetReceiver 获取消息接收者的 ID
-	GetReceiver() ID
+type (
+	// OnUnwatchBuilder 是用于构建 OnUnwatch 消息的接口
+	OnUnwatchBuilder interface {
+		// BuildOnUnwatch 构建一个 OnUnwatch 消息
+		BuildOnUnwatch() OnUnwatch
+	}
 
-	// GetMessage 获取消息的内容
-	GetMessage() Message
+	// OnUnwatch 该消息为 Vivid 内部使用，用于告知 Actor 观察者已不再继续观察
+	OnUnwatch interface {
+		_OnUnwatch(mark dedicated.Mark)
+	}
 
-	// GetMessageType 获取消息的类型
-	GetMessageType() MessageType
+	// DedicatedOnUnwatch 是 OnUnwatch 的专用标记实现，它可以用来实现自定义的 OnUnwatch 消息
+	DedicatedOnUnwatch struct{}
+)
+
+var (
+	_ OnWatchStopped = (*onWatchStopped)(nil)
+)
+
+type (
+	// OnWatchStoppedBuilder 是用于构建 OnWatchStopped 消息的接口
+	OnWatchStoppedBuilder interface {
+		// BuildOnWatchStopped 构建一个 OnWatchStopped 消息
+		BuildOnWatchStopped() OnWatchStopped
+	}
+
+	// OnWatchStopped 该消息为 Vivid 内部使用，用于告知 Actor 观察者已停止观察
+	//  - 可以通过 ActorContext.Sender 函数获取到死亡的 ActorRef
+	OnWatchStopped interface {
+		_OnWatchStopped(mark dedicated.Mark)
+	}
+
+	// DedicatedOnWatchStopped 是 OnWatchStopped 的专用标记实现，它可以用来实现自定义的 OnWatchStopped 消息
+	DedicatedOnWatchStopped struct{}
+)
+
+var (
+	_ OnWatch = (*onWatch)(nil)
+)
+
+type (
+	// OnWatchBuilder 是用于构建 OnWatch 消息的接口
+	OnWatchBuilder interface {
+		// BuildOnWatch 构建一个 OnWatch 消息
+		BuildOnWatch() OnWatch
+	}
+
+	// OnWatch 该消息为 Vivid 内部使用，用于告知 Actor 被观察
+	OnWatch interface {
+		_OnWatch(mark dedicated.Mark)
+	}
+
+	// DedicatedOnWatch 是 OnWatch 的专用标记实现，它可以用来实现自定义的 OnWatch 消息
+	DedicatedOnWatch struct{}
+)
+
+type (
+	// OnLaunch 在 Actor 启动时，将会作为第一条消息被处理，适用于初始化 Actor 状态等场景。
+	OnLaunch interface {
+		_OnLaunch(mark dedicated.Mark)
+
+		// GetLaunchTime 获取 Actor 启动时间，该时间为 Actor 创建完毕后的时间，而非 Actor 启动时的时间
+		GetLaunchTime() time.Time
+
+		// GetContext 获取 Actor 启动上下文中定义的内容，如果不存在则返回 nil 及 false
+		//
+		// 在一些时候，你也许希望 ActorProvider 返回的是一个单一的 Actor 实例，但在不同的 Actor 启动时，需要传递不同的参数。
+		// 通过 GetContext 方法，你可以获取 Actor 启动时传递的参数，以便在 Actor 启动时进行初始化。
+		GetContext(key any) (val any, exist bool)
+	}
+)
+
+var (
+	_ OnKill = (*onKill)(nil)
+)
+
+type (
+	// OnKillBuilder 是用于构建 OnKill 消息的接口
+	OnKillBuilder interface {
+		// BuildOnKill 构建一个 OnKill 消息
+		BuildOnKill(reason string, operator ActorRef, poison bool) OnKill
+	}
+
+	// OnKill 该消息表示 Actor 在处理完成当前消息后，将会被立即终止。需要在该阶段完成状态的持久化及资源的释放等操作。
+	OnKill interface {
+		_OnKill(mark dedicated.Mark)
+
+		// GetReason 获取终止原因
+		GetReason() string
+
+		// GetOperator 获取操作者
+		GetOperator() ActorRef
+
+		// IsPoison 是否为优雅终止
+		IsPoison() bool
+	}
+
+	// DedicatedOnKill 是 OnKill 的专用标记实现，它可以用来实现自定义的 OnKill 消息
+	DedicatedOnKill struct{}
+)
+
+var (
+	_ OnKilled = (*onKilled)(nil)
+)
+
+type (
+	OnKilledBuilder interface {
+		BuildOnKilled(ref ActorRef) OnKilled
+	}
+
+	OnKilled interface {
+		_OnKilled(mark dedicated.Mark)
+	}
+
+	DedicatedOnKilled struct{}
+)
+
+var (
+	_ Envelope = (*envelope)(nil)
+)
+
+type (
+	// EnvelopeBuilder 是 Envelope 的构建器，由于 Envelope 支持不同的实现，且包含多种构建方式，因此需要通过构建器来进行创建
+	EnvelopeBuilder interface {
+		// BuildEnvelope 构建一个空的消息包装，它不包含任何头部信息及消息内容，适用于反序列化场景
+		BuildEnvelope() Envelope
+
+		// BuildStandardEnvelope 构建一个标准的消息包装，它包含了消息的发送者、接收者、消息内容及消息类型
+		BuildStandardEnvelope(senderID ID, receiverID ID, messageType MessageType, message Message) Envelope
+	}
+
+	// Envelope 是进程间通信的消息包装，包含原始消息内容和附加的头部信息，支持跨网络传输。
+	//   - 如果需要支持其他序列化方式，可以通过实现 Envelope 接口并自定义消息包装，同时实现 EnvelopeBuilder 接口来提供构建方式。
+	Envelope interface {
+		// GetSender 获取消息发送者的 ID
+		GetSender() ID
+
+		// GetReceiver 获取消息接收者的 ID
+		GetReceiver() ID
+
+		// GetMessage 获取消息的内容
+		GetMessage() Message
+
+		// GetMessageType 获取消息的类型
+		GetMessageType() MessageType
+	}
+)
+
+type defaultOnKilledBuilder struct{}
+
+func (b *defaultOnKilledBuilder) BuildOnKilled(ref ActorRef) OnKilled {
+	return &onKilled{
+		Ref: ref,
+	}
 }
 
-// defaultEnvelopeBuilder 是 EnvelopeBuilder 的默认实现，它提供了 defaultEnvelope 的构建方式
+type onKilled struct {
+	DedicatedOnKilled
+	Ref ActorRef // 已终止 Actor 的 ActorRef
+}
+
+func (*DedicatedOnKilled) _OnKilled(mark dedicated.Mark) {}
+
+func newOnLaunch(launchAt time.Time, context map[any]any) OnLaunch {
+	return &onLaunch{
+		launchAt: launchAt,
+		context:  context,
+	}
+}
+
+type onLaunch struct {
+	launchAt time.Time
+	context  map[any]any
+}
+
+func (o *onLaunch) _OnLaunch(mark dedicated.Mark) {}
+
+func (o *onLaunch) GetLaunchTime() time.Time {
+	return o.launchAt
+}
+
+func (o *onLaunch) GetContext(key any) (val any, exist bool) {
+	val, exist = o.context[key]
+	return
+}
+
+type defaultOnKillBuilder struct{}
+
+func (b *defaultOnKillBuilder) BuildOnKill(reason string, operator ActorRef, poison bool) OnKill {
+	return &onKill{
+		Reason:   reason,
+		Operator: operator,
+		Poison:   poison,
+	}
+}
+
+type onKill struct {
+	DedicatedOnKill
+
+	Reason   string   // 携带的终止原因
+	Operator ActorRef // 操作者
+	Poison   bool     // 是否为优雅终止
+}
+
+func (k *onKill) GetReason() string {
+	return k.Reason
+}
+
+func (k *onKill) GetOperator() ActorRef {
+	return k.Operator
+}
+
+func (k *onKill) IsPoison() bool {
+	return k.Poison
+}
+
+func (*DedicatedOnKill) _OnKill(mark dedicated.Mark) {}
+
+// defaultEnvelopeBuilder 是 EnvelopeBuilder 的默认实现，它提供了 envelope 的构建方式
 type defaultEnvelopeBuilder struct{}
 
-func (d *defaultEnvelopeBuilder) Build() Envelope {
-	return &defaultEnvelope{}
+func (d *defaultEnvelopeBuilder) BuildEnvelope() Envelope {
+	return &envelope{}
 }
 
-func (d *defaultEnvelopeBuilder) StandardOf(senderID ID, receiverID ID, messageType MessageType, message Message) Envelope {
-	return &defaultEnvelope{
+func (d *defaultEnvelopeBuilder) BuildStandardEnvelope(senderID ID, receiverID ID, messageType MessageType, message Message) Envelope {
+	return &envelope{
 		Sender:      senderID,
 		Receiver:    receiverID,
 		Message:     message,
@@ -68,35 +282,66 @@ func (d *defaultEnvelopeBuilder) StandardOf(senderID ID, receiverID ID, messageT
 	}
 }
 
-func (d *defaultEnvelopeBuilder) ConvertTypeOf(envelope Envelope, messageType MessageType) Envelope {
-	return &defaultEnvelope{
-		Sender:      envelope.GetSender(),
-		Receiver:    envelope.GetReceiver(),
-		Message:     envelope.GetMessage(),
-		MessageType: messageType,
-	}
-}
-
-// defaultEnvelope 是 Envelope 的默认实现，它基于 gob 序列化方式实现了 Envelope 接口
-type defaultEnvelope struct {
+// envelope 是 Envelope 的默认实现，它基于 gob 序列化方式实现了 Envelope 接口
+type envelope struct {
 	Sender      ID
 	Receiver    ID
 	Message     Message
 	MessageType MessageType
 }
 
-func (d *defaultEnvelope) GetSender() ID {
+func (d *envelope) GetSender() ID {
 	return d.Sender
 }
 
-func (d *defaultEnvelope) GetReceiver() ID {
+func (d *envelope) GetReceiver() ID {
 	return d.Receiver
 }
 
-func (d *defaultEnvelope) GetMessage() Message {
+func (d *envelope) GetMessage() Message {
 	return d.Message
 }
 
-func (d *defaultEnvelope) GetMessageType() MessageType {
+func (d *envelope) GetMessageType() MessageType {
 	return d.MessageType
 }
+
+type defaultOnWatchBuilder struct{}
+
+func (b *defaultOnWatchBuilder) BuildOnWatch() OnWatch {
+	return &onWatch{}
+}
+
+type onWatch struct {
+	DedicatedOnWatch
+}
+
+func (DedicatedOnWatch) _OnWatch(mark dedicated.Mark) {}
+
+var (
+	_ OnLaunch = (*onLaunch)(nil)
+)
+
+type defaultOnWatchStoppedBuilder struct{}
+
+func (b *defaultOnWatchStoppedBuilder) BuildOnWatchStopped() OnWatchStopped {
+	return &onWatchStopped{}
+}
+
+type onWatchStopped struct {
+	DedicatedOnWatchStopped
+}
+
+func (DedicatedOnWatchStopped) _OnWatchStopped(mark dedicated.Mark) {}
+
+type defaultOnUnwatchBuilder struct{}
+
+func (b *defaultOnUnwatchBuilder) BuildOnUnwatch() OnUnwatch {
+	return &onUnwatch{}
+}
+
+type onUnwatch struct {
+	DedicatedOnUnwatch
+}
+
+func (DedicatedOnUnwatch) _OnUnwatch(mark dedicated.Mark) {}

@@ -67,6 +67,8 @@ func (builder ActorSystemBuilder) FromCustomize(configuration ActorSystemConfigu
 type ActorSystem interface {
 	ActorContextSpawner
 	ActorContextLife
+	ActorContextLogger
+	ActorContextActions
 
 	// Start 启动 Actor 系统
 	Start() error
@@ -79,6 +81,7 @@ type actorSystem struct {
 	ActorContextSpawner
 	ActorContextLife
 	ActorContextLogger
+	ActorContextActions
 	daemon         *actorContext            // 根 Actor
 	config         ActorSystemConfiguration // 配置
 	processManager processManager           // 进程管理器
@@ -99,6 +102,7 @@ func (sys *actorSystem) Start() error {
 	sys.ActorContextSpawner = daemon
 	sys.ActorContextLife = daemon
 	sys.ActorContextLogger = daemon
+	sys.ActorContextActions = daemon
 	sys.processManager.setDaemon(daemon)
 
 	return nil

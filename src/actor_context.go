@@ -1,14 +1,13 @@
 package vivid
 
 import (
-	"fmt"
 	"github.com/kercylan98/go-log/log"
 	"strconv"
+	"time"
 )
 
 var (
-	_ ActorContext    = (*actorContext)(nil)    // 确保 actorContext 实现了 ActorContext 接口
-	_ ActorSpawnChain = (*actorSpawnChain)(nil) // 确保 actorSpawnChain 实现了 ActorSpawnChain 接口
+	_ ActorContext = (*actorContext)(nil) // 确保 actorContext 实现了 ActorContext 接口
 )
 
 // ActorContext 是定义了 Actor 完整的上下文。
@@ -18,6 +17,7 @@ type ActorContext interface {
 	ActorContextLife
 	ActorContextExternalRelations
 	ActorContextTransport
+	ActorContextActions
 }
 
 // ActorContextSpawner 是 ActorContext 的子集，它确保了对子 Actor 的生成
@@ -55,6 +55,36 @@ type ActorContextLife interface {
 type ActorContextExternalRelations interface {
 	// Parent 获取父 Actor 的 ActorRef
 	Parent() ActorRef
+
+	// System 获取当前 Actor 所属的 ActorSystem
+	System() ActorSystem
+}
+
+// ActorContextActions 是 ActorContext 的子集，它定义了 Actor 所支持的动作
+type ActorContextActions interface {
+	// Kill 忽略一切尚未处理的消息，立即终止目标 Actor
+	Kill(target ActorRef)
+
+	// PoisonKill 等待目标 Actor 处理完当前所有消息后终止目标 Actor
+	PoisonKill(target ActorRef)
+
+	// Tell 向指定的 Actor 发送消息
+	Tell(target ActorRef, message Message)
+
+	// Ask 向目标 Actor 发送消息，并返回一个 Future 用于获取结果。
+	//  - 如果 timeout 参数不存在，那么将会在 DefaultFutureTimeout 时间内等待结果。
+	Ask(target ActorRef, message Message, timeout ...time.Duration) Future[Message]
+
+	// Watch 监视目标 Actor 的生命周期，当目标 Actor 终止时，会收到 OnWatchStopped 消息。
+	// 该函数会向目标 Actor 发送 Watch 消息，目标 Actor 收到 Watch 消息后会将自己加入到监视列表中。
+	//  - 如果传入了 handler 函数，那么当目标 Actor 终止时，会调用 handler 函数，而不再投递 OnWatchStopped 消息。
+	//  - handler 的调用是在当前 Actor 中作为消息进行处理的。
+	//  - 如果 handler 存在多个，那么会按照顺序调用。
+	//  - 重复的调用会追加更多的 handler。
+	Watch(target ActorRef, handler ...WatchHandler)
+
+	// Unwatch 取消监视目标 Actor 的生命周期
+	Unwatch(target ActorRef)
 }
 
 // ActorContextTransport 是 ActorContext 的子集，它确保了对 Actor 之间的通信
@@ -64,74 +94,10 @@ type ActorContextTransport interface {
 
 	// Message 获取当前消息的内容
 	Message() Message
-}
 
-// ActorSpawnChain 是 Actor 生成链，用于生成 Actor
-type ActorSpawnChain interface {
-	// SetConfig 设置 ActorConfiguration
-	SetConfig(config ActorConfiguration) ActorSpawnChain
-
-	// SetConfigurator 设置 ActorConfigurator
-	SetConfigurator(configurator ActorConfigurator) ActorSpawnChain
-
-	// SetFnConfigurator 设置 ActorConfiguratorFn
-	SetFnConfigurator(configurator ActorConfiguratorFn) ActorSpawnChain
-
-	// AddNextConfigurator 添加 ActorConfigurator
-	AddNextConfigurator(configurator ActorConfigurator) ActorSpawnChain
-
-	// AddNextFnConfigurator 添加 ActorConfiguratorFn
-	AddNextFnConfigurator(configurator ActorConfiguratorFn) ActorSpawnChain
-
-	// ActorOf 生成 Actor
-	ActorOf() ActorRef
-}
-
-func newActorSpawnChain(parent ActorContext, provider ActorProvider) ActorSpawnChain {
-	return &actorSpawnChain{
-		parent:   parent,
-		provider: provider,
-	}
-}
-
-type actorSpawnChain struct {
-	parent        ActorContext
-	provider      ActorProvider
-	config        ActorConfiguration
-	configurators []ActorConfigurator
-}
-
-func (a *actorSpawnChain) SetConfig(config ActorConfiguration) ActorSpawnChain {
-	a.config = config
-	return a
-}
-
-func (a *actorSpawnChain) SetConfigurator(configurator ActorConfigurator) ActorSpawnChain {
-	a.configurators = []ActorConfigurator{configurator}
-	return a
-}
-
-func (a *actorSpawnChain) SetFnConfigurator(configurator ActorConfiguratorFn) ActorSpawnChain {
-	return a.SetConfigurator(configurator)
-}
-
-func (a *actorSpawnChain) AddNextConfigurator(configurator ActorConfigurator) ActorSpawnChain {
-	a.configurators = append(a.configurators, configurator)
-	return a
-}
-
-func (a *actorSpawnChain) AddNextFnConfigurator(configurator ActorConfiguratorFn) ActorSpawnChain {
-	return a.AddNextConfigurator(configurator)
-}
-
-func (a *actorSpawnChain) ActorOf() ActorRef {
-	if a.config == nil {
-		a.config = NewActorConfig(a.parent)
-	}
-	for _, configurator := range a.configurators {
-		configurator.Configure(a.config)
-	}
-	return a.parent.ActorOfConfig(a.provider, a.config)
+	// Reply 向消息的发送者回复消息
+	//  - 该函数是 Tell 的快捷方式，用于向消息的发送者回复消息
+	Reply(message Message)
 }
 
 type actorContext struct {
@@ -141,9 +107,63 @@ type actorContext struct {
 	config                ActorConfiguration // Actor 配置
 	actorSystem           *actorSystem       // 所属的 ActorSystem
 	childGuid             int64              // 子 Actor GUID
-	children              map[ActorRef]Actor // 子 Actor
+	children              map[Path]ActorRef  // 子 Actor
 	root                  bool               // 是否是根 Actor
 	parent                ActorRef           // 父 Actor
+}
+
+func (ctx *actorContext) systemConfig() ActorSystemOptionsFetcher {
+	return ctx.actorSystem.config
+}
+
+func (ctx *actorContext) System() ActorSystem {
+	return ctx.actorSystem
+}
+
+func (ctx *actorContext) Tell(target ActorRef, message Message) {
+	ctx.tell(target, message, UserMessage)
+}
+
+func (ctx *internalActorContext) Ask(target ActorRef, message Message, timeout ...time.Duration) Future[Message] {
+	var t = DefaultFutureTimeout
+	if len(timeout) > 0 {
+		t = timeout[0]
+	}
+
+	ctx.childGuid++
+	futureRef := ctx.ref.Sub("future-" + string(strconv.AppendInt(nil, ctx.childGuid, 10)))
+	future := newFuture[Message](ctx.actorSystem, futureRef, t)
+	ctx.sendToProcess(ctx.systemConfig().FetchRemoteMessageBuilder().BuildStandardEnvelope(futureRef, target, UserMessage, message))
+	return future
+}
+
+func (ctx *actorContext) Reply(message Message) {
+	ctx.tell(ctx.Sender(), message, UserMessage)
+}
+
+// tell 该函数用于向特定目标发送标准的消息，消息将经过包装并投递到目标 Actor 的邮箱中
+//   - 该函数在对自身发送消息时会加速投递，避免通过进程管理器进行查找
+func (ctx *actorContext) tell(target ActorRef, message Message, messageType MessageType) {
+	envelope := ctx.systemConfig().FetchRemoteMessageBuilder().BuildStandardEnvelope(ctx.Ref(), target, messageType, message)
+
+	if ctx.Ref().Equal(target) {
+		// 如果目标是自己，那么通过 Send 函数来对消息进行加速
+		// 这个过程可避免通过进程管理器进行查找的过程，而是直接将消息发送到自身进程中
+		ctx.Send(envelope)
+		return
+	}
+
+	ctx.sendToProcess(envelope)
+}
+
+func (ctx *actorContext) Kill(target ActorRef) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (ctx *actorContext) PoisonKill(target ActorRef) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (ctx *actorContext) Sender() ActorRef {
@@ -198,72 +218,4 @@ func (ctx *actorContext) ChainOf(provider ActorProvider) ActorSpawnChain {
 
 func (ctx *actorContext) ActorOfConfig(provider ActorProvider, config ActorConfiguration) ActorRef {
 	return actorOf(ctx.actorSystem, ctx, provider, config).Ref()
-}
-
-func generateRootActorContext(system *actorSystem, provider ActorProvider, configurator ...ActorConfigurator) *actorContext {
-	config := NewActorConfig(nil)
-	systemLoggerProvider := system.config.FetchLoggerProvider()
-	config.WithLoggerProvider(systemLoggerProvider)
-	for _, c := range configurator {
-		c.Configure(config)
-	}
-	return actorOf(system, nil, provider, config)
-
-}
-
-func actorOf(system *actorSystem, parent *actorContext, provider ActorProvider, config ActorConfiguration) *actorContext {
-	config.InitDefault()
-
-	// 生成 Actor 名称
-	var name = config.FetchName()
-	var parentRef ActorRef
-	if parent != nil {
-		parentRef = parent.Ref()
-		if name == "" {
-			parent.childGuid++
-			name = string(strconv.AppendInt(nil, parent.childGuid, 10))
-		}
-	}
-
-	// 初始化内部 Actor 上下文
-	internal, err := newInternalActorContext(system, parent, name)
-	if err != nil {
-		panic(err)
-	}
-
-	// 初始化 Actor 上下文
-	ctx := &actorContext{
-		internalActorContext: internal,
-		provider:             provider,
-		actor:                provider.Provide(),
-		config:               config,
-		actorSystem:          system,
-		children:             make(map[ActorRef]Actor),
-		parent:               parentRef,
-	}
-
-	// 初始化邮箱
-	mailbox := config.FetchMailbox().Provide()
-	mailbox.Init(ctx, config.FetchDispatcher().Provide())
-
-	internal.init(ctx, mailbox)
-	return ctx
-}
-
-func newInternalActorContext(system *actorSystem, parent *actorContext, name string) (*internalActorContext, error) {
-	internal := &internalActorContext{}
-
-	if parent != nil {
-		internal.ref = parent.internalActorContext.ref.Sub(name)
-		_, exist, err := system.processManager.registerProcess(internal)
-		if exist {
-			return nil, fmt.Errorf("actor [%s] already exists", internal.ref)
-		}
-		return internal, err
-	} else {
-		// Root 不注册，设置为守护进程
-		internal.ref = GetIDBuilder().RootOf(system.processManager.getHost())
-	}
-
-	return internal, nil
 }

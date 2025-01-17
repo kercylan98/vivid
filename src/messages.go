@@ -1,16 +1,15 @@
 package vivid
 
 var (
-	onLaunch         = new(OnLaunch)
 	onSuspendMailbox = new(onSuspendMailboxMessage)
 	onResumeMailbox  = new(onResumeMailboxMessage)
 )
 
 type (
-	// OnLaunch 在 Actor 启动时，将会作为第一条消息被处理，适用于初始化 Actor 状态等场景。
-	OnLaunch int8
 
+	// onSuspendMailboxMessage 暂停邮箱
 	onSuspendMailboxMessage int8
 
+	// onResumeMailboxMessage 恢复邮箱
 	onResumeMailboxMessage int8
 )

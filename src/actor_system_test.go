@@ -1,6 +1,7 @@
 package vivid_test
 
 import (
+	"github.com/kercylan98/go-log/log"
 	vivid "github.com/kercylan98/vivid/src"
 	"testing"
 	"time"
@@ -9,14 +10,26 @@ import (
 func TestActorSystem(t *testing.T) {
 	sys := vivid.NewActorSystem().StartP()
 
-	sys.ActorOfFn(func() vivid.Actor {
+	ref := sys.ActorOfFn(func() vivid.Actor {
 		return vivid.ActorFn(func(ctx vivid.ActorContext) {
 			switch ctx.Message().(type) {
-			case *vivid.OnLaunch:
-				t.Log("Actor launched")
+			case vivid.OnLaunch:
+				ctx.Logger().Info("OnLaunch")
+			case int:
+				ctx.Logger().Info("int")
+			case string:
+				ctx.Logger().Info("string")
+				ctx.Reply("reply")
 			}
 		})
 	})
 
+	sys.Tell(ref, 1)
+
+	v, err := sys.Ask(ref, "").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys.Logger().Info("reply:", log.Any("message", v))
 	time.Sleep(time.Second)
 }

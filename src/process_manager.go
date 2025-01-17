@@ -81,7 +81,7 @@ func (mgr *processManagerImpl) getProcess(id ID) (process Process, daemon bool) 
 	processCache := id.GetProcessCache()
 	if processCache != nil {
 		if !processCache.Terminated() {
-			return process, false
+			return processCache, false
 		}
 
 		id.SetProcessCache(nil)

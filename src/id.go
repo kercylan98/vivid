@@ -7,18 +7,8 @@ import (
 )
 
 var (
-	_                 ID        = (*defaultID)(nil)   // 确保 defaultID 实现了 ID 接口
-	_defaultIDBuilder IDBuilder = &defaultIDBuilder{} // 默认的 ID 构建器唯一实例，且确保实现了 IDBuilder 接口
+	_ ID = (*defaultID)(nil) // 确保 defaultID 实现了 ID 接口
 )
-
-func init() {
-	RegisterMessageName("vivid.defaultID", &defaultID{})
-}
-
-// GetIDBuilder 返回一个默认的 ID 构建器
-func GetIDBuilder() IDBuilder {
-	return _defaultIDBuilder
-}
 
 // ActorRef 是 ID 的别名，用于表示一个 Actor 的唯一标识
 type ActorRef = ID
@@ -46,6 +36,9 @@ type ID interface {
 
 	// String 返回这个 ID 的字符串表示
 	String() string
+
+	// Equal 判断两个 ID 是否相等
+	Equal(id ID) bool
 }
 
 // IDBuilder 是一个用于构建 ID 的接口。
@@ -53,24 +46,24 @@ type ID interface {
 //
 // 在使用 IDBuilder 时，应该是在构建之初便确定的，因此不应为此提供 Provider，避免在运行时动态更改 IDBuilder 而导致序列化方式不一致。
 type IDBuilder interface {
-	// Build 通过指定的主机地址和资源路径构建一个 ID
-	Build(host Host, path Path) ID
+	// BuildID 通过指定的主机地址和资源路径构建一个 ID
+	BuildID(host Host, path Path) ID
 
-	// RootOf 通过指定的主机地址构建一个根 ID
-	RootOf(host Host) ID
+	// BuildRootID 通过指定的主机地址构建一个根 ID
+	BuildRootID(host Host) ID
 }
 
 type defaultIDBuilder struct{}
 
-func (b *defaultIDBuilder) Build(host Host, path Path) ID {
+func (b *defaultIDBuilder) BuildID(host Host, path Path) ID {
 	return &defaultID{
 		Host: host,
 		Path: path,
 	}
 }
 
-func (b *defaultIDBuilder) RootOf(host Host) ID {
-	return b.Build(host, "/")
+func (b *defaultIDBuilder) BuildRootID(host Host) ID {
+	return b.BuildID(host, "/")
 }
 
 // defaultID 是 ID 的默认实现，可以通过 GetIdBuilder
@@ -82,11 +75,21 @@ type defaultID struct {
 	processCache atomic.Pointer[Process] // 进程缓存，该字段并非序列化的一部分
 }
 
+func (id *defaultID) Equal(other ID) bool {
+	return id.GetHost() == other.GetHost() && id.GetPath() == other.GetPath()
+}
+
 func (id *defaultID) Sub(path Path) ID {
 	if id.Path == "/" {
-		return GetIDBuilder().Build(id.Host, "/"+path)
+		return &defaultID{
+			Host: id.Host,
+			Path: "/" + path,
+		}
 	}
-	return GetIDBuilder().Build(id.Host, strings.TrimRight(id.Path+"/"+path, "/"))
+	return &defaultID{
+		Host: id.Host,
+		Path: strings.TrimRight(id.Path+"/"+path, "/"),
+	}
 }
 
 func (id *defaultID) String() string {

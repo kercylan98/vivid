@@ -66,6 +66,12 @@ type ActorOptions interface {
 
 	// WithMailbox 设置 Actor 的邮箱
 	WithMailbox(provider MailboxProvider) ActorConfiguration
+
+	// WithLaunchContextProvider 设置 Actor 的启动上下文提供者
+	//  - 通过使用提供者的方式，允许 Actor 在每一次启动时都能获取到不同的启动上下文
+	//
+	// 提供者如果返回的是空指针，不会引发任何异常，但会导致 Actor 在启动时无法获取到启动上下文
+	WithLaunchContextProvider(provider LaunchContextProvider) ActorConfiguration
 }
 
 // ActorOptionsFetcher 是 Actor 的配置获取接口
@@ -88,15 +94,28 @@ type ActorOptionsFetcher interface {
 
 	// FetchLoggerProvider 获取 Actor 的日志记录器获取器
 	FetchLoggerProvider() log.Provider
+
+	// FetchLaunchContextProvider 获取 Actor 的启动上下文提供者
+	FetchLaunchContextProvider() LaunchContextProvider
 }
 
 type defaultActorConfig struct {
 	options.LogicOptions[ActorOptionsFetcher, ActorOptions]
-	readOnly           bool               // 是否只读
-	loggerProvider     log.Provider       // 日志记录器提供者
-	name               string             // 名称
-	dispatcherProvider DispatcherProvider // 调度器
-	mailboxProvider    MailboxProvider    // 邮箱
+	readOnly              bool                  // 是否只读
+	loggerProvider        log.Provider          // 日志记录器提供者
+	name                  string                // 名称
+	dispatcherProvider    DispatcherProvider    // 调度器
+	mailboxProvider       MailboxProvider       // 邮箱
+	launchContextProvider LaunchContextProvider // 启动上下文提供者
+}
+
+func (d *defaultActorConfig) WithLaunchContextProvider(provider LaunchContextProvider) ActorConfiguration {
+	d.launchContextProvider = provider
+	return d
+}
+
+func (d *defaultActorConfig) FetchLaunchContextProvider() LaunchContextProvider {
+	return d.launchContextProvider
 }
 
 func (d *defaultActorConfig) FetchLoggerProvider() log.Provider {
@@ -180,4 +199,14 @@ func (d *defaultActorConfig) modifyReadOnlyCheck() bool {
 		d.FetchLogger().Warn("ActorOptions", slog.String("info", "options is read-only, modify invalid"))
 	}
 	return d.readOnly
+}
+
+type LaunchContextProvider interface {
+	Provide() map[any]any
+}
+
+type LaunchContextProviderFn func() map[any]any
+
+func (f LaunchContextProviderFn) Provide() map[any]any {
+	return f()
 }

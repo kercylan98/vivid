@@ -18,6 +18,7 @@ func NewActorSystemConfig() ActorSystemConfiguration {
 		loggerProvider: log.ProviderFn(func() log.Logger {
 			return log.GetDefault()
 		}),
+		remoteMessageBuilder: getDefaultRemoteMessageBuilder(),
 	}
 	c.LogicOptions = options.NewLogicOptions[ActorSystemOptionsFetcher, ActorSystemOptions](c, c)
 	return c
@@ -58,6 +59,9 @@ type ActorSystemOptions interface {
 	// WithLoggerProvider 设置 ActorSystem 的日志记录器提供者
 	//   - 提供者不应在每次都返回一个新的示例，应返回当前所使用的示例
 	WithLoggerProvider(provider log.Provider) ActorSystemConfiguration
+
+	// WithCodec 设置 ActorSystem 的编解码器
+	WithCodec(codec Codec, builder RemoteMessageBuilder) ActorSystemOptionsFetcher
 }
 
 // ActorSystemOptionsFetcher 是 ActorSystem 的配置选项获取器
@@ -73,13 +77,35 @@ type ActorSystemOptionsFetcher interface {
 
 	// FetchLoggerProvider 获取 ActorSystem 的日志记录器提供者
 	FetchLoggerProvider() log.Provider
+
+	// FetchCodec 获取 ActorSystem 的编解码器
+	FetchCodec() Codec
+
+	// FetchRemoteMessageBuilder 获取 ActorSystem 的远程消息构建器
+	FetchRemoteMessageBuilder() RemoteMessageBuilder
 }
 
 type defaultActorSystemConfig struct {
 	options.LogicOptions[ActorSystemOptionsFetcher, ActorSystemOptions]
-	readOnly       bool         // 是否只读
-	name           string       // ActorSystem 的名称
-	loggerProvider log.Provider // 日志记录器获取器
+	readOnly             bool                 // 是否只读
+	name                 string               // ActorSystem 的名称
+	loggerProvider       log.Provider         // 日志记录器获取器
+	codec                Codec                // 编解码器
+	remoteMessageBuilder RemoteMessageBuilder // 远程消息构建器
+}
+
+func (d *defaultActorSystemConfig) WithCodec(codec Codec, builder RemoteMessageBuilder) ActorSystemOptionsFetcher {
+	d.codec = codec
+	d.remoteMessageBuilder = builder
+	return d
+}
+
+func (d *defaultActorSystemConfig) FetchCodec() Codec {
+	return d.codec
+}
+
+func (d *defaultActorSystemConfig) FetchRemoteMessageBuilder() RemoteMessageBuilder {
+	return d.remoteMessageBuilder
 }
 
 func (d *defaultActorSystemConfig) FetchLoggerProvider() log.Provider {
