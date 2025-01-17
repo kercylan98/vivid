@@ -19,7 +19,7 @@ var (
 )
 
 // newFuture 创建一个 Future
-func newFuture[M Message](sys *actorSystem, ref ActorRef, timeout time.Duration) Future[M] {
+func newFuture[M Message](sys ActorSystem, ref ActorRef, timeout time.Duration) Future[M] {
 	f := &future[M]{
 		sys:     sys,
 		ref:     ref,
@@ -27,7 +27,7 @@ func newFuture[M Message](sys *actorSystem, ref ActorRef, timeout time.Duration)
 		timeout: timeout,
 	}
 
-	_, exist, err := sys.processManager.registerProcess(f)
+	_, exist, err := sys.getProcessManager().registerProcess(f)
 	if err != nil {
 		panic(err)
 	}
@@ -87,7 +87,7 @@ type Future[M Message] interface {
 }
 
 type future[M Message] struct {
-	sys           *actorSystem
+	sys           ActorSystem
 	ref           ActorRef
 	timer         *time.Timer
 	done          chan struct{}
@@ -143,13 +143,13 @@ func (f *future[M]) AwaitForward(ref ActorRef, asyncFunc func() M) {
 	f.Forward(ref)
 	go func() {
 		if reason := recover(); reason != nil {
-			process, _ := f.sys.processManager.getProcess(ref)
-			process.Send(f.sys.config.FetchRemoteMessageBuilder().BuildStandardEnvelope(f.ref, ref, UserMessage, reason))
+			process, _ := f.sys.getProcessManager().getProcess(ref)
+			process.Send(f.sys.getConfig().FetchRemoteMessageBuilder().BuildStandardEnvelope(f.ref, ref, UserMessage, reason))
 		}
 		m := asyncFunc()
 
-		process, _ := f.sys.processManager.getProcess(ref)
-		process.Send(f.sys.config.FetchRemoteMessageBuilder().BuildStandardEnvelope(f.ref, ref, UserMessage, m))
+		process, _ := f.sys.getProcessManager().getProcess(ref)
+		process.Send(f.sys.getConfig().FetchRemoteMessageBuilder().BuildStandardEnvelope(f.ref, ref, UserMessage, m))
 	}()
 }
 
@@ -205,7 +205,7 @@ func (f *future[M]) Close(reason error) {
 	if f.timer != nil {
 		f.timer.Stop()
 	}
-	f.sys.processManager.unregisterProcess(f.ref, f.ref)
+	f.sys.getProcessManager().unregisterProcess(f.ref, f.ref)
 	f.forwardsMutex.Lock()
 	defer f.forwardsMutex.Unlock()
 	f.execForward()
@@ -222,8 +222,8 @@ func (f *future[M]) execForward() {
 	}
 
 	for _, ref := range f.forwards {
-		process, _ := f.sys.processManager.getProcess(ref)
-		process.Send(f.sys.config.FetchRemoteMessageBuilder().BuildStandardEnvelope(f.ref, ref, UserMessage, m))
+		process, _ := f.sys.getProcessManager().getProcess(ref)
+		process.Send(f.sys.getConfig().FetchRemoteMessageBuilder().BuildStandardEnvelope(f.ref, ref, UserMessage, m))
 	}
 	f.forwards = nil
 }

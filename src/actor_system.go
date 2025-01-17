@@ -26,15 +26,15 @@ type ActorSystemBuilder struct{}
 
 // Build 用于构建 ActorSystem 实例
 func (builder ActorSystemBuilder) Build() ActorSystem {
-	return &actorSystem{
-		config: NewActorSystemConfig().InitDefault(),
-	}
+	sys := &actorSystem{}
+	sys.actorSystemInternal = newActorSystemInternal(sys, NewActorSystemConfig().InitDefault(), newProcessManager("localhost"))
+	return sys
 }
 
 // FromConfiguration 通过配置构建 ActorSystem 实例
 func (builder ActorSystemBuilder) FromConfiguration(config ActorSystemConfiguration) ActorSystem {
 	sys := builder.Build().(*actorSystem)
-	sys.config = config.InitDefault()
+	sys.setConfig(config.InitDefault())
 	return sys
 }
 
@@ -65,6 +65,7 @@ func (builder ActorSystemBuilder) FromCustomize(configuration ActorSystemConfigu
 // 同时避免传统线程模型中的共享状态问题和锁竞争问题。
 // 这使得 Actor 系统在需要高并发、分布式计算和容错的场景中非常适用。
 type ActorSystem interface {
+	actorSystemInternal
 	ActorContextSpawner
 	ActorContextLife
 	ActorContextLogger
@@ -77,33 +78,37 @@ type ActorSystem interface {
 	StartP() ActorSystem
 }
 
+type actorSystemInternal interface {
+	setConfig(config ActorSystemOptionsFetcher)
+
+	getConfig() ActorSystemOptionsFetcher
+
+	getProcessManager() processManager
+}
+
 type actorSystem struct {
+	actorSystemInternal
 	ActorContextSpawner
 	ActorContextLife
 	ActorContextLogger
 	ActorContextActions
-	daemon         *actorContext            // 根 Actor
-	config         ActorSystemConfiguration // 配置
-	processManager processManager           // 进程管理器
+	daemon ActorContext // 根 Actor
 }
 
 // Start 启动 Actor 系统
 func (sys *actorSystem) Start() error {
-	// 初始化进程管理器
-	sys.processManager = newProcessManager("localhost")
-
 	// 初始化 Root Actor
 	daemon := generateRootActorContext(sys, ActorProviderFn(func() Actor {
 		return new(rootActor)
 	}), ActorConfiguratorFn(func(config ActorConfiguration) {
-		config.WithLoggerProvider(sys.config.FetchLoggerProvider())
+		config.WithLoggerProvider(sys.getConfig().FetchLoggerProvider())
 	}))
 	sys.daemon = daemon
 	sys.ActorContextSpawner = daemon
 	sys.ActorContextLife = daemon
 	sys.ActorContextLogger = daemon
 	sys.ActorContextActions = daemon
-	sys.processManager.setDaemon(daemon)
+	sys.getProcessManager().setDaemon(daemon.getProcess())
 
 	return nil
 }
