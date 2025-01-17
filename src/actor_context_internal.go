@@ -29,42 +29,11 @@ type internalActorContext struct {
 	watchers      map[ActorRef]struct{}       // 该 Actor 的监视者
 }
 
-func (ctx *internalActorContext) Watch(target ActorRef, handlers ...WatchHandler) {
-	onWatch := ctx.systemConfig().FetchRemoteMessageBuilder().BuildOnWatch()
-	currHandlers, exist := ctx.watchHandlers[target]
-	if !exist {
-		ctx.tell(target, onWatch, SystemMessage)
-	}
-
-	if ctx.watchHandlers == nil {
-		ctx.watchHandlers = make(map[ActorRef][]WatchHandler)
-	}
-
-	currHandlers = append(currHandlers, handlers...)
-	ctx.watchHandlers[target] = currHandlers
-
-	// TODO: 应该还需要 Ping/Pong 机制来保证监视的有效性，避免监视者已经终止但是监视者未收到通知，从而导致资源泄漏
-}
-
-func (ctx *internalActorContext) Unwatch(target ActorRef) {
-	if _, exist := ctx.watchHandlers[target]; !exist {
-		return
-	}
-
-	onUnwatch := ctx.systemConfig().FetchRemoteMessageBuilder().BuildOnUnwatch()
-	ctx.tell(target, onUnwatch, SystemMessage)
-
-	delete(ctx.watchHandlers, target)
-	if len(ctx.watchHandlers) == 0 {
-		ctx.watchHandlers = nil
-	}
-}
-
 func (ctx *internalActorContext) init(actorContext *actorContext, mailbox Mailbox) {
 	ctx.actorContext = actorContext
 	ctx.mailbox = mailbox
 
-	ctx.Logger().Debug("generated", slog.String("actor", ctx.ref.String()))
+	ctx.Logger().Debug("spawn", slog.String("actor", ctx.ref.String()))
 
 	var launchContext map[any]any
 	if ctx.config.FetchLaunchContextProvider() != nil {
@@ -150,6 +119,8 @@ func (ctx *internalActorContext) onProcessSystemMessage(envelope Envelope) {
 		ctx.onWatch()
 	case OnUnwatch:
 		ctx.onUnwatch()
+	case OnPing:
+		ctx.Reply(ctx.systemConfig().FetchRemoteMessageBuilder().BuildPong(m))
 	default:
 		panic("unknown system message")
 	}

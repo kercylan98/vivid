@@ -63,10 +63,10 @@ type ActorContextExternalRelations interface {
 // ActorContextActions 是 ActorContext 的子集，它定义了 Actor 所支持的动作
 type ActorContextActions interface {
 	// Kill 忽略一切尚未处理的消息，立即终止目标 Actor
-	Kill(target ActorRef)
+	Kill(target ActorRef, reason ...string)
 
 	// PoisonKill 等待目标 Actor 处理完当前所有消息后终止目标 Actor
-	PoisonKill(target ActorRef)
+	PoisonKill(target ActorRef, reason ...string)
 
 	// Tell 向指定的 Actor 发送消息
 	Tell(target ActorRef, message Message)
@@ -98,6 +98,9 @@ type ActorContextTransport interface {
 	// Reply 向消息的发送者回复消息
 	//  - 该函数是 Tell 的快捷方式，用于向消息的发送者回复消息
 	Reply(message Message)
+
+	// Ping 尝试对目标 Actor 发送 Ping 消息，并返回 Pong 消息。
+	Ping(target ActorRef, timeout ...time.Duration) (Pong, error)
 }
 
 type actorContext struct {
@@ -110,6 +113,13 @@ type actorContext struct {
 	children              map[Path]ActorRef  // 子 Actor
 	root                  bool               // 是否是根 Actor
 	parent                ActorRef           // 父 Actor
+}
+
+func (ctx *actorContext) Ping(target ActorRef, timeout ...time.Duration) (pong Pong, err error) {
+	return pong, ctx.ask(target, ctx.systemConfig().FetchRemoteMessageBuilder().BuildOnPing(), SystemMessage, timeout...).Adapter(FutureAdapter[Pong](func(p Pong, err error) error {
+		p = pong
+		return err
+	}))
 }
 
 func (ctx *actorContext) systemConfig() ActorSystemOptionsFetcher {
@@ -125,20 +135,15 @@ func (ctx *actorContext) Tell(target ActorRef, message Message) {
 }
 
 func (ctx *internalActorContext) Ask(target ActorRef, message Message, timeout ...time.Duration) Future[Message] {
-	var t = DefaultFutureTimeout
-	if len(timeout) > 0 {
-		t = timeout[0]
-	}
-
-	ctx.childGuid++
-	futureRef := ctx.ref.Sub("future-" + string(strconv.AppendInt(nil, ctx.childGuid, 10)))
-	future := newFuture[Message](ctx.actorSystem, futureRef, t)
-	ctx.sendToProcess(ctx.systemConfig().FetchRemoteMessageBuilder().BuildStandardEnvelope(futureRef, target, UserMessage, message))
-	return future
+	return ctx.ask(target, message, UserMessage, timeout...)
 }
 
 func (ctx *actorContext) Reply(message Message) {
-	ctx.tell(ctx.Sender(), message, UserMessage)
+	var target = ctx.envelope.GetAgent()
+	if target == nil {
+		target = ctx.Sender()
+	}
+	ctx.tell(target, message, UserMessage)
 }
 
 // tell 该函数用于向特定目标发送标准的消息，消息将经过包装并投递到目标 Actor 的邮箱中
@@ -156,14 +161,33 @@ func (ctx *actorContext) tell(target ActorRef, message Message, messageType Mess
 	ctx.sendToProcess(envelope)
 }
 
-func (ctx *actorContext) Kill(target ActorRef) {
-	//TODO implement me
-	panic("implement me")
+func (ctx *actorContext) ask(target ActorRef, message Message, messageType MessageType, timeout ...time.Duration) Future[Message] {
+	var t = DefaultFutureTimeout
+	if len(timeout) > 0 {
+		t = timeout[0]
+	}
+
+	ctx.childGuid++
+	futureRef := ctx.ref.Sub("future-" + string(strconv.AppendInt(nil, ctx.childGuid, 10)))
+	future := newFuture[Message](ctx.actorSystem, futureRef, t)
+	ctx.sendToProcess(ctx.systemConfig().FetchRemoteMessageBuilder().BuildAgentEnvelope(futureRef, ctx.Ref(), target, messageType, message))
+	return future
 }
 
-func (ctx *actorContext) PoisonKill(target ActorRef) {
-	//TODO implement me
-	panic("implement me")
+func (ctx *actorContext) Kill(target ActorRef, reason ...string) {
+	var r string
+	if len(reason) > 0 {
+		r = reason[0]
+	}
+	ctx.tell(target, ctx.systemConfig().FetchRemoteMessageBuilder().BuildOnKill(r, ctx.Ref(), false), SystemMessage)
+}
+
+func (ctx *actorContext) PoisonKill(target ActorRef, reason ...string) {
+	var r string
+	if len(reason) > 0 {
+		r = reason[0]
+	}
+	ctx.tell(target, ctx.systemConfig().FetchRemoteMessageBuilder().BuildOnKill(r, ctx.Ref(), true), UserMessage)
 }
 
 func (ctx *actorContext) Sender() ActorRef {
@@ -218,4 +242,35 @@ func (ctx *actorContext) ChainOf(provider ActorProvider) ActorSpawnChain {
 
 func (ctx *actorContext) ActorOfConfig(provider ActorProvider, config ActorConfiguration) ActorRef {
 	return actorOf(ctx.actorSystem, ctx, provider, config).Ref()
+}
+
+func (ctx *actorContext) Watch(target ActorRef, handlers ...WatchHandler) {
+	onWatch := ctx.systemConfig().FetchRemoteMessageBuilder().BuildOnWatch()
+	currHandlers, exist := ctx.watchHandlers[target]
+	if !exist {
+		ctx.tell(target, onWatch, SystemMessage)
+	}
+
+	if ctx.watchHandlers == nil {
+		ctx.watchHandlers = make(map[ActorRef][]WatchHandler)
+	}
+
+	currHandlers = append(currHandlers, handlers...)
+	ctx.watchHandlers[target] = currHandlers
+
+	// TODO: 应该还需要 Ping/Pong 机制来保证监视的有效性，避免监视者已经终止但是监视者未收到通知，从而导致资源泄漏
+}
+
+func (ctx *actorContext) Unwatch(target ActorRef) {
+	if _, exist := ctx.watchHandlers[target]; !exist {
+		return
+	}
+
+	onUnwatch := ctx.systemConfig().FetchRemoteMessageBuilder().BuildOnUnwatch()
+	ctx.tell(target, onUnwatch, SystemMessage)
+
+	delete(ctx.watchHandlers, target)
+	if len(ctx.watchHandlers) == 0 {
+		ctx.watchHandlers = nil
+	}
 }

@@ -31,6 +31,8 @@ type RemoteMessageBuilder interface {
 	OnWatchBuilder
 	OnWatchStoppedBuilder
 	OnUnwatchBuilder
+	OnPingBuilder
+	PongBuilder
 }
 
 type defaultRemoteMessageBuilder struct {
@@ -41,7 +43,58 @@ type defaultRemoteMessageBuilder struct {
 	defaultOnWatchBuilder
 	defaultOnWatchStoppedBuilder
 	defaultOnUnwatchBuilder
+	defaultOnPingBuilder
+	defaultOnPongBuilder
 }
+
+var (
+	_ Pong = (*onPong)(nil)
+)
+
+type (
+	// PongBuilder 是用于构建 Pong 消息的接口
+	PongBuilder interface {
+		// BuildPong 构建一个 Pong 消息
+		BuildPong(ping OnPing) Pong
+	}
+
+	// Pong 该消息为 Vivid 内部使用，用于响应 OnPing 消息
+	Pong interface {
+		_Pong(mark dedicated.Mark)
+
+		// GetPing 获取 Ping 的时间
+		GetPing() time.Time
+
+		// GetPong 获取 Pong 的时间
+		GetPong() time.Time
+	}
+
+	// DedicatedPong 是 Pong 的专用标记实现，它可以用来实现自定义的 Pong 消息
+	DedicatedPong struct{}
+)
+
+var (
+	_ OnPing = (*onPing)(nil)
+)
+
+type (
+	// OnPingBuilder 是用于构建 OnPing 消息的接口
+	OnPingBuilder interface {
+		// BuildOnPing 构建一个 OnPing 消息
+		BuildOnPing() OnPing
+	}
+
+	// OnPing 该消息为 Vivid 内部使用，用于检测 Actor 是否存活
+	OnPing interface {
+		_OnPing(mark dedicated.Mark)
+
+		// GetTime 获取发起 Ping 的时间
+		GetTime() time.Time
+	}
+
+	// DedicatedOnPing 是 OnPing 的专用标记实现，它可以用来实现自定义的 OnPing 消息
+	DedicatedOnPing struct{}
+)
 
 var (
 	_ OnUnwatch = (*onUnwatch)(nil)
@@ -177,11 +230,17 @@ type (
 
 		// BuildStandardEnvelope 构建一个标准的消息包装，它包含了消息的发送者、接收者、消息内容及消息类型
 		BuildStandardEnvelope(senderID ID, receiverID ID, messageType MessageType, message Message) Envelope
+
+		// BuildAgentEnvelope 构建一个代理的消息包装，它与标准消息包装相似，但是实际发送人为代理 Actor
+		BuildAgentEnvelope(agent, senderID, receiverID ID, messageType MessageType, message Message) Envelope
 	}
 
 	// Envelope 是进程间通信的消息包装，包含原始消息内容和附加的头部信息，支持跨网络传输。
 	//   - 如果需要支持其他序列化方式，可以通过实现 Envelope 接口并自定义消息包装，同时实现 EnvelopeBuilder 接口来提供构建方式。
 	Envelope interface {
+		// GetAgent 获取消息代理的 ID
+		GetAgent() ID
+
 		// GetSender 获取消息发送者的 ID
 		GetSender() ID
 
@@ -273,8 +332,18 @@ func (d *defaultEnvelopeBuilder) BuildEnvelope() Envelope {
 	return &envelope{}
 }
 
-func (d *defaultEnvelopeBuilder) BuildStandardEnvelope(senderID ID, receiverID ID, messageType MessageType, message Message) Envelope {
+func (d *defaultEnvelopeBuilder) BuildStandardEnvelope(senderID, receiverID ID, messageType MessageType, message Message) Envelope {
 	return &envelope{
+		Sender:      senderID,
+		Receiver:    receiverID,
+		Message:     message,
+		MessageType: messageType,
+	}
+}
+
+func (d *defaultEnvelopeBuilder) BuildAgentEnvelope(agent, senderID, receiverID ID, messageType MessageType, message Message) Envelope {
+	return &envelope{
+		Agent:       agent,
 		Sender:      senderID,
 		Receiver:    receiverID,
 		Message:     message,
@@ -284,10 +353,15 @@ func (d *defaultEnvelopeBuilder) BuildStandardEnvelope(senderID ID, receiverID I
 
 // envelope 是 Envelope 的默认实现，它基于 gob 序列化方式实现了 Envelope 接口
 type envelope struct {
+	Agent       ID
 	Sender      ID
 	Receiver    ID
 	Message     Message
 	MessageType MessageType
+}
+
+func (d *envelope) GetAgent() ID {
+	return d.Agent
 }
 
 func (d *envelope) GetSender() ID {
@@ -345,3 +419,47 @@ type onUnwatch struct {
 }
 
 func (DedicatedOnUnwatch) _OnUnwatch(mark dedicated.Mark) {}
+
+type defaultOnPingBuilder struct{}
+
+func (b *defaultOnPingBuilder) BuildOnPing() OnPing {
+	return &onPing{
+		Time: time.Now(),
+	}
+}
+
+type onPing struct {
+	DedicatedOnPing
+	Time time.Time
+}
+
+func (o *onPing) GetTime() time.Time {
+	return o.Time
+}
+
+func (*DedicatedOnPing) _OnPing(mark dedicated.Mark) {}
+
+type defaultOnPongBuilder struct{}
+
+func (b *defaultOnPongBuilder) BuildPong(ping OnPing) Pong {
+	return &onPong{
+		PingTime:    ping.GetTime(),
+		ReceiveTime: time.Now(),
+	}
+}
+
+type onPong struct {
+	DedicatedPong
+	PingTime    time.Time
+	ReceiveTime time.Time
+}
+
+func (o *onPong) GetPing() time.Time {
+	return o.PingTime
+}
+
+func (o *onPong) GetPong() time.Time {
+	return o.ReceiveTime
+}
+
+func (*DedicatedPong) _Pong(mark dedicated.Mark) {}

@@ -19,17 +19,19 @@ func TestActorSystem(t *testing.T) {
 				ctx.Logger().Info("int")
 			case string:
 				ctx.Logger().Info("string")
-				ctx.Reply("reply")
+				ctx.Reply("reply: " + ctx.Sender().String())
 			}
 		})
 	})
 
 	sys.Tell(ref, 1)
 
-	v, err := sys.Ask(ref, "").Result()
-	if err != nil {
+	if err := sys.Ask(ref, "").Adapter(
+		vivid.FutureAdapter[string](func(s string, err error) error {
+			sys.Logger().Info("reply:", log.Any("message", s))
+			return nil
+		})); err != nil {
 		t.Fatal(err)
 	}
-	sys.Logger().Info("reply:", log.Any("message", v))
 	time.Sleep(time.Second)
 }

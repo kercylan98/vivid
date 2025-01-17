@@ -81,6 +81,9 @@ type Future[M Message] interface {
 
 	// AwaitForward 异步地等待阻塞结束后向目标 Actor 转发消息
 	AwaitForward(ref ActorRef, asyncFunc func() M)
+
+	// Adapter 支持对结果进行适配，通过使用 vivid.FutureAdapter 包装函数，以便在函数中处理结果
+	Adapter(handler FutureAdaptation) error
 }
 
 type future[M Message] struct {
@@ -94,6 +97,11 @@ type future[M Message] struct {
 	forwards      []ActorRef
 	closed        atomic.Bool
 	forwardsMutex sync.Mutex
+}
+
+func (f *future[M]) Adapter(handler FutureAdaptation) error {
+	message, err := f.Result()
+	return handler.adaptation(message, err, handler)
 }
 
 func (f *future[M]) GetID() ID {
@@ -218,4 +226,23 @@ func (f *future[M]) execForward() {
 		process.Send(f.sys.config.FetchRemoteMessageBuilder().BuildStandardEnvelope(f.ref, ref, UserMessage, m))
 	}
 	f.forwards = nil
+}
+
+type FutureAdaptation interface {
+	adaptation(message Message, err error, handler FutureAdaptation) error
+}
+
+type FutureAdapter[M Message] func(M, error) error
+
+func (f FutureAdapter[M]) adaptation(message Message, err error, handler FutureAdaptation) error {
+	if err != nil {
+		return err
+	}
+
+	cast, ok := message.(M)
+	if !ok {
+		return fmt.Errorf("message type error, expect %T, got %T", cast, message)
+	}
+
+	return f(cast, err)
 }
