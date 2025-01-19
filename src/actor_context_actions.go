@@ -100,11 +100,13 @@ func (ctx *actorContextActionsImpl) ask(target ActorRef, message Message, messag
 	return future
 }
 
-func (ctx *actorContextActionsImpl) Watch(target ActorRef, handlers ...WatchHandler) {
-	onWatch := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatch()
+func (ctx *actorContextActionsImpl) Watch(target ActorRef, handlers ...WatchHandler) error {
 	currHandlers, exist := ctx.watchHandlers[target]
 	if !exist {
-		ctx.tell(target, onWatch, SystemMessage)
+		onWatch := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatch()
+		if err := ctx.ask(target, onWatch, SystemMessage).Wait(); err != nil {
+			return err
+		}
 	}
 
 	if ctx.watchHandlers == nil {
@@ -115,6 +117,7 @@ func (ctx *actorContextActionsImpl) Watch(target ActorRef, handlers ...WatchHand
 	ctx.watchHandlers[target] = currHandlers
 
 	// TODO: 应该还需要 Ping/Pong 机制来保证监视的有效性，避免监视者已经终止但是监视者未收到通知，从而导致资源泄漏
+	return nil
 }
 
 func (ctx *actorContextActionsImpl) Unwatch(target ActorRef) {

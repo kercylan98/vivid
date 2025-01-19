@@ -149,10 +149,12 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 func (ctx *actorContextRecipient) onWatch() {
 	if ctx.status.Load() >= actorStatusTerminating {
 		onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped()
+		ctx.Reply(nil)
 		ctx.tell(ctx.Sender(), onWatchStopped, UserMessage) // 通过用户消息告知已死
 		return
 	}
 	ctx.addWatcher(ctx.Sender())
+	ctx.Reply(nil)
 }
 
 func (ctx *actorContextRecipient) onWatchStopped(e Envelope, m OnWatchStopped) {

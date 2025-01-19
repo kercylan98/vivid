@@ -131,7 +131,7 @@ type (
 		//  - handler 的调用是在当前 Actor 中作为消息进行处理的。
 		//  - 如果 handler 存在多个，那么会按照顺序调用。
 		//  - 重复的调用会追加更多的 handler。
-		Watch(target ActorRef, handler ...WatchHandler)
+		Watch(target ActorRef, handlers ...WatchHandler) error
 
 		// Unwatch 取消监视目标 Actor 的生命周期
 		Unwatch(target ActorRef)
