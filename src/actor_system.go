@@ -76,6 +76,9 @@ type ActorSystem interface {
 
 	// StartP 启动 Actor 系统，并在发生异常时 panic
 	StartP() ActorSystem
+
+	// Shutdown 关闭 Actor 系统
+	Shutdown() error
 }
 
 type actorSystemInternal interface {
@@ -119,4 +122,21 @@ func (sys *actorSystem) StartP() ActorSystem {
 		panic(err)
 	}
 	return sys
+}
+
+// Shutdown 关闭 Actor 系统
+func (sys *actorSystem) Shutdown() error {
+	// 设置关闭监听
+	var wait = make(chan struct{})
+	if err := sys.daemon.Watch(sys.daemon.Ref(), WatchHandlerFn(func(ctx ActorContext, stopped OnWatchStopped) {
+		close(wait)
+	})); err != nil {
+		return err
+	}
+
+	// 优雅关闭根 Actor
+	sys.daemon.PoisonKill(sys.daemon.Ref())
+
+	<-wait
+	return nil
 }

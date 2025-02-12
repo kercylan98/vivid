@@ -1,37 +1,40 @@
 package vivid_test
 
 import (
-	"github.com/kercylan98/go-log/log"
 	vivid "github.com/kercylan98/vivid/src"
 	"testing"
-	"time"
 )
 
-func TestActorSystem(t *testing.T) {
-	sys := vivid.NewActorSystem().StartP()
+func TestNewActorSystem(t *testing.T) {
+	var cases = []struct {
+		name   string
+		config vivid.ActorSystemConfiguration
+		err    bool
+	}{
+		{"标准默认配置", vivid.NewActorSystemConfig(), false},
+	}
 
-	ref := sys.ActorOfFn(func() vivid.Actor {
-		return vivid.ActorFn(func(ctx vivid.ActorContext) {
-			switch ctx.Message().(type) {
-			case vivid.OnLaunch:
-				ctx.Logger().Info("OnLaunch")
-			case int:
-				ctx.Logger().Info("int")
-			case string:
-				ctx.Logger().Info("string")
-				ctx.Reply("reply: " + ctx.Sender().String())
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sys := vivid.GetActorSystemBuilder().FromConfiguration(c.config)
+			if sys == nil {
+				if !c.err {
+					t.Error("创建 ActorSystem 失败")
+				}
+				return
+			}
+			if err := sys.Start(); err != nil && !c.err {
+				t.Error("启动 ActorSystem 失败", err)
+				return
+			}
+			if err := sys.Shutdown(); err != nil && !c.err {
+				t.Error("关闭 ActorSystem 失败", err)
+				return
+			}
+
+			if c.err {
+				t.Error("创建 ActorSystem 失败，应有错误但未发现")
 			}
 		})
-	})
-
-	sys.Tell(ref, 1)
-
-	if err := sys.Ask(ref, "").Adapter(
-		vivid.FutureAdapter[string](func(s string, err error) error {
-			sys.Logger().Info("reply:", log.Any("message", s))
-			return nil
-		})); err != nil {
-		t.Fatal(err)
 	}
-	time.Sleep(time.Second)
 }
