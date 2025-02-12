@@ -72,7 +72,7 @@ func (ctx *actorContextRecipient) onProcessSystemMessage(envelope Envelope) {
 func (ctx *actorContextRecipient) onProcessUserMessage(envelope Envelope) {
 	switch m := envelope.GetMessage().(type) {
 	case OnWatchStopped:
-		ctx.onWatchStopped(envelope, m)
+		ctx.onWatchStopped(m)
 	case OnKill:
 		ctx.onProcessUserMessageWithActor()
 		ctx.onKill(envelope, m) // 用户消息已被处理，转为终止 Actor
@@ -135,6 +135,11 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 	if watchers := ctx.getWatchers(); watchers != nil {
 		onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped()
 		for watcher := range watchers {
+			// 如果监视者是自己，此刻由于已经终止，将无法通过消息队列发送消息，因此直接调用
+			if watcher.Equal(ctx.Ref()) {
+				ctx.onWatchStopped(onWatchStopped)
+				continue
+			}
 			ctx.tell(watcher, onWatchStopped, UserMessage)
 		}
 	}
@@ -157,7 +162,7 @@ func (ctx *actorContextRecipient) onWatch() {
 	ctx.Reply(nil)
 }
 
-func (ctx *actorContextRecipient) onWatchStopped(e Envelope, m OnWatchStopped) {
+func (ctx *actorContextRecipient) onWatchStopped(m OnWatchStopped) {
 	sender := ctx.Sender()
 	handlers, exist := ctx.getWatcherHandlers(sender)
 	if !exist {
