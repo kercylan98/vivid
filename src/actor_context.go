@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"github.com/kercylan98/chrono/timing"
 	"github.com/kercylan98/go-log/log"
 	"time"
 )
@@ -18,6 +19,7 @@ type ActorContext interface {
 	actorContextExternalRelationsInternal
 	actorContextTransportInternal
 	actorContextActionsInternal
+	actorContextTimingInternal
 }
 
 // ActorContextProcess 是 ActorContext 的子集，它确保了 Actor 与 Process 相关的内容
@@ -30,6 +32,38 @@ type ActorContextProcess interface {
 
 	sendToSelfProcess(envelope Envelope)
 }
+
+// TimingTask 是定时任务的函数类型
+
+type (
+	// ActorContextTiming 是 ActorContext 的子集，它包含了 Actor 的定时器功能
+	ActorContextTiming interface {
+		// After 创建一个在一段时间后发送到 Actor 邮箱中执行的任务
+		After(name string, duration time.Duration, task TimingTask)
+
+		// ForeverLoop 创建一个循环执行的任务，它将在 duration 时间后首次执行，然后根据 interval 时间再次执行
+		ForeverLoop(name string, duration, interval time.Duration, task TimingTask)
+
+		// Loop 创建一个循环执行的任务，它将在 duration 时间后首次执行，然后根据 interval 方法返回的时间再次执行，直到次数满足 times 为止
+		Loop(name string, duration, interval time.Duration, times int, task TimingTask)
+
+		// Cron 通过 cron 表达式创建一个任务，当表达式无效时将返回错误
+		//  - 表达式说明可参阅：https://github.com/gorhill/cronexpr
+		Cron(name string, cron string, task TimingTask) error
+
+		// StopTimingTask 停止指定名称的任务
+		StopTimingTask(name string)
+
+		// ClearTimingTasks 停止所有任务
+		ClearTimingTasks()
+	}
+
+	actorContextTimingInternal interface {
+		ActorContextTiming
+
+		getTimingWheel() timing.Named
+	}
+)
 
 type (
 	// ActorContextSpawner 是 ActorContext 的子集，它确保了对子 Actor 的生成
@@ -188,15 +222,17 @@ type (
 	}
 )
 
-func newActorContext(system ActorSystem, config ActorOptionsFetcher, provider ActorProvider, parentRef ActorRef) *actorContext {
+func newActorContext(system ActorSystem, config ActorOptionsFetcher, provider ActorProvider, mailbox Mailbox, ref ActorRef, parentRef ActorRef) *actorContext {
 	ctx := &actorContext{}
+	ctx.recipient = newActorContextRecipient(ctx)
+	ctx.ActorContextProcess = newActorContextProcess(ctx, ref, mailbox)
 	ctx.actorContextTransportInternal = newActorContextTransportImpl(ctx)
 	ctx.actorContextActionsInternal = newActorContextActionsImpl(ctx)
 	ctx.actorContextExternalRelationsInternal = newActorContextExternalRelationsImpl(system, ctx, parentRef)
 	ctx.actorContextLifeInternal = newActorContextLifeImpl(ctx, config)
 	ctx.actorContextLoggerInternal = newActorContextLoggerImpl(ctx)
 	ctx.actorContextSpawnerInternal = newActorContextSpawnerImpl(ctx, provider)
-	ctx.recipient = newActorContextRecipient(ctx)
+	ctx.actorContextTimingInternal = newActorContextTimingImpl(ctx)
 	return ctx
 }
 
@@ -208,6 +244,7 @@ type actorContext struct {
 	actorContextLifeInternal
 	actorContextLoggerInternal
 	actorContextSpawnerInternal
+	actorContextTimingInternal
 
 	recipient Recipient
 }

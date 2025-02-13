@@ -76,6 +76,8 @@ func (ctx *actorContextRecipient) onProcessUserMessage(envelope Envelope) {
 	case OnKill:
 		ctx.onProcessUserMessageWithActor()
 		ctx.onKill(envelope, m) // 用户消息已被处理，转为终止 Actor
+	case TimingTask:
+		m.Execute(ctx)
 	default:
 		ctx.onProcessUserMessageWithActor()
 	}
@@ -131,9 +133,13 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 		return
 	}
 
+	// 清除所有已设置的定时器
+	// 定时器可能在生命周期中动态设定，避免出现冲突，在死亡和重启时候均需要清除
+	ctx.getTimingWheel().Clear()
+
 	// 通知监视者
 	if watchers := ctx.getWatchers(); watchers != nil {
-		onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped()
+		onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped(ctx.Ref())
 		for watcher := range watchers {
 			// 如果监视者是自己，此刻由于已经终止，将无法通过消息队列发送消息，因此直接调用
 			if watcher.Equal(ctx.Ref()) {
@@ -153,7 +159,7 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 
 func (ctx *actorContextRecipient) onWatch() {
 	if ctx.status.Load() >= actorStatusTerminating {
-		onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped()
+		onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped(ctx.Ref())
 		ctx.Reply(nil)
 		ctx.tell(ctx.Sender(), onWatchStopped, UserMessage) // 通过用户消息告知已死
 		return
@@ -163,8 +169,9 @@ func (ctx *actorContextRecipient) onWatch() {
 }
 
 func (ctx *actorContextRecipient) onWatchStopped(m OnWatchStopped) {
-	sender := ctx.Sender()
-	handlers, exist := ctx.getWatcherHandlers(sender)
+	target := m.GetRef()
+	ctx.getTimingWheel().Stop(getActorWatchTimingLoopTaskKey(target)) // 停止监视心跳定时器
+	handlers, exist := ctx.getWatcherHandlers(target)
 	if !exist {
 		return // 未监视该 Actor（可能已取消）
 	}
@@ -180,7 +187,7 @@ func (ctx *actorContextRecipient) onWatchStopped(m OnWatchStopped) {
 	}
 
 	// 释放处理器
-	ctx.deleteWatcherHandlers(sender)
+	ctx.deleteWatcherHandlers(target)
 }
 
 func (ctx *actorContextRecipient) onKilled() {

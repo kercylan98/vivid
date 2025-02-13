@@ -1,8 +1,14 @@
 package vivid
 
 import (
+	"fmt"
+	"github.com/kercylan98/chrono/timing"
 	"strconv"
 	"time"
+)
+
+const (
+	timingWheelNameWatchFormater = "[watch]%s"
 )
 
 var (
@@ -100,6 +106,10 @@ func (ctx *actorContextActionsImpl) ask(target ActorRef, message Message, messag
 	return future
 }
 
+func getActorWatchTimingLoopTaskKey(ref ActorRef) string {
+	return fmt.Sprintf(timingWheelNameWatchFormater, ref.String())
+}
+
 func (ctx *actorContextActionsImpl) Watch(target ActorRef, handlers ...WatchHandler) error {
 	currHandlers, exist := ctx.watchHandlers[target]
 	if !exist {
@@ -116,7 +126,25 @@ func (ctx *actorContextActionsImpl) Watch(target ActorRef, handlers ...WatchHand
 	currHandlers = append(currHandlers, handlers...)
 	ctx.watchHandlers[target] = currHandlers
 
-	// TODO: 应该还需要 Ping/Pong 机制来保证监视的有效性，避免监视者已经终止但是监视者未收到通知，从而导致资源泄漏
+	// 通过 Ping/Pong 机制来保证监视的有效性，避免监视者已经终止但是监视者未收到通知，从而导致资源泄漏
+	// 需要确保监听对象非自身
+	if !target.Equal(ctx.Ref()) {
+		tw := ctx.getTimingWheel()
+		taskName := getActorWatchTimingLoopTaskKey(target)
+		interval := time.Second * 5
+
+		// 异步任务，严格避免操作 ctx 的行为
+		tw.Loop(taskName, interval, timing.NewLoopTask(interval, -1, timing.TaskFn(func() {
+			_, err := ctx.Ping(target, time.Second*3)
+			if err == nil {
+				return
+			}
+			tw.Stop(taskName)
+			onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped(target)
+			ctx.tell(ctx.Ref(), onWatchStopped, UserMessage)
+		})))
+	}
+
 	return nil
 }
 

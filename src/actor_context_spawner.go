@@ -77,13 +77,6 @@ func actorOf(system ActorSystem, parent ActorContext, provider ActorProvider, co
 		}
 	}
 
-	// 初始化上下文
-	ctx := newActorContext(system, config, provider, parentRef)
-
-	// 初始化邮箱
-	mailbox := config.FetchMailbox().Provide()
-	mailbox.Init(ctx.recipient, config.FetchDispatcher().Provide())
-
 	// 初始化 ActorRef
 	var ref ActorRef
 	if parent != nil {
@@ -94,16 +87,17 @@ func actorOf(system ActorSystem, parent ActorContext, provider ActorProvider, co
 		ref = system.getConfig().FetchRemoteMessageBuilder().BuildRootID(system.getProcessManager().getHost())
 	}
 
+	// 初始化邮箱及上下文
+	mailbox := config.FetchMailbox().Provide()
+	ctx := newActorContext(system, config, provider, mailbox, ref, parentRef)
+	mailbox.Init(ctx.recipient, config.FetchDispatcher().Provide())
+
 	// 注册进程
-	process := newActorContextProcess(ctx, ref, mailbox)
-	if _, exist, err := system.getProcessManager().registerProcess(process); err != nil {
+	if _, exist, err := system.getProcessManager().registerProcess(ctx.getProcess()); err != nil {
 		panic(err)
 	} else if exist {
 		panic(fmt.Errorf("actor [%s] already exists", ref))
 	}
-
-	// 绑定进程
-	ctx.ActorContextProcess = process
 
 	// 绑定子 Actor
 	if parent != nil {

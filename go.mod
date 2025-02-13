@@ -1,8 +1,6 @@
 module github.com/kercylan98/vivid
 
-go 1.23.0
-
-toolchain go1.23.2
+go 1.23.2
 
 require (
 	github.com/fatih/color v1.18.0 // indirect
@@ -17,3 +15,9 @@ require (
 )
 
 require github.com/kercylan98/go-log v1.0.1
+
+require (
+	github.com/gorhill/cronexpr v0.0.0-20180427100037-88b0669f7d75 // indirect
+	github.com/kercylan98/chrono v0.0.3
+	github.com/kercylan98/options v0.0.1 // indirect
+)

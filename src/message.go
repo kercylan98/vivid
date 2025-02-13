@@ -124,17 +124,21 @@ type (
 	// OnWatchStoppedBuilder 是用于构建 OnWatchStopped 消息的接口
 	OnWatchStoppedBuilder interface {
 		// BuildOnWatchStopped 构建一个 OnWatchStopped 消息
-		BuildOnWatchStopped() OnWatchStopped
+		BuildOnWatchStopped(ref ActorRef) OnWatchStopped
 	}
 
 	// OnWatchStopped 该消息为 Vivid 内部使用，用于告知 Actor 观察者已停止观察
-	//  - 可以通过 ActorContext.Sender 函数获取到死亡的 ActorRef
 	OnWatchStopped interface {
 		_OnWatchStopped(mark dedicated.Mark)
+
+		// GetRef 获取已停止观察的 ActorRef
+		GetRef() ActorRef
 	}
 
 	// DedicatedOnWatchStopped 是 OnWatchStopped 的专用标记实现，它可以用来实现自定义的 OnWatchStopped 消息
-	DedicatedOnWatchStopped struct{}
+	DedicatedOnWatchStopped struct {
+		Ref ActorRef
+	}
 )
 
 var (
@@ -398,15 +402,21 @@ var (
 
 type defaultOnWatchStoppedBuilder struct{}
 
-func (b *defaultOnWatchStoppedBuilder) BuildOnWatchStopped() OnWatchStopped {
-	return &onWatchStopped{}
+func (b *defaultOnWatchStoppedBuilder) BuildOnWatchStopped(ref ActorRef) OnWatchStopped {
+	return &onWatchStopped{Ref: ref}
 }
 
 type onWatchStopped struct {
 	DedicatedOnWatchStopped
+
+	Ref ActorRef
 }
 
 func (DedicatedOnWatchStopped) _OnWatchStopped(mark dedicated.Mark) {}
+
+func (o *onWatchStopped) GetRef() ActorRef {
+	return o.Ref
+}
 
 type defaultOnUnwatchBuilder struct{}
 

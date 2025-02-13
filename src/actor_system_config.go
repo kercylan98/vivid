@@ -61,7 +61,7 @@ type ActorSystemOptions interface {
 	WithLoggerProvider(provider log.Provider) ActorSystemConfiguration
 
 	// WithCodec 设置 ActorSystem 的编解码器
-	WithCodec(codec Codec, builder RemoteMessageBuilder) ActorSystemOptionsFetcher
+	WithCodec(codec Codec, builder RemoteMessageBuilder) ActorSystemConfiguration
 }
 
 // ActorSystemOptionsFetcher 是 ActorSystem 的配置选项获取器
@@ -94,7 +94,7 @@ type defaultActorSystemConfig struct {
 	remoteMessageBuilder RemoteMessageBuilder // 远程消息构建器
 }
 
-func (d *defaultActorSystemConfig) WithCodec(codec Codec, builder RemoteMessageBuilder) ActorSystemOptionsFetcher {
+func (d *defaultActorSystemConfig) WithCodec(codec Codec, builder RemoteMessageBuilder) ActorSystemConfiguration {
 	d.codec = codec
 	d.remoteMessageBuilder = builder
 	return d

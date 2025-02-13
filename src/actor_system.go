@@ -81,14 +81,6 @@ type ActorSystem interface {
 	Shutdown() error
 }
 
-type actorSystemInternal interface {
-	setConfig(config ActorSystemOptionsFetcher)
-
-	getConfig() ActorSystemOptionsFetcher
-
-	getProcessManager() processManager
-}
-
 type actorSystem struct {
 	actorSystemInternal
 	ActorContextSpawner
