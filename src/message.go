@@ -16,6 +16,18 @@ var (
 	_defaultRemoteMessageBuilder RemoteMessageBuilder = &defaultRemoteMessageBuilder{}
 )
 
+func init() {
+	registerInternalMessage(new(envelope))
+	registerInternalMessage(new(defaultID))
+	registerInternalMessage(new(onKill))
+	registerInternalMessage(new(onKilled))
+	registerInternalMessage(new(onWatch))
+	registerInternalMessage(new(onWatchStopped))
+	registerInternalMessage(new(onUnwatch))
+	registerInternalMessage(new(onPing))
+	registerInternalMessage(new(pong))
+}
+
 // MessageType 是消息的类型，它用于区分消息的优先级及执行方式
 type MessageType = int8
 
@@ -48,7 +60,7 @@ type defaultRemoteMessageBuilder struct {
 }
 
 var (
-	_ Pong = (*onPong)(nil)
+	_ Pong = (*pong)(nil)
 )
 
 type (
@@ -452,23 +464,23 @@ func (*DedicatedOnPing) _OnPing(mark dedicated.Mark) {}
 type defaultOnPongBuilder struct{}
 
 func (b *defaultOnPongBuilder) BuildPong(ping OnPing) Pong {
-	return &onPong{
+	return &pong{
 		PingTime:    ping.GetTime(),
 		ReceiveTime: time.Now(),
 	}
 }
 
-type onPong struct {
+type pong struct {
 	DedicatedPong
 	PingTime    time.Time
 	ReceiveTime time.Time
 }
 
-func (o *onPong) GetPing() time.Time {
+func (o *pong) GetPing() time.Time {
 	return o.PingTime
 }
 
-func (o *onPong) GetPong() time.Time {
+func (o *pong) GetPong() time.Time {
 	return o.ReceiveTime
 }
 
