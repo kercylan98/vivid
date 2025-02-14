@@ -63,7 +63,7 @@ func (ctx *actorContextProcess) OnTerminate(operator ID) {
 func (ctx *actorContextProcess) sendToProcess(envelope Envelope) {
 	process, daemon := ctx.System().getProcessManager().getProcess(envelope.GetReceiver())
 	if daemon {
-		ctx.Logger().Warn("sendToProcess", log.Any("process not found", envelope))
+		ctx.Logger().Warn("sendToProcess", log.Any("onReceiveRemoteStreamMessage not found", envelope))
 		return
 	}
 	process.Send(envelope)

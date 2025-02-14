@@ -2,20 +2,13 @@ package vivid
 
 import (
 	"fmt"
+	"github.com/kercylan98/go-log/log"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
 var (
 	_ processManager = (*processManagerImpl)(nil) // 确保 processManagerImpl 实现了 processManager 接口
 )
-
-// newProcessManager 创建一个 processManagerImpl 实例，它是 processManager 的唯一实现
-func newProcessManager(host Host) *processManagerImpl {
-	return &processManagerImpl{
-		host:      host,
-		processes: xsync.NewMapOf[Path, Process](),
-	}
-}
 
 // processManager 是内部对于 Process 的管理器的抽象，它管理了所有进程的生命周期，并以接口的形式确保可测试性
 type processManager interface {
@@ -38,12 +31,45 @@ type processManager interface {
 
 	// getHost 获取主机地址
 	getHost() Host
+
+	// getCodecProvider 获取编解码器提供器
+	getCodecProvider() CodecProvider
+
+	// logger 获取日志记录器
+	logger() log.Logger
+}
+
+// newProcessManager 创建一个 processManagerImpl 实例，它是 processManager 的唯一实现
+func newProcessManager(host Host, codecProvider CodecProvider, loggerProvider log.Provider) *processManagerImpl {
+	manager := &processManagerImpl{
+		host:           host,
+		processes:      xsync.NewMapOf[Path, Process](),
+		codecProvider:  codecProvider,
+		loggerProvider: loggerProvider,
+	}
+	manager.remoteStreamManager = newRemoteStreamManager(manager)
+	return manager
 }
 
 type processManagerImpl struct {
-	daemon    Process                     // 守护进程
-	host      Host                        // 主机地址
-	processes *xsync.MapOf[Path, Process] // 用于存储所有进程的映射表
+	daemon              Process                     // 守护进程
+	host                Host                        // 主机地址
+	processes           *xsync.MapOf[Path, Process] // 用于存储所有进程的映射表
+	remoteStreamManager *remoteStreamManager        // 远程流管理器
+	codecProvider       CodecProvider               // 编解码器提供器
+	loggerProvider      log.Provider                // 日志记录器提供器
+}
+
+func (mgr *processManagerImpl) logger() log.Logger {
+	return mgr.loggerProvider.Provide()
+}
+
+func (mgr *processManagerImpl) getCodecProvider() CodecProvider {
+	return mgr.codecProvider
+}
+
+func (mgr *processManagerImpl) getHost() Host {
+	return mgr.host
 }
 
 func (mgr *processManagerImpl) setDaemon(process Process) {
@@ -53,7 +79,7 @@ func (mgr *processManagerImpl) setDaemon(process Process) {
 func (mgr *processManagerImpl) registerProcess(process Process) (id ID, exist bool, err error) {
 	processId := process.GetID()
 	if processId == nil {
-		return nil, false, fmt.Errorf("process id is nil")
+		return nil, false, fmt.Errorf("onReceiveRemoteStreamMessage id is nil")
 	}
 	process, exist = mgr.processes.LoadOrStore(processId.GetPath(), process)
 	if !exist {
@@ -87,17 +113,9 @@ func (mgr *processManagerImpl) getProcess(id ID) (process Process, daemon bool) 
 		id.SetProcessCache(nil)
 	}
 
-	//if !rc.Belong(id) {
-	//	// 远程进程加载
-	//	for _, resolver := range rc.par {
-	//		if core = resolver.Resolve(id); core != nil {
-	//			var anyProcess any = core
-	//			prcv1.StoreProcessIdCache(id, &anyProcess)
-	//			return
-	//		}
-	//	}
-	//	return rc.config.notFoundSubstitute
-	//}
+	if mgr.host != id.GetHost() {
+		return newRemoteStreamProcess(mgr.remoteStreamManager, id, mgr.codecProvider.Provide()), false
+	}
 
 	// 本地进程加载
 	var exist bool
@@ -108,8 +126,4 @@ func (mgr *processManagerImpl) getProcess(id ID) (process Process, daemon bool) 
 	} else {
 		return mgr.daemon, true
 	}
-}
-
-func (mgr *processManagerImpl) getHost() Host {
-	return mgr.host
 }

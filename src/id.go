@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"hash/fnv"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -39,6 +40,9 @@ type ID interface {
 
 	// Equal 判断两个 ID 是否相等
 	Equal(id ID) bool
+
+	// Hash 返回这个 ID 的哈希值
+	Hash() uint32
 }
 
 // IDBuilder 是一个用于构建 ID 的接口。
@@ -126,4 +130,13 @@ func (id *defaultID) GetProcessCache() Process {
 
 func (id *defaultID) SetProcessCache(process Process) {
 	id.processCache.Store(&process)
+}
+
+func (id *defaultID) Hash() uint32 {
+	h := fnv.New32a()
+	_, err := h.Write([]byte(id.Host))
+	if err != nil {
+		return 0
+	}
+	return h.Sum32()
 }

@@ -1,5 +1,7 @@
 package vivid
 
+import "github.com/kercylan98/go-log/log"
+
 var (
 	_                  ActorSystem        = (*actorSystem)(nil) // 确保 actorSystem 实现了 ActorSystem 接口
 	actorSystemBuilder ActorSystemBuilder                       // ActorSystem 的全局构建器
@@ -27,14 +29,26 @@ type ActorSystemBuilder struct{}
 // Build 用于构建 ActorSystem 实例
 func (builder ActorSystemBuilder) Build() ActorSystem {
 	sys := &actorSystem{}
-	sys.actorSystemInternal = newActorSystemInternal(sys, NewActorSystemConfig().InitDefault(), newProcessManager("localhost"))
+	config := NewActorSystemConfig().InitDefault()
+	processManager := newProcessManager("localhost", config.FetchCodec(), log.ProviderFn(func() log.Logger {
+		return config.FetchLogger()
+	}))
+	sys.actorSystemInternal = newActorSystemInternal(sys, config, processManager)
 	return sys
 }
 
 // FromConfiguration 通过配置构建 ActorSystem 实例
 func (builder ActorSystemBuilder) FromConfiguration(config ActorSystemConfiguration) ActorSystem {
-	sys := builder.Build().(*actorSystem)
-	sys.setConfig(config.InitDefault())
+	config.InitDefault()
+
+	processManager := newProcessManager("localhost", config.FetchCodec(), log.ProviderFn(func() log.Logger {
+		return config.FetchLogger()
+	}))
+
+	sys := &actorSystem{}
+	sys.actorSystemInternal = newActorSystemInternal(sys, config, processManager)
+	sys.setConfig(config)
+
 	return sys
 }
 
