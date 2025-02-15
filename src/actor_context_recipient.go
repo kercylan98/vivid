@@ -28,10 +28,14 @@ type actorContextRecipient struct {
 }
 
 func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope Envelope) {
-	if ctx.status.Load() >= actorStatusTerminating {
-		ctx.Logger().Warn("OnReceiveEnvelope", log.String("actor is terminating", ctx.Ref().GetPath()))
+	if status := ctx.status.Load(); status == actorStatusTerminated {
+		ctx.Logger().Warn("OnReceiveEnvelope", log.String("actor is terminated", ctx.Ref().String()), log.Int32("status", status))
 
-		ctx.Tell(ctx.System().Ref(), envelope)
+		// 如果该 Actor 不是顶级 Actor，那么将消息传递给顶级 Actor 确保异常被记录
+		// 如果已经是顶级 Actor，则说明 ActorSystem 正在关闭，需要丢弃消息
+		if parent := ctx.Parent(); parent != nil {
+			ctx.Tell(ctx.System().Ref(), envelope)
+		}
 		return
 	}
 
@@ -100,7 +104,7 @@ func (ctx *actorContextRecipient) onAccident(reason any) {
 }
 
 func (ctx *actorContextRecipient) onKill(envelope Envelope, event OnKill) {
-	// 当 Actor 处于 actorStatusTerminating 状态时，表明 Actor 已经在终止中，此刻也不应该继续接收新的消息
+	// 当 Actor 处于 actorStatusTerminating 状态时，表明 Actor 已经在终止中
 	if !ctx.status.CompareAndSwap(actorStatusAlive, actorStatusTerminating) {
 		// 转换状态为终止中，如果失败，表面可能已经终止
 		// 重复终止一般是在销毁时再次尝试终止导致，该逻辑可避免非幂等影响
@@ -129,7 +133,12 @@ func (ctx *actorContextRecipient) onKillChildren(event OnKill) {
 
 func (ctx *actorContextRecipient) refreshTerminateStatus() {
 	// 如果子 Actor 未全部终止或已终止，那么停止终止流程
-	if len(ctx.getChildren()) > 0 && !ctx.status.CompareAndSwap(actorStatusTerminating, actorStatusTerminated) {
+	if len(ctx.getChildren()) > 0 {
+		return
+	}
+
+	// 此刻开始终止自身
+	if !ctx.status.CompareAndSwap(actorStatusTerminating, actorStatusTerminated) {
 		return
 	}
 

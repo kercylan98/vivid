@@ -37,6 +37,8 @@ type processManager interface {
 
 	// logger 获取日志记录器
 	logger() log.Logger
+
+	getRemoteStreamManager() *remoteStreamManager
 }
 
 // newProcessManager 创建一个 processManagerImpl 实例，它是 processManager 的唯一实现
@@ -126,4 +128,8 @@ func (mgr *processManagerImpl) getProcess(id ID) (process Process, daemon bool) 
 	} else {
 		return mgr.daemon, true
 	}
+}
+
+func (mgr *processManagerImpl) getRemoteStreamManager() *remoteStreamManager {
+	return mgr.remoteStreamManager
 }

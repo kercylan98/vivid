@@ -5,6 +5,7 @@ import (
 	"github.com/kercylan98/vivid/src/internal/utils/hash"
 	"github.com/kercylan98/vivid/src/internal/utils/options"
 	"log/slog"
+	"net"
 )
 
 var (
@@ -30,14 +31,14 @@ func NewActorSystemConfig() ActorSystemConfiguration {
 // ActorSystemConfigurator 是 ActorSystem 的配置接口，它允许结构化的配置 ActorSystem
 type ActorSystemConfigurator interface {
 	// Configure 配置 ActorSystem
-	Configure(config ActorSystemConfiguration) ActorSystem
+	Configure(config ActorSystemConfiguration)
 }
 
 // ActorSystemConfiguratorFn 是 ActorSystem 的配置接口，它允许通过函数式的方式配置 ActorSystem
-type ActorSystemConfiguratorFn func(config ActorSystemConfiguration) ActorSystem
+type ActorSystemConfiguratorFn func(config ActorSystemConfiguration)
 
-func (f ActorSystemConfiguratorFn) Configure(config ActorSystemConfiguration) ActorSystem {
-	return f(config)
+func (f ActorSystemConfiguratorFn) Configure(config ActorSystemConfiguration) {
+	f(config)
 }
 
 // ActorSystemConfiguration 是 ActorSystem 的配置接口
@@ -63,8 +64,16 @@ type ActorSystemOptions interface {
 	//   - 提供者不应在每次都返回一个新的示例，应返回当前所使用的示例
 	WithLoggerProvider(provider log.Provider) ActorSystemConfiguration
 
-	// WithCodec 设置 ActorSystem 的编解码器
+	// WithCodec 设置 ActorSystem 的编解码器，仅在通过 WithListen 设置了监听地址后有效
 	WithCodec(codec CodecProvider, builder RemoteMessageBuilder) ActorSystemConfiguration
+
+	// WithListen 设置 ActorSystem 的监听地址，该方法会覆盖 WithListener 方法
+	//  - 监听地址应该为一个有效的 TCP 地址，例如 ":8080"
+	//  - 当监听地址不合法时，将会产生 panic
+	WithListen(address string) ActorSystemOptionsFetcher
+
+	// WithListener 设置 ActorSystem 的监听器，该方法会覆盖 WithListen 方法
+	WithListener(listener net.Listener) ActorSystemOptionsFetcher
 }
 
 // ActorSystemOptionsFetcher 是 ActorSystem 的配置选项获取器
@@ -86,6 +95,9 @@ type ActorSystemOptionsFetcher interface {
 
 	// FetchRemoteMessageBuilder 获取 ActorSystem 的远程消息构建器
 	FetchRemoteMessageBuilder() RemoteMessageBuilder
+
+	// FetchListener 获取 ActorSystem 的监听器
+	FetchListener() net.Listener
 }
 
 type defaultActorSystemConfig struct {
@@ -95,6 +107,7 @@ type defaultActorSystemConfig struct {
 	loggerProvider       log.Provider         // 日志记录器获取器
 	codec                CodecProvider        // 编解码器
 	remoteMessageBuilder RemoteMessageBuilder // 远程消息构建器
+	listener             net.Listener         // 监听器
 }
 
 func (d *defaultActorSystemConfig) WithCodec(codec CodecProvider, builder RemoteMessageBuilder) ActorSystemConfiguration {
@@ -169,4 +182,26 @@ func (d *defaultActorSystemConfig) modifyReadOnlyCheck() bool {
 		d.FetchLogger().Warn("ActorSystemOptions", slog.String("info", "options is read-only, modify invalid"))
 	}
 	return d.readOnly
+}
+
+func (d *defaultActorSystemConfig) WithListen(address string) ActorSystemOptionsFetcher {
+	if !d.modifyReadOnlyCheck() {
+		listener, err := net.Listen("tcp", address)
+		if err != nil {
+			panic(err)
+		}
+		return d.WithListener(listener)
+	}
+	return d
+}
+
+func (d *defaultActorSystemConfig) WithListener(listener net.Listener) ActorSystemOptionsFetcher {
+	if !d.modifyReadOnlyCheck() {
+		d.listener = listener
+	}
+	return d
+}
+
+func (d *defaultActorSystemConfig) FetchListener() net.Listener {
+	return d.listener
 }

@@ -30,23 +30,16 @@ type ActorSystemBuilder struct{}
 func (builder ActorSystemBuilder) Build() ActorSystem {
 	sys := &actorSystem{}
 	config := NewActorSystemConfig().InitDefault()
-	processManager := newProcessManager("localhost", config.FetchCodec(), log.ProviderFn(func() log.Logger {
-		return config.FetchLogger()
-	}))
-	sys.actorSystemInternal = newActorSystemInternal(sys, config, processManager)
+
+	sys.actorSystemInternal = newActorSystemInternal(sys, config)
 	return sys
 }
 
 // FromConfiguration 通过配置构建 ActorSystem 实例
 func (builder ActorSystemBuilder) FromConfiguration(config ActorSystemConfiguration) ActorSystem {
 	config.InitDefault()
-
-	processManager := newProcessManager("localhost", config.FetchCodec(), log.ProviderFn(func() log.Logger {
-		return config.FetchLogger()
-	}))
-
 	sys := &actorSystem{}
-	sys.actorSystemInternal = newActorSystemInternal(sys, config, processManager)
+	sys.actorSystemInternal = newActorSystemInternal(sys, config)
 	sys.setConfig(config)
 
 	return sys
@@ -93,6 +86,9 @@ type ActorSystem interface {
 
 	// Shutdown 关闭 Actor 系统
 	Shutdown() error
+
+	// ShutdownP 关闭 Actor 系统，并在发生异常时 panic
+	ShutdownP() ActorSystem
 }
 
 type actorSystem struct {
@@ -104,8 +100,22 @@ type actorSystem struct {
 	daemon ActorContext // 根 Actor
 }
 
+func (sys *actorSystem) Logger() log.Logger {
+	return sys.getConfig().FetchLogger()
+}
+
 // Start 启动 Actor 系统
 func (sys *actorSystem) Start() error {
+	sys.writeInitLog(log.String("name", sys.getConfig().FetchName()))
+
+	// 初始化远程通信
+	if err := sys.actorSystemInternal.initRemote(); err != nil {
+		return err
+	}
+
+	// 初始化进程控制器
+	sys.actorSystemInternal.initProcessManager()
+
 	// 初始化 Root Actor
 	daemon := generateRootActorContext(sys, ActorProviderFn(func() Actor {
 		return new(rootActor)
@@ -119,6 +129,11 @@ func (sys *actorSystem) Start() error {
 	sys.ActorContextActions = daemon
 	sys.getProcessManager().setDaemon(daemon.getProcess())
 
+	// 相关日志
+	addr := sys.getProcessManager().getHost()
+	sys.writeInitLog(log.String("feature", "remote"), log.Bool("enabled", addr != "localhost"), log.String("listen", addr))
+
+	sys.writeInitLog(log.String("stage", "started"))
 	return nil
 }
 
@@ -145,4 +160,12 @@ func (sys *actorSystem) Shutdown() error {
 
 	<-wait
 	return nil
+}
+
+// ShutdownP 关闭 Actor 系统，并在发生异常时 panic
+func (sys *actorSystem) ShutdownP() ActorSystem {
+	if err := sys.Shutdown(); err != nil {
+		panic(err)
+	}
+	return sys
 }

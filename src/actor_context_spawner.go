@@ -112,7 +112,11 @@ func actorOf(system ActorSystem, parent ActorContext, provider ActorProvider, co
 
 	// 启动完成
 	ctx.Tell(ctx.Ref(), newOnLaunch(time.Now(), launchContext))
-	ctx.Logger().Debug("spawn", log.String("actor", ctx.Ref().String()))
+	if parent != nil {
+		ctx.Logger().Debug("ActorSpawn", log.String("actor", ctx.Ref().String()))
+	} else {
+		ctx.System().writeInitLog(log.String("stage", "guard actor initialized"))
+	}
 
 	return ctx
 }
