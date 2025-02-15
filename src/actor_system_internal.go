@@ -82,6 +82,7 @@ func (a *actorSystemInternalImpl) initRemote() error {
 }
 
 func (a *actorSystemInternalImpl) initProcessManager() {
+	// TODO: 不应该使用 localhost 作为本地地址，因为远程通讯时候，本地 ActorSystem 是可以主动访问到远程 ActorSystem 的。这时候记录的地址会是 localhost，如果有多个，那么将会出现问题。暂时没有更好的解决方案，后续需要考虑如何解决这个问题。
 	var addr = "localhost"
 	if listener := a.getConfig().FetchListener(); listener != nil {
 		addr = listener.Addr().String()

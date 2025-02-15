@@ -120,6 +120,11 @@ func (r *remoteStreamProcess) send() (stop bool) {
 			// 尚未持有远程流，尝试获取
 			if stream == nil {
 				stream, err = r.manager.loadOrInitClientRemoteStream(r.id.GetHost())
+				r.stream = stream
+				if err != nil {
+					r.manager.processManager.logger().Error("remote", log.String("event", "send"), log.String("addr", r.id.GetHost()), log.String("info", "get remote stream error"), log.Err(err))
+					break
+				}
 			}
 
 			// 如果获取远程流失败或者发送消息失败，进入下一次重试
@@ -147,7 +152,7 @@ func (r *remoteStreamProcess) send() (stop bool) {
 				sleepDuration = maxDelay
 			}
 
-			r.manager.processManager.logger().Error("remote", log.String("event", "send"), log.Int("times", failCount), log.String("info", "send message error"), log.Err(err))
+			r.manager.processManager.logger().Error("remote", log.String("event", "send"), log.String("addr", r.id.GetHost()), log.Int("times", failCount), log.String("info", "send message error"), log.Err(err))
 
 			time.Sleep(sleepDuration)
 		}

@@ -57,17 +57,20 @@ func (r *remoteStreamManager) bindRemoteStream(addr Addr, stream remoteStream) {
 func (r *remoteStreamManager) loadOrInitClientRemoteStream(addr Addr) (remoteStream, error) {
 	// 采用读锁获取目标，避免每次获取都加写锁，需要使用双重校验来确保不会重复创建
 	r.rw.RLock()
-	index := time.Now().UnixMilli() % remoteStreamLimit
 	if streams, ok := r.streams[addr]; ok {
 		// 随机选择一个远程流
-		if index < int64(len(streams)) {
-			r.rw.RUnlock()
-			return streams[index], nil
+		var index int64
+		if len(r.streams) > 0 {
+			index = time.Now().UnixMilli() % int64(len(r.streams))
+			if index < int64(len(streams)) {
+				r.rw.RUnlock()
+				return streams[index], nil
+			}
 		}
 	}
 	r.rw.RUnlock()
 	if stream, err := r.createRemoteStream(addr); err != nil {
-		r.processManager.logger().Warn("remote", log.String("event", "dial"), log.Any("info", "retrying on a continuous basis"), log.Any("err", err))
+		r.processManager.logger().Warn("remote", log.String("event", "dial"), log.String("addr", addr), log.Any("info", "retrying on a continuous basis"), log.Any("err", err))
 		return nil, err
 	} else {
 		return stream, nil
@@ -144,8 +147,9 @@ func (r *remoteStreamManager) waitRemoteStreamHandshake(stream remoteStream) (*p
 		return nil, errors.New("loop-back connection is not allowed")
 	}
 
-	handshake.Address = addr
-	return handshake, stream.Send(message)
+	return handshake, stream.Send(&protobuf.Message{
+		MessageType: &protobuf.Message_Handshake_{Handshake: &protobuf.Message_Handshake{Address: addr}},
+	})
 }
 
 // startListenRemoteStreamMessage 开始监听远程流消息
