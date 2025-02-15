@@ -106,7 +106,7 @@ func (sys *actorSystem) Logger() log.Logger {
 
 // Start 启动 Actor 系统
 func (sys *actorSystem) Start() error {
-	sys.writeInitLog(log.String("name", sys.getConfig().FetchName()))
+	sys.writeInitLog(log.String("stage", "starting"), log.String("name", sys.getConfig().FetchName()))
 
 	// 初始化远程通信
 	if err := sys.actorSystemInternal.initRemote(); err != nil {
@@ -130,9 +130,12 @@ func (sys *actorSystem) Start() error {
 	sys.getProcessManager().setDaemon(daemon.getProcess())
 
 	// 相关日志
-	addr := sys.getProcessManager().getHost()
-	sys.writeInitLog(log.String("feature", "remote"), log.Bool("enabled", addr != "localhost"), log.String("listen", addr))
-
+	remoteEnabled := sys.getProcessManager().getHost() != sys.getConfig().FetchName()
+	if !remoteEnabled {
+		sys.writeInitLog(log.String("stage", "remote"), log.Bool("enabled", remoteEnabled), log.String("listen", "unused"), log.String("info", "remote function only supports active access"))
+	} else {
+		sys.writeInitLog(log.String("stage", "remote"), log.Bool("enabled", remoteEnabled), log.String("listen", sys.getProcessManager().getHost()))
+	}
 	sys.writeInitLog(log.String("stage", "started"))
 	return nil
 }
