@@ -78,7 +78,7 @@ func (ctx *actorContextActionsImpl) Tell(target ActorRef, message Message) {
 }
 
 func (ctx *actorContextActionsImpl) tell(target ActorRef, message Message, messageType MessageType) {
-	envelope := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildStandardEnvelope(ctx.Ref(), target, messageType, message)
+	envelope := ctx.getMessageBuilder().BuildStandardEnvelope(ctx.Ref(), target, messageType, message)
 
 	if ctx.Ref().Equal(target) {
 		// 如果目标是自己，那么通过 Send 函数来对消息进行加速

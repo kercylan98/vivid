@@ -140,6 +140,9 @@ type (
 
 	actorContextExternalRelationsInternal interface {
 		ActorContextExternalRelations
+
+		// getMessageBuilder 获取消息构建器
+		getMessageBuilder() RemoteMessageBuilder
 	}
 )
 
