@@ -48,6 +48,29 @@ func TestActorContextActionsImpl_TellRemote(t *testing.T) {
 	wait.Wait()
 }
 
+func TestActorContextActionsImpl_Ask(t *testing.T) {
+	system := vivid.NewActorSystem().StartP()
+	defer system.ShutdownP()
+
+	ref := system.ActorOfFn(func() vivid.Actor {
+		return vivid.ActorFn(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case string:
+				t.Log("Receive", m)
+				ctx.Reply("World")
+			}
+		})
+	})
+
+	result, err := system.Ask(ref, "Hello").Result()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	t.Log("Result", result)
+}
+
 func TestActorContextActionsImpl_AskRemote(t *testing.T) {
 	system1 := vivid.NewActorSystem().StartP()
 	system2 := vivid.NewActorSystem(vivid.ActorSystemConfiguratorFn(func(config vivid.ActorSystemConfiguration) {
@@ -73,4 +96,34 @@ func TestActorContextActionsImpl_AskRemote(t *testing.T) {
 	}
 
 	t.Log("Result", result)
+}
+
+func TestActorContextActionsImpl_PoisonKill(t *testing.T) {
+	system := vivid.NewActorSystem().StartP()
+	defer system.ShutdownP()
+
+	state := 0
+
+	ref := system.ActorOfFn(func() vivid.Actor {
+		return vivid.ActorFn(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case string:
+				if state != 0 {
+					t.Error("State is not 0")
+					return
+				}
+				state = 1
+				t.Log("Receive", m)
+			case vivid.OnKill:
+				if state != 1 {
+					t.Error("State is not 1")
+					return
+				}
+				state = 2
+			}
+		})
+	})
+
+	system.Tell(ref, "Hello")
+	system.PoisonKill(ref)
 }

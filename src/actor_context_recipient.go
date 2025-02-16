@@ -29,12 +29,20 @@ type actorContextRecipient struct {
 
 func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope Envelope) {
 	if status := ctx.status.Load(); status == actorStatusTerminated {
-		ctx.Logger().Warn("OnReceiveEnvelope", log.String("actor is terminated", ctx.Ref().String()), log.Int32("status", status))
+		switch envelope.GetMessage().(type) {
+		case OnKill:
+			// 当子 Actor 正在终止的过程，还未向父 Actor 发送 OnKilled 消息时
+			// 父 Actor 如果被终止或主动终止子 Actor，此刻依旧会向子 Actor 发送 OnKill 消息
+			// 此时子 Actor 将会被正常流程终止，因此直接返回
+			return
+		default:
+			ctx.Logger().Warn("OnReceiveEnvelope", log.String("actor is terminated", ctx.Ref().String()), log.Int32("status", status))
 
-		// 如果该 Actor 不是顶级 Actor，那么将消息传递给顶级 Actor 确保异常被记录
-		// 如果已经是顶级 Actor，则说明 ActorSystem 正在关闭，需要丢弃消息
-		if parent := ctx.Parent(); parent != nil {
-			ctx.Tell(ctx.System().Ref(), envelope)
+			// 如果该 Actor 不是顶级 Actor，那么将消息传递给顶级 Actor 确保异常被记录
+			// 如果已经是顶级 Actor，则说明 ActorSystem 正在关闭，需要丢弃消息
+			if parent := ctx.Parent(); parent != nil {
+				ctx.Tell(ctx.System().Ref(), envelope)
+			}
 		}
 		return
 	}
@@ -78,7 +86,6 @@ func (ctx *actorContextRecipient) onProcessUserMessage(envelope Envelope) {
 	case OnWatchStopped:
 		ctx.onWatchStopped(m)
 	case OnKill:
-		ctx.onProcessUserMessageWithActor()
 		ctx.onKill(envelope, m) // 用户消息已被处理，转为终止 Actor
 	case TimingTask:
 		m.Execute(ctx)
@@ -112,7 +119,7 @@ func (ctx *actorContextRecipient) onKill(envelope Envelope, event OnKill) {
 	}
 
 	// 等待用户处理持久化或清理工作
-	ctx.onProcessUserMessage(envelope)
+	ctx.onProcessUserMessageWithActor()
 
 	// 终止子 Actor
 	ctx.onKillChildren(event)
