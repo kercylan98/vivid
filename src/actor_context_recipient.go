@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/kercylan98/go-log/log"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -25,7 +26,8 @@ func newActorContextRecipient(ctx ActorContext) *actorContextRecipient {
 
 type actorContextRecipient struct {
 	ActorContext
-	status atomic.Uint32 // Actor 状态
+	status  atomic.Uint32 // Actor 状态
+	restart bool          // 是否需要重启
 }
 
 func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope Envelope) {
@@ -68,7 +70,7 @@ func (ctx *actorContextRecipient) onProcessSystemMessage(envelope Envelope) {
 	case OnLaunch:
 		ctx.onProcessUserMessage(envelope)
 	case OnKill:
-		ctx.onKill(envelope, m)
+		ctx.onKill(m)
 	case OnKilled:
 		ctx.onKilled()
 	case OnWatch:
@@ -87,7 +89,7 @@ func (ctx *actorContextRecipient) onProcessUserMessage(envelope Envelope) {
 	case OnWatchStopped:
 		ctx.onWatchStopped(m)
 	case OnKill:
-		ctx.onKill(envelope, m) // 用户消息已被处理，转为终止 Actor
+		ctx.onKill(m) // 用户消息已被处理，转为终止 Actor
 	case TimingTask:
 		m.Execute(ctx)
 	default:
@@ -111,13 +113,16 @@ func (ctx *actorContextRecipient) onAccident(reason any) {
 	panic("implement me")
 }
 
-func (ctx *actorContextRecipient) onKill(envelope Envelope, event OnKill) {
+func (ctx *actorContextRecipient) onKill(event OnKill) {
 	// 当 Actor 处于 actorStatusTerminating 状态时，表明 Actor 已经在终止中
 	if !ctx.status.CompareAndSwap(actorStatusAlive, actorStatusTerminating) {
 		// 转换状态为终止中，如果失败，表面可能已经终止
 		// 重复终止一般是在销毁时再次尝试终止导致，该逻辑可避免非幂等影响
 		return
 	}
+
+	// 记录重启状态
+	ctx.restart = event.Restart()
 
 	// 等待用户处理持久化或清理工作
 	ctx.onProcessUserMessageWithActor()
@@ -157,24 +162,44 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 	// 此刻已经死亡，记录日志
 	ctx.onKillLog()
 
-	// 通知监视者
-	if watchers := ctx.getWatchers(); watchers != nil {
-		onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped(ctx.Ref())
-		for watcher := range watchers {
-			// 如果监视者是自己，此刻由于已经终止，将无法通过消息队列发送消息，因此直接调用
-			if watcher.Equal(ctx.Ref()) {
-				ctx.onWatchStopped(onWatchStopped)
-				continue
+	// 如果需要重启，那么不再需要通知监视着及父 Actor，避免误认为 Actor 已经终止
+	// 但是一些特殊情况可能需要处理，后续应该需要添加配置项来控制是否通知监视者
+	// TODO: 添加配置项来控制是否通知监视者
+	if ctx.restart {
+		// 重置 Actor 状态
+		ctx.resetActorState()
+
+		// 发送 OnLaunch 消息
+		var launchContext map[any]any
+		if launchContextProvider := ctx.getConfig().FetchLaunchContextProvider(); launchContextProvider != nil {
+			launchContext = launchContextProvider.Provide()
+		}
+		ctx.tell(ctx.Ref(), ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnLaunch(time.Now(), launchContext, true), SystemMessage)
+
+		// 恢复 Actor 状态
+		ctx.restart = false
+		ctx.status.Store(actorStatusAlive)
+	} else {
+		// 通知监视者
+		if watchers := ctx.getWatchers(); watchers != nil {
+			onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped(ctx.Ref())
+			for watcher := range watchers {
+				// 如果监视者是自己，此刻由于已经终止，将无法通过消息队列发送消息，因此直接调用
+				if watcher.Equal(ctx.Ref()) {
+					ctx.onWatchStopped(onWatchStopped)
+					continue
+				}
+				ctx.tell(watcher, onWatchStopped, UserMessage)
 			}
-			ctx.tell(watcher, onWatchStopped, UserMessage)
+		}
+
+		// 通知父 Actor
+		if parent := ctx.Parent(); parent != nil {
+			onKilled := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnKilled(ctx.Ref())
+			ctx.tell(parent, onKilled, SystemMessage)
 		}
 	}
 
-	// 通知父 Actor
-	if parent := ctx.Parent(); parent != nil {
-		onKilled := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnKilled(ctx.Ref())
-		ctx.tell(parent, onKilled, SystemMessage)
-	}
 }
 
 func (ctx *actorContextRecipient) onWatch() {

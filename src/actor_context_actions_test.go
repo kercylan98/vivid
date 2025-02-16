@@ -259,3 +259,23 @@ func TestActorContextActionsImpl_Unwatch(t *testing.T) {
 
 	system.Kill(ref, "正常终止")
 }
+
+func TestActorContextActionsImpl_Restart(t *testing.T) {
+	system := vivid.NewActorSystem().StartP()
+	defer system.ShutdownP()
+
+	ref := system.ActorOfFn(func() vivid.Actor {
+		return vivid.ActorFn(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case vivid.OnLaunch:
+				if m.Restarted() {
+					t.Log("Restarted")
+				} else {
+					t.Log("Launched")
+				}
+			}
+		})
+	})
+
+	system.Restart(ref, false)
+}

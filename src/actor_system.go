@@ -121,7 +121,7 @@ func (sys *actorSystem) Start() error {
 
 	// 初始化 Root Actor
 	daemon := generateRootActorContext(sys, ActorProviderFn(func() Actor {
-		return new(rootActor)
+		return new(guardActor)
 	}), ActorConfiguratorFn(func(config ActorConfiguration) {
 		config.WithLoggerProvider(sys.getConfig().FetchLoggerProvider())
 	}))

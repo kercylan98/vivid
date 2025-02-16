@@ -29,6 +29,10 @@ func (ctx *actorContextSpawnerImpl) getActor() Actor {
 	return ctx.actor
 }
 
+func (ctx *actorContextSpawnerImpl) resetActorState() {
+	ctx.actor = ctx.provider.Provide()
+}
+
 func (ctx *actorContextSpawnerImpl) ActorOf(provider ActorProvider, configurator ...ActorConfigurator) ActorRef {
 	config := NewActorConfig(ctx)
 	for _, c := range configurator {
@@ -111,7 +115,7 @@ func actorOf(system ActorSystem, parent ActorContext, provider ActorProvider, co
 	}
 
 	// 启动完成
-	ctx.Tell(ctx.Ref(), newOnLaunch(time.Now(), launchContext))
+	ctx.Tell(ctx.Ref(), system.getConfig().FetchRemoteMessageBuilder().BuildOnLaunch(time.Now(), launchContext, false))
 	if parent != nil {
 		ctx.Logger().Debug("ActorSpawn", log.String("actor", ctx.Ref().String()))
 	} else {

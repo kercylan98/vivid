@@ -23,10 +23,10 @@ func init() {
 	registerInternalMessage(new(onKilled))
 	registerInternalMessage(new(onWatch))
 	registerInternalMessage(new(onWatchStopped))
-	registerInternalMessage(new(DedicatedOnWatchStopped))
 	registerInternalMessage(new(onUnwatch))
 	registerInternalMessage(new(onPing))
 	registerInternalMessage(new(pong))
+	registerInternalMessage(new(onLaunch))
 }
 
 // MessageType 是消息的类型，它用于区分消息的优先级及执行方式
@@ -46,6 +46,7 @@ type RemoteMessageBuilder interface {
 	OnUnwatchBuilder
 	OnPingBuilder
 	PongBuilder
+	OnLaunchBuilder
 }
 
 type defaultRemoteMessageBuilder struct {
@@ -58,6 +59,7 @@ type defaultRemoteMessageBuilder struct {
 	defaultOnUnwatchBuilder
 	defaultOnPingBuilder
 	defaultOnPongBuilder
+	defaultOnLaunchBuilder
 }
 
 var (
@@ -175,6 +177,12 @@ type (
 )
 
 type (
+	// OnLaunchBuilder 是用于构建 OnLaunch 消息的接口
+	OnLaunchBuilder interface {
+		// BuildOnLaunch 构建一个 OnLaunch 消息
+		BuildOnLaunch(launchAt time.Time, context map[any]any, isRestart bool) OnLaunch
+	}
+
 	// OnLaunch 在 Actor 启动时，将会作为第一条消息被处理，适用于初始化 Actor 状态等场景。
 	OnLaunch interface {
 		_OnLaunch(mark dedicated.Mark)
@@ -187,7 +195,12 @@ type (
 		// 在一些时候，你也许希望 ActorProvider 返回的是一个单一的 Actor 实例，但在不同的 Actor 启动时，需要传递不同的参数。
 		// 通过 GetContext 方法，你可以获取 Actor 启动时传递的参数，以便在 Actor 启动时进行初始化。
 		GetContext(key any) (val any, exist bool)
+
+		// Restarted 是否为重启
+		Restarted() bool
 	}
+
+	DedicatedOnLaunch struct{}
 )
 
 var (
@@ -198,7 +211,7 @@ type (
 	// OnKillBuilder 是用于构建 OnKill 消息的接口
 	OnKillBuilder interface {
 		// BuildOnKill 构建一个 OnKill 消息
-		BuildOnKill(reason string, operator ActorRef, poison bool) OnKill
+		BuildOnKill(reason string, operator ActorRef, poison bool, restart bool) OnKill
 	}
 
 	// OnKill 该消息表示 Actor 在处理完成当前消息后，将会被立即终止。需要在该阶段完成状态的持久化及资源的释放等操作。
@@ -213,6 +226,9 @@ type (
 
 		// IsPoison 是否为优雅终止
 		IsPoison() bool
+
+		// Restart 是否需要重启
+		Restart() bool
 	}
 
 	// DedicatedOnKill 是 OnKill 的专用标记实现，它可以用来实现自定义的 OnKill 消息
@@ -287,45 +303,56 @@ type onKilled struct {
 
 func (*DedicatedOnKilled) _OnKilled(mark dedicated.Mark) {}
 
-func newOnLaunch(launchAt time.Time, context map[any]any) OnLaunch {
+type defaultOnLaunchBuilder struct{}
+
+func (b *defaultOnLaunchBuilder) BuildOnLaunch(launchAt time.Time, context map[any]any, isRestart bool) OnLaunch {
 	return &onLaunch{
-		launchAt: launchAt,
-		context:  context,
+		LaunchAt:  launchAt,
+		Context:   context,
+		IsRestart: isRestart,
 	}
 }
 
 type onLaunch struct {
-	launchAt time.Time
-	context  map[any]any
+	DedicatedOnLaunch
+	LaunchAt  time.Time
+	Context   map[any]any
+	IsRestart bool
 }
 
-func (o *onLaunch) _OnLaunch(mark dedicated.Mark) {}
+func (o *DedicatedOnLaunch) _OnLaunch(mark dedicated.Mark) {}
 
 func (o *onLaunch) GetLaunchTime() time.Time {
-	return o.launchAt
+	return o.LaunchAt
 }
 
 func (o *onLaunch) GetContext(key any) (val any, exist bool) {
-	val, exist = o.context[key]
+	val, exist = o.Context[key]
 	return
+}
+
+func (o *onLaunch) Restarted() bool {
+	return o.IsRestart
 }
 
 type defaultOnKillBuilder struct{}
 
-func (b *defaultOnKillBuilder) BuildOnKill(reason string, operator ActorRef, poison bool) OnKill {
+func (b *defaultOnKillBuilder) BuildOnKill(reason string, operator ActorRef, poison bool, restart bool) OnKill {
 	return &onKill{
-		Reason:   reason,
-		Operator: operator,
-		Poison:   poison,
+		Reason:      reason,
+		Operator:    operator,
+		Poison:      poison,
+		NeedRestart: restart,
 	}
 }
 
 type onKill struct {
 	DedicatedOnKill
 
-	Reason   string   // 携带的终止原因
-	Operator ActorRef // 操作者
-	Poison   bool     // 是否为优雅终止
+	Reason      string   // 携带的终止原因
+	Operator    ActorRef // 操作者
+	Poison      bool     // 是否为优雅终止
+	NeedRestart bool     // 是否需要重启
 }
 
 func (k *onKill) GetReason() string {
@@ -338,6 +365,10 @@ func (k *onKill) GetOperator() ActorRef {
 
 func (k *onKill) IsPoison() bool {
 	return k.Poison
+}
+
+func (k *onKill) Restart() bool {
+	return k.NeedRestart
 }
 
 func (*DedicatedOnKill) _OnKill(mark dedicated.Mark) {}

@@ -62,7 +62,7 @@ func (ctx *actorContextActionsImpl) Kill(target ActorRef, reason ...string) {
 	if len(reason) > 0 {
 		r = reason[0]
 	}
-	ctx.tell(target, ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnKill(r, ctx.Ref(), false), SystemMessage)
+	ctx.tell(target, ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnKill(r, ctx.Ref(), false, false), SystemMessage)
 }
 
 func (ctx *actorContextActionsImpl) PoisonKill(target ActorRef, reason ...string) {
@@ -70,7 +70,7 @@ func (ctx *actorContextActionsImpl) PoisonKill(target ActorRef, reason ...string
 	if len(reason) > 0 {
 		r = reason[0]
 	}
-	ctx.tell(target, ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnKill(r, ctx.Ref(), true), UserMessage)
+	ctx.tell(target, ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnKill(r, ctx.Ref(), true, false), UserMessage)
 }
 
 func (ctx *actorContextActionsImpl) Tell(target ActorRef, message Message) {
@@ -162,4 +162,18 @@ func (ctx *actorContextActionsImpl) Unwatch(target ActorRef) {
 	if len(ctx.watchHandlers) == 0 {
 		ctx.watchHandlers = nil
 	}
+}
+
+func (ctx *actorContextActionsImpl) Restart(target ActorRef, gracefully bool, reason ...string) {
+	var r string
+	if len(reason) > 0 {
+		r = reason[0]
+	}
+	var messageType MessageType
+	if gracefully {
+		messageType = UserMessage
+	} else {
+		messageType = SystemMessage
+	}
+	ctx.tell(target, ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnKill(r, ctx.Ref(), gracefully, true), messageType)
 }

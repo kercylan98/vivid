@@ -85,7 +85,11 @@ type (
 	actorContextSpawnerInternal interface {
 		ActorContextSpawner
 
+		// getActor 获取当前 Actor
 		getActor() Actor
+
+		// resetActorState 重置 Actor 状态
+		resetActorState()
 	}
 )
 
@@ -172,6 +176,9 @@ type (
 
 		// Unwatch 取消监视目标 Actor 的生命周期
 		Unwatch(target ActorRef)
+
+		// Restart 重启目标 Actor
+		Restart(target ActorRef, gracefully bool, reason ...string)
 	}
 
 	actorContextActionsInternal interface {
