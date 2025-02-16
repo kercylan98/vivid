@@ -229,3 +229,33 @@ func TestActorContextActionsImpl_Watch(t *testing.T) {
 	system1.PoisonKill(system2.Ref(), "跨系统终止")
 	wait.Wait()
 }
+
+func TestActorContextActionsImpl_Unwatch(t *testing.T) {
+	system := vivid.NewActorSystem().StartP()
+
+	defer system.ShutdownP()
+
+	wait := new(sync.WaitGroup)
+	wait.Add(1)
+
+	ref := system.ActorOfFn(func() vivid.Actor {
+		return vivid.ActorFn(func(ctx vivid.ActorContext) {})
+	})
+
+	system.ActorOfFn(func() vivid.Actor {
+		return vivid.ActorFn(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case vivid.OnLaunch:
+				if err := ctx.Watch(ref, vivid.WatchHandlerFn(func(ctx vivid.ActorContext, stopped vivid.OnWatchStopped) {
+					t.Error("not should be called")
+				})); err != nil {
+					t.Error(err)
+				}
+
+				ctx.Unwatch(ref)
+			}
+		})
+	})
+
+	system.Kill(ref, "正常终止")
+}

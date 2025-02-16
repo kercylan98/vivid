@@ -32,11 +32,9 @@ func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope Envelope) {
 	if status := ctx.status.Load(); status == actorStatusTerminated {
 		switch envelope.GetMessage().(type) {
 		case OnWatch, OnWatchStopped:
-			// 继续执行
-		case OnKill:
-			// 当子 Actor 正在终止的过程，还未向父 Actor 发送 OnKilled 消息时
-			// 父 Actor 如果被终止或主动终止子 Actor，此刻依旧会向子 Actor 发送 OnKill 消息
-			// 此时子 Actor 将会被正常流程终止，因此直接返回
+			// 此类消息在关闭后依旧可能被发送，需要经过处理以达到状态一致，处理中需要确保考虑到 Actor 不同状态下的处理逻辑
+		case OnKill, OnUnwatch:
+			// 此类消息在关闭后依旧可能被发送，不处理的效果等同于已经处理
 			return
 		default:
 			ctx.Logger().Warn("OnReceiveEnvelope", log.String("actor is terminated", ctx.Ref().String()), log.Int32("status", status), log.String("sender", envelope.GetSender().String()), log.String("message", fmt.Sprintf("%T", envelope.GetMessage())))
