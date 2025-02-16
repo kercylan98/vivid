@@ -18,11 +18,10 @@ const (
 
 var _ Process = (*remoteStreamProcess)(nil)
 
-func newRemoteStreamProcess(manager *remoteStreamManager, id ID, codec Codec) Process {
+func newRemoteStreamProcess(manager *remoteStreamManager, id ID) Process {
 	rsp := &remoteStreamProcess{
 		manager: manager,
 		id:      id,
-		codec:   codec,
 	}
 
 	return rsp
@@ -32,10 +31,9 @@ type remoteStreamProcess struct {
 	manager        *remoteStreamManager // 远程流管理器
 	id             ID                   // 指向的远程流的 ID
 	stream         remoteStream         // 远程流
-	batch          [][]byte             // 批量消息
+	batch          []Envelope           // 批量消息
 	rw             sync.RWMutex         // 读写锁
 	state          atomic.Uint32        // 状态
-	codec          Codec                // 编解码器
 	recoveryWaiter sync.WaitGroup       // 恢复等待组
 }
 
@@ -47,12 +45,7 @@ func (r *remoteStreamProcess) Send(envelope Envelope) {
 	r.recoveryWaiter.Wait()
 
 	r.rw.Lock()
-	data, err := r.codec.Encode(envelope)
-	if err != nil {
-		r.rw.Unlock()
-		panic(err)
-	}
-	r.batch = append(r.batch, data)
+	r.batch = append(r.batch, envelope)
 	r.rw.Unlock()
 
 	r.activation()
@@ -95,7 +88,7 @@ func (r *remoteStreamProcess) send() (stop bool) {
 	for {
 		r.rw.Lock()
 		n := len(r.batch)
-		var batch [][]byte
+		var batch []Envelope
 		if n < remoteStreamBatchLimit {
 			batch = r.batch
 			r.batch = nil
@@ -108,13 +101,12 @@ func (r *remoteStreamProcess) send() (stop bool) {
 			break
 		}
 
-		var m = &protobuf.Message{MessageType: &protobuf.Message_Batch_{Batch: &protobuf.Message_Batch{Messages: batch}}}
-
 		// 尝试发送消息
 		var stream = r.stream
 		var err error
 		var once sync.Once
 		var failCount int
+		var m *protobuf.Message
 
 		for {
 			// 尚未持有远程流，尝试获取
@@ -129,6 +121,18 @@ func (r *remoteStreamProcess) send() (stop bool) {
 
 			// 如果获取远程流失败或者发送消息失败，进入下一次重试
 			if err == nil {
+				if m == nil {
+					var batchBytes = make([][]byte, 0, len(batch))
+					for _, envelope := range batch {
+						data, err := stream.getCodec().Encode(envelope)
+						if err != nil {
+							panic(err)
+						}
+						batchBytes = append(batchBytes, data)
+					}
+					m = &protobuf.Message{MessageType: &protobuf.Message_Batch_{Batch: &protobuf.Message_Batch{Messages: batchBytes}}}
+				}
+
 				if err = stream.Send(m); err != nil {
 					r.stream = nil
 					r.stream.close()

@@ -23,17 +23,17 @@ func newActorContextActionsImpl(ctx *actorContext) actorContextActionsInternal {
 
 type actorContextActionsImpl struct {
 	ActorContext
-	watchHandlers map[ActorRef][]WatchHandler // 监视处理器（当 Key 存在表示正在监视目标）
-	watchers      map[ActorRef]struct{}       // 该 Actor 的监视者
+	watchHandlers map[string][]WatchHandler // 监视处理器（当 Key 存在表示正在监视目标）
+	watchers      map[ActorRef]struct{}     // 该 Actor 的监视者
 }
 
 func (ctx *actorContextActionsImpl) getWatcherHandlers(watcher ActorRef) ([]WatchHandler, bool) {
-	handlers, exist := ctx.watchHandlers[watcher]
+	handlers, exist := ctx.watchHandlers[watcher.String()]
 	return handlers, exist
 }
 
 func (ctx *actorContextActionsImpl) deleteWatcherHandlers(watcher ActorRef) {
-	delete(ctx.watchHandlers, watcher)
+	delete(ctx.watchHandlers, watcher.String())
 	if len(ctx.watchHandlers) == 0 {
 		ctx.watchHandlers = nil
 	}
@@ -111,20 +111,21 @@ func getActorWatchTimingLoopTaskKey(ref ActorRef) string {
 }
 
 func (ctx *actorContextActionsImpl) Watch(target ActorRef, handlers ...WatchHandler) error {
-	currHandlers, exist := ctx.watchHandlers[target]
+	watchHandlerKey := target.String()
+	currHandlers, exist := ctx.watchHandlers[watchHandlerKey]
 	if !exist {
 		onWatch := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatch()
-		if err := ctx.ask(target, onWatch, SystemMessage).Wait(); err != nil {
+		if err := ctx.ask(target, onWatch, SystemMessage, time.Hour).Wait(); err != nil {
 			return err
 		}
 	}
 
 	if ctx.watchHandlers == nil {
-		ctx.watchHandlers = make(map[ActorRef][]WatchHandler)
+		ctx.watchHandlers = make(map[string][]WatchHandler)
 	}
 
 	currHandlers = append(currHandlers, handlers...)
-	ctx.watchHandlers[target] = currHandlers
+	ctx.watchHandlers[watchHandlerKey] = currHandlers
 
 	// 通过 Ping/Pong 机制来保证监视的有效性，避免监视者已经终止但是监视者未收到通知，从而导致资源泄漏
 	// 需要确保监听对象非自身
@@ -149,14 +150,15 @@ func (ctx *actorContextActionsImpl) Watch(target ActorRef, handlers ...WatchHand
 }
 
 func (ctx *actorContextActionsImpl) Unwatch(target ActorRef) {
-	if _, exist := ctx.watchHandlers[target]; !exist {
+	watchHandlerKey := target.String()
+	if _, exist := ctx.watchHandlers[watchHandlerKey]; !exist {
 		return
 	}
 
 	onUnwatch := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnUnwatch()
 	ctx.tell(target, onUnwatch, SystemMessage)
 
-	delete(ctx.watchHandlers, target)
+	delete(ctx.watchHandlers, watchHandlerKey)
 	if len(ctx.watchHandlers) == 0 {
 		ctx.watchHandlers = nil
 	}

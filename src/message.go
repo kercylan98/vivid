@@ -23,6 +23,7 @@ func init() {
 	registerInternalMessage(new(onKilled))
 	registerInternalMessage(new(onWatch))
 	registerInternalMessage(new(onWatchStopped))
+	registerInternalMessage(new(DedicatedOnWatchStopped))
 	registerInternalMessage(new(onUnwatch))
 	registerInternalMessage(new(onPing))
 	registerInternalMessage(new(pong))

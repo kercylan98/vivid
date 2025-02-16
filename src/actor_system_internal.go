@@ -24,7 +24,9 @@ type actorSystemInternal interface {
 
 	initProcessManager()
 
-	writeInitLog(args ...any)
+	startingLog(args ...any)
+
+	shutdownLog(args ...any)
 }
 
 func newActorSystemInternal(system ActorSystem, config ActorSystemOptionsFetcher) actorSystemInternal {
@@ -95,6 +97,10 @@ func (a *actorSystemInternalImpl) initProcessManager() {
 	}
 }
 
-func (a *actorSystemInternalImpl) writeInitLog(args ...any) {
+func (a *actorSystemInternalImpl) startingLog(args ...any) {
 	a.Logger().Info("Starting ActorSystem", args...)
+}
+
+func (a *actorSystemInternalImpl) shutdownLog(args ...any) {
+	a.Logger().Info("Shutdown ActorSystem", args...)
 }

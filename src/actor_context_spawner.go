@@ -115,7 +115,7 @@ func actorOf(system ActorSystem, parent ActorContext, provider ActorProvider, co
 	if parent != nil {
 		ctx.Logger().Debug("ActorSpawn", log.String("actor", ctx.Ref().String()))
 	} else {
-		ctx.System().writeInitLog(log.String("stage", "guard"), log.String("info", "guard actor initialized"))
+		ctx.System().startingLog(log.String("stage", "guard"), log.String("info", "guard actor initialized"))
 	}
 
 	return ctx

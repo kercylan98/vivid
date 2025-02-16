@@ -17,10 +17,11 @@ type remoteStream interface {
 	close()
 	bindAddr(addr Addr)
 	getAddr() Addr
+	getCodec() Codec
 }
 
 func newRemoteStream(manager *remoteStreamManager, stream remoteGRpcStream) remoteStream {
-	s := &remoteStreamImpl{manager: manager}
+	s := &remoteStreamImpl{manager: manager, codec: manager.processManager.getCodecProvider().Provide()}
 	switch stream.(type) {
 	case protobuf.VividService_OpenMessageStreamServer:
 		s.client = stream.(protobuf.VividService_OpenMessageStreamServer)
@@ -37,6 +38,7 @@ type remoteStreamImpl struct {
 	manager *remoteStreamManager
 	client  protobuf.VividService_OpenMessageStreamServer // 服务端收到的客户端连接
 	server  protobuf.VividService_OpenMessageStreamClient // 客户端打开的服务端连接
+	codec   Codec
 }
 
 func (s *remoteStreamImpl) bindAddr(addr Addr) {
@@ -75,4 +77,8 @@ func (s *remoteStreamImpl) close() {
 
 func (s *remoteStreamImpl) isOpener() bool {
 	return s.server != nil
+}
+
+func (s *remoteStreamImpl) getCodec() Codec {
+	return s.codec
 }

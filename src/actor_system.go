@@ -1,6 +1,9 @@
 package vivid
 
-import "github.com/kercylan98/go-log/log"
+import (
+	"fmt"
+	"github.com/kercylan98/go-log/log"
+)
 
 var (
 	_                  ActorSystem        = (*actorSystem)(nil) // 确保 actorSystem 实现了 ActorSystem 接口
@@ -106,7 +109,7 @@ func (sys *actorSystem) Logger() log.Logger {
 
 // Start 启动 Actor 系统
 func (sys *actorSystem) Start() error {
-	sys.writeInitLog(log.String("stage", "starting"), log.String("name", sys.getConfig().FetchName()))
+	sys.startingLog(log.String("stage", "starting"), log.String("name", sys.getConfig().FetchName()))
 
 	// 初始化远程通信
 	if err := sys.actorSystemInternal.initRemote(); err != nil {
@@ -132,11 +135,11 @@ func (sys *actorSystem) Start() error {
 	// 相关日志
 	remoteEnabled := sys.getProcessManager().getHost() != sys.getConfig().FetchName()
 	if !remoteEnabled {
-		sys.writeInitLog(log.String("stage", "remote"), log.Bool("enabled", remoteEnabled), log.String("listen", "unused"), log.String("info", "remote function only supports active access"))
+		sys.startingLog(log.String("stage", "remote"), log.Bool("enabled", remoteEnabled), log.String("listen", "unused"), log.String("info", "remote function only supports active access"))
 	} else {
-		sys.writeInitLog(log.String("stage", "remote"), log.Bool("enabled", remoteEnabled), log.String("listen", sys.getProcessManager().getHost()))
+		sys.startingLog(log.String("stage", "remote"), log.Bool("enabled", remoteEnabled), log.String("listen", sys.getProcessManager().getHost()))
 	}
-	sys.writeInitLog(log.String("stage", "started"))
+	sys.startingLog(log.String("stage", "started"))
 	return nil
 }
 
@@ -150,18 +153,22 @@ func (sys *actorSystem) StartP() ActorSystem {
 
 // Shutdown 关闭 Actor 系统
 func (sys *actorSystem) Shutdown() error {
+	sys.shutdownLog(log.String("stage", "start"), log.String("name", sys.getConfig().FetchName()))
+
 	// 设置关闭监听
 	var wait = make(chan struct{})
 	if err := sys.daemon.Watch(sys.daemon.Ref(), WatchHandlerFn(func(ctx ActorContext, stopped OnWatchStopped) {
 		close(wait)
 	})); err != nil {
-		return err
+		return fmt.Errorf("%s watch daemon failed: %w", fmt.Sprintf("%s:%s", sys.getConfig().FetchName(), sys.getProcessManager().getHost()), err)
 	}
+	sys.shutdownLog(log.String("stage", "stopping"), log.String("info", "watching guard stop"))
 
 	// 优雅关闭根 Actor
-	sys.daemon.PoisonKill(sys.daemon.Ref())
+	sys.daemon.PoisonKill(sys.daemon.Ref(), "actor system shutdown")
 
 	<-wait
+	sys.shutdownLog(log.String("stage", "stopped"), log.String("name", sys.getConfig().FetchName()))
 	return nil
 }
 

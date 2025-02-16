@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"fmt"
 	"github.com/kercylan98/go-log/log"
 	"sync/atomic"
 )
@@ -30,21 +31,23 @@ type actorContextRecipient struct {
 func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope Envelope) {
 	if status := ctx.status.Load(); status == actorStatusTerminated {
 		switch envelope.GetMessage().(type) {
+		case OnWatch, OnWatchStopped:
+			// 继续执行
 		case OnKill:
 			// 当子 Actor 正在终止的过程，还未向父 Actor 发送 OnKilled 消息时
 			// 父 Actor 如果被终止或主动终止子 Actor，此刻依旧会向子 Actor 发送 OnKill 消息
 			// 此时子 Actor 将会被正常流程终止，因此直接返回
 			return
 		default:
-			ctx.Logger().Warn("OnReceiveEnvelope", log.String("actor is terminated", ctx.Ref().String()), log.Int32("status", status))
+			ctx.Logger().Warn("OnReceiveEnvelope", log.String("actor is terminated", ctx.Ref().String()), log.Int32("status", status), log.String("sender", envelope.GetSender().String()), log.String("message", fmt.Sprintf("%T", envelope.GetMessage())))
 
 			// 如果该 Actor 不是顶级 Actor，那么将消息传递给顶级 Actor 确保异常被记录
 			// 如果已经是顶级 Actor，则说明 ActorSystem 正在关闭，需要丢弃消息
 			if parent := ctx.Parent(); parent != nil {
 				ctx.Tell(ctx.System().Ref(), envelope)
 			}
+			return
 		}
-		return
 	}
 
 	ctx.onProcessMessage(envelope)
@@ -153,6 +156,9 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 	// 定时器可能在生命周期中动态设定，避免出现冲突，在死亡和重启时候均需要清除
 	ctx.getTimingWheel().Clear()
 
+	// 此刻已经死亡，记录日志
+	ctx.onKillLog()
+
 	// 通知监视者
 	if watchers := ctx.getWatchers(); watchers != nil {
 		onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped(ctx.Ref())
@@ -174,7 +180,8 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 }
 
 func (ctx *actorContextRecipient) onWatch() {
-	if ctx.status.Load() >= actorStatusTerminating {
+	if ctx.status.Load() == actorStatusTerminated {
+		// 如果自身已经死亡，应该立即通知监视者
 		onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped(ctx.Ref())
 		ctx.Reply(nil)
 		ctx.tell(ctx.Sender(), onWatchStopped, UserMessage) // 通过用户消息告知已死
@@ -187,10 +194,7 @@ func (ctx *actorContextRecipient) onWatch() {
 func (ctx *actorContextRecipient) onWatchStopped(m OnWatchStopped) {
 	target := m.GetRef()
 	ctx.getTimingWheel().Stop(getActorWatchTimingLoopTaskKey(target)) // 停止监视心跳定时器
-	handlers, exist := ctx.getWatcherHandlers(target)
-	if !exist {
-		return // 未监视该 Actor（可能已取消）
-	}
+	handlers, _ := ctx.getWatcherHandlers(target)
 
 	if len(handlers) == 0 {
 		// 未设置处理器，交由用户处理
@@ -212,4 +216,26 @@ func (ctx *actorContextRecipient) onKilled() {
 	ctx.unbindChild(child)
 
 	ctx.refreshTerminateStatus()
+}
+
+func (ctx *actorContextRecipient) onKillLog() {
+	var reason string
+	if ctx.Parent() == nil {
+		if onKill, ok := ctx.Message().(OnKill); ok {
+			reason = onKill.GetReason()
+		}
+		if reason == "" {
+			ctx.System().shutdownLog(log.String("stage", "stopping"), log.String("info", "guard actor stopped"))
+		} else {
+			ctx.System().shutdownLog(log.String("stage", "stopping"), log.String("info", "guard actor stopped"), log.String("reason", reason))
+		}
+	} else {
+		if onKill, ok := ctx.Message().(OnKill); ok {
+			if reason = onKill.GetReason(); reason == "" {
+				ctx.Logger().Debug("ActorDeath", log.String("actor", ctx.Ref().String()))
+			} else {
+				ctx.Logger().Debug("ActorDeath", log.String("actor", ctx.Ref().String()), log.String("reason", reason))
+			}
+		}
+	}
 }

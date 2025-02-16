@@ -116,7 +116,7 @@ func (mgr *processManagerImpl) getProcess(id ID) (process Process, daemon bool) 
 	}
 
 	if mgr.host != id.GetHost() {
-		return newRemoteStreamProcess(mgr.remoteStreamManager, id, mgr.codecProvider.Provide()), false
+		return newRemoteStreamProcess(mgr.remoteStreamManager, id), false
 	}
 
 	// 本地进程加载

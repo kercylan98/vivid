@@ -3,6 +3,7 @@ package vivid
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/internal/protobuf/protobuf"
 	"google.golang.org/grpc"
@@ -158,7 +159,6 @@ func (r *remoteStreamManager) startListenRemoteStreamMessage(stream remoteStream
 		stream.close()
 	}()
 
-	var codec = r.processManager.getCodecProvider().Provide()
 	var message *protobuf.Message
 	var err error
 	for {
@@ -170,7 +170,7 @@ func (r *remoteStreamManager) startListenRemoteStreamMessage(stream remoteStream
 			return
 		}
 
-		r.onReceiveRemoteStreamMessage(stream, codec, message)
+		r.onReceiveRemoteStreamMessage(stream, message)
 	}
 }
 
@@ -190,22 +190,23 @@ func (r *remoteStreamManager) openRemoteStream(addr string) (remoteStream, error
 }
 
 // onReceiveRemoteStreamMessage 处理远程流消息
-func (r *remoteStreamManager) onReceiveRemoteStreamMessage(stream remoteStream, codec Codec, message *protobuf.Message) {
+func (r *remoteStreamManager) onReceiveRemoteStreamMessage(stream remoteStream, message *protobuf.Message) {
 	switch m := message.GetMessageType().(type) {
 	case *protobuf.Message_Batch_:
-		r.onStreamBatchMessage(stream, codec, m.Batch)
+		r.onStreamBatchMessage(stream, m.Batch)
 	case *protobuf.Message_Farewell_:
 		r.onStreamFarewellMessage(stream, m.Farewell)
 	}
 }
 
-func (r *remoteStreamManager) onStreamBatchMessage(stream remoteStream, codec Codec, batch *protobuf.Message_Batch) {
+func (r *remoteStreamManager) onStreamBatchMessage(stream remoteStream, batch *protobuf.Message_Batch) {
 	var receiverCache = make(map[Path]Process)
 	for i, messageBytes := range batch.Messages {
-		var envelope, err = codec.Decode(messageBytes)
+		var envelope, err = stream.getCodec().Decode(messageBytes)
 		if err != nil {
 			// TODO: 不应该直接 panic
-			panic(err)
+			envelope, _ = r.processManager.getCodecProvider().Provide().Decode(messageBytes)
+			panic(fmt.Errorf("decode message %T error: %w", envelope.GetMessage(), err))
 		}
 
 		receiver := envelope.GetReceiver()
