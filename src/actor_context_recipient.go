@@ -127,6 +127,7 @@ func (ctx *actorContextRecipient) onProcessUserMessageWithActor() {
 	case OnLaunch:
 		if ctx.accidentRecord != nil {
 			ctx.accidentRecord = nil // 启动成功，清除事故记录
+			ctx.Logger().Debug("actor", log.String("event", "restarted"), log.String("ref", ctx.Ref().String()))
 		}
 	}
 }
@@ -255,7 +256,6 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 			launchContext = launchContextProvider.Provide()
 		}
 		ctx.tell(ctx.Ref(), ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnLaunch(time.Now(), launchContext, true), SystemMessage)
-		ctx.Logger().Debug("ActorRestart", log.String("actor", ctx.Ref().String()))
 
 		// 恢复邮箱
 		ctx.getMailbox().Resume()
@@ -339,11 +339,17 @@ func (ctx *actorContextRecipient) onKillLog() {
 			ctx.System().shutdownLog(log.String("stage", "stopping"), log.String("info", "guard actor stopped"), log.String("reason", reason))
 		}
 	} else {
-		if onKill, ok := ctx.Message().(OnKill); ok {
+		if onKill, ok := ctx.Message().(OnKill); ok && !onKill.Restart() {
 			if reason = onKill.GetReason(); reason == "" {
-				ctx.Logger().Debug("ActorDeath", log.String("actor", ctx.Ref().String()))
+				ctx.Logger().Debug("actor", log.String("event", "killed"), log.String("ref", ctx.Ref().String()))
 			} else {
-				ctx.Logger().Debug("ActorDeath", log.String("actor", ctx.Ref().String()), log.String("reason", reason))
+				ctx.Logger().Debug("actor", log.String("event", "killed"), log.String("ref", ctx.Ref().String()), log.String("reason", reason))
+			}
+		} else if onKill.Restart() {
+			if reason = onKill.GetReason(); reason == "" {
+				ctx.Logger().Debug("actor", log.String("event", "restarting"), log.String("ref", ctx.Ref().String()))
+			} else {
+				ctx.Logger().Debug("actor", log.String("event", "restarting"), log.String("ref", ctx.Ref().String()), log.String("reason", reason))
 			}
 		}
 	}

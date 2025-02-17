@@ -109,7 +109,7 @@ func (sys *actorSystem) Logger() log.Logger {
 
 // Start 启动 Actor 系统
 func (sys *actorSystem) Start() error {
-	sys.startingLog(log.String("stage", "starting"), log.String("name", sys.getConfig().FetchName()))
+	sys.startingLog(log.String("stage", "start"))
 
 	// 初始化远程通信
 	if err := sys.actorSystemInternal.initRemote(); err != nil {
@@ -154,13 +154,12 @@ func (sys *actorSystem) StartP() ActorSystem {
 
 // Shutdown 关闭 Actor 系统
 func (sys *actorSystem) Shutdown() error {
-	sys.shutdownLog(log.String("stage", "start"), log.String("name", sys.getConfig().FetchName()))
+	sys.shutdownLog(log.String("stage", "shutdown"))
 
 	// 设置关闭监听
 	var wait = make(chan struct{})
-	defer close(wait)
 	if err := sys.daemon.Watch(sys.daemon.Ref(), WatchHandlerFn(func(ctx ActorContext, stopped OnWatchStopped) {
-		wait <- struct{}{}
+		close(wait)
 	})); err != nil {
 		return fmt.Errorf("%s watch daemon failed: %w", fmt.Sprintf("%s:%s", sys.getConfig().FetchName(), sys.getProcessManager().getHost()), err)
 	}
@@ -170,7 +169,7 @@ func (sys *actorSystem) Shutdown() error {
 	sys.daemon.PoisonKill(sys.daemon.Ref(), "actor system shutdown")
 
 	<-wait
-	sys.shutdownLog(log.String("stage", "stopped"), log.String("name", sys.getConfig().FetchName()))
+	sys.shutdownLog(log.String("stage", "shutdown"), log.String("info", "completed"))
 	return nil
 }
 

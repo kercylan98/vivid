@@ -98,9 +98,9 @@ func (a *actorSystemInternalImpl) initProcessManager() {
 }
 
 func (a *actorSystemInternalImpl) startingLog(args ...any) {
-	a.Logger().Info("Starting ActorSystem", args...)
+	a.Logger().With(log.String("name", a.config.FetchName())).Info("ActorSystem", args...)
 }
 
 func (a *actorSystemInternalImpl) shutdownLog(args ...any) {
-	a.Logger().Info("Shutdown ActorSystem", args...)
+	a.Logger().With(log.String("name", a.config.FetchName())).Info("ActorSystem", args...)
 }

@@ -117,7 +117,7 @@ func actorOf(system ActorSystem, parent ActorContext, provider ActorProvider, co
 	// 启动完成
 	ctx.Tell(ctx.Ref(), system.getConfig().FetchRemoteMessageBuilder().BuildOnLaunch(time.Now(), launchContext, false))
 	if parent != nil {
-		ctx.Logger().Debug("ActorSpawn", log.String("actor", ctx.Ref().String()))
+		ctx.Logger().Debug("actor", log.String("event", "launch"), log.String("ref", ctx.Ref().String()))
 	} else {
 		ctx.System().startingLog(log.String("stage", "guard"), log.String("info", "guard actor initialized"))
 	}
