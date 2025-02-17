@@ -25,6 +25,12 @@ func (ctx *actorContextTimingImpl) getTimingWheel() timing.Named {
 	return ctx.timing
 }
 
+func (ctx *actorContextTimingImpl) accidentAfter(name string, duration time.Duration, task accidentTimingTask) {
+	ctx.timing.After(name, duration, timing.TaskFn(func() {
+		ctx.tell(ctx.Ref(), task, SystemMessage)
+	}))
+}
+
 func (ctx *actorContextTimingImpl) After(name string, duration time.Duration, task TimingTask) {
 	ctx.timing.After(name, duration, timing.TaskFn(func() {
 		ctx.tell(ctx.Ref(), task, UserMessage)

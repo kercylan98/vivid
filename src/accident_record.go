@@ -161,17 +161,18 @@ func (record *accidentRecord) ExponentialBackoffRestart(ref ActorRef, reason str
 		after = maxDelay
 	}
 
-	if record.GetRestartCount() >= restartCount {
+	if count := record.GetRestartCount(); count >= restartCount {
+		record.Finished.Store(false)
 		record.Kill(ref, "supervisor: OnLaunch restart fail count limit")
 		record.responsiblePerson.tell(record.responsiblePerson.Ref(), &accidentFinished{AccidentRecord: record}, SystemMessage)
 	} else {
 		// 使用当前责任人的定时器来执行重启操作
 		key := fmt.Sprintf("supervisor:restart:%s:%d", record.GetVictim().GetPath(), time.Now().UnixMilli())
-		record.ActorContext().After(key, after, TimingTaskFn(func(ctx ActorContext) {
+		record.ActorContext().accidentAfter(key, after, func(ctx ActorContext) {
 			record.Finished.Store(false)
 			record.Restart(ref, reason)
 			record.responsiblePerson.tell(record.responsiblePerson.Ref(), &accidentFinished{AccidentRecord: record}, SystemMessage)
-		}))
+		})
 	}
 }
 

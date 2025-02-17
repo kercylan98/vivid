@@ -14,3 +14,6 @@ type TimingTaskFn func(ctx ActorContext)
 func (f TimingTaskFn) Execute(ctx ActorContext) {
 	f(ctx)
 }
+
+// 事故使用的定时任务，将会以系统消息处理
+type accidentTimingTask func(ctx ActorContext)

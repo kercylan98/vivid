@@ -76,6 +76,8 @@ type (
 		ActorContextTiming
 
 		getTimingWheel() timing.Named
+
+		accidentAfter(name string, duration time.Duration, task accidentTimingTask)
 	}
 )
 

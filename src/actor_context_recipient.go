@@ -37,7 +37,7 @@ type actorContextRecipient struct {
 func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope Envelope) {
 	if status := ctx.status.Load(); status == actorStatusTerminated {
 		switch envelope.GetMessage().(type) {
-		case OnWatch, OnWatchStopped, contextFunc:
+		case OnWatch, OnWatchStopped, contextFunc, *accidentFinished:
 			// 此类消息在关闭后依旧可能被发送，需要经过处理以达到状态一致，处理中需要确保考虑到 Actor 不同状态下的处理逻辑
 		case OnKill, OnUnwatch:
 			// 此类消息在关闭后依旧可能被发送，不处理的效果等同于已经处理
@@ -91,6 +91,8 @@ func (ctx *actorContextRecipient) onProcessSystemMessage(envelope Envelope) {
 		ctx.onAccidentFinished(m.AccidentRecord)
 	case contextFunc:
 		m(ctx)
+	case accidentTimingTask:
+		m(ctx)
 	default:
 		panic("unknown system message")
 	}
@@ -123,7 +125,9 @@ func (ctx *actorContextRecipient) onProcessUserMessageWithActor() {
 
 	switch ctx.Message().(type) {
 	case OnLaunch:
-		ctx.accidentRecord = nil // 启动成功，清除事故记录
+		if ctx.accidentRecord != nil {
+			ctx.accidentRecord = nil // 启动成功，清除事故记录
+		}
 	}
 }
 
@@ -194,7 +198,9 @@ func (ctx *actorContextRecipient) onKill(event OnKill) {
 	ctx.restart = event.Restart()
 
 	// 等待用户处理持久化或清理工作
-	ctx.onProcessUserMessageWithActor()
+	if !event.Restart() {
+		ctx.onProcessUserMessageWithActor()
+	}
 
 	// 停止未完成的事故
 	ctx.clearUnfinishedAccidents()
