@@ -14,6 +14,8 @@ const (
 	actorStatusTerminated                // Actor 已终止
 )
 
+type contextFunc func(ctx ActorContext)
+
 var (
 	_ Recipient = (*actorContextRecipient)(nil)
 )
@@ -26,15 +28,16 @@ func newActorContextRecipient(ctx ActorContext) *actorContextRecipient {
 
 type actorContextRecipient struct {
 	ActorContext
-	status         atomic.Uint32  // Actor 状态
-	restart        bool           // 是否需要重启
-	accidentRecord AccidentRecord // 当前的事故记录
+	status              atomic.Uint32           // Actor 状态
+	restart             bool                    // 是否需要重启
+	accidentRecord      AccidentRecord          // 当前自身的事故记录
+	unfinishedAccidents map[Path]AccidentRecord // 自身负责的且尚未完结的事故记录
 }
 
 func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope Envelope) {
 	if status := ctx.status.Load(); status == actorStatusTerminated {
 		switch envelope.GetMessage().(type) {
-		case OnWatch, OnWatchStopped:
+		case OnWatch, OnWatchStopped, contextFunc:
 			// 此类消息在关闭后依旧可能被发送，需要经过处理以达到状态一致，处理中需要确保考虑到 Actor 不同状态下的处理逻辑
 		case OnKill, OnUnwatch:
 			// 此类消息在关闭后依旧可能被发送，不处理的效果等同于已经处理
@@ -78,10 +81,16 @@ func (ctx *actorContextRecipient) onProcessSystemMessage(envelope Envelope) {
 		ctx.onWatch()
 	case OnUnwatch:
 		ctx.deleteWatcher(ctx.Sender())
+	case OnWatchStopped:
+		ctx.onWatchStopped(m)
 	case OnPing:
 		ctx.Reply(ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildPong(m))
 	case AccidentRecord:
 		ctx.onAccidentRecord(m)
+	case *accidentFinished:
+		ctx.onAccidentFinished(m.AccidentRecord)
+	case contextFunc:
+		m(ctx)
 	default:
 		panic("unknown system message")
 	}
@@ -95,6 +104,8 @@ func (ctx *actorContextRecipient) onProcessUserMessage(envelope Envelope) {
 		ctx.onKill(m) // 用户消息已被处理，转为终止 Actor
 	case TimingTask:
 		m.Execute(ctx)
+	case contextFunc:
+		m(ctx)
 	default:
 		ctx.onProcessUserMessageWithActor()
 	}
@@ -109,6 +120,11 @@ func (ctx *actorContextRecipient) onProcessUserMessageWithActor() {
 	}()
 
 	ctx.getActor().OnReceive(ctx)
+
+	switch ctx.Message().(type) {
+	case OnLaunch:
+		ctx.accidentRecord = nil // 启动成功，清除事故记录
+	}
 }
 
 func (ctx *actorContextRecipient) onAccident(reason Message) {
@@ -148,7 +164,19 @@ func (ctx *actorContextRecipient) onAccidentRecord(record AccidentRecord) {
 		}
 	}()
 	supervisor := ctx.getConfig().FetchSupervisor()
-	supervisor.Decision(record)
+	if supervisor == nil {
+		record.Escalate() // 如果没有监管者，那么将事故升级至上级 Actor 处理
+	} else {
+		supervisor.Decision(record)
+		if !record.isFinished() {
+			record.Escalate() // 监管者不作为，将事故升级至上级 Actor 处理
+		} else {
+			// 延迟处理的策略，增加未完结事故记录
+			if record.isDelayFinished() {
+				ctx.recordUnfinishedAccident(record)
+			}
+		}
+	}
 }
 
 func (ctx *actorContextRecipient) onKill(event OnKill) {
@@ -167,6 +195,9 @@ func (ctx *actorContextRecipient) onKill(event OnKill) {
 
 	// 等待用户处理持久化或清理工作
 	ctx.onProcessUserMessageWithActor()
+
+	// 停止未完成的事故
+	ctx.clearUnfinishedAccidents()
 
 	// 终止子 Actor
 	ctx.onKillChildren(event)
@@ -218,6 +249,7 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 			launchContext = launchContextProvider.Provide()
 		}
 		ctx.tell(ctx.Ref(), ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnLaunch(time.Now(), launchContext, true), SystemMessage)
+		ctx.Logger().Debug("ActorRestart", log.String("actor", ctx.Ref().String()))
 
 		// 恢复邮箱
 		ctx.getMailbox().Resume()
@@ -250,7 +282,12 @@ func (ctx *actorContextRecipient) onWatch() {
 		// 如果自身已经死亡，应该立即通知监视者
 		onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped(ctx.Ref())
 		ctx.Reply(nil)
-		ctx.tell(ctx.Sender(), onWatchStopped, UserMessage) // 通过用户消息告知已死
+		if ctx.Sender().Equal(ctx.Ref()) {
+			// 此处转为下一条消息进行处理，避免处理器还未添加就执行了
+			ctx.tell(ctx.Ref(), onWatchStopped, SystemMessage)
+		} else {
+			ctx.tell(ctx.Sender(), onWatchStopped, UserMessage) // 通过用户消息告知已死
+		}
 		return
 	}
 	ctx.addWatcher(ctx.Sender())
@@ -304,4 +341,21 @@ func (ctx *actorContextRecipient) onKillLog() {
 			}
 		}
 	}
+}
+
+func (ctx *actorContextRecipient) clearUnfinishedAccidents() {
+	for _, record := range ctx.unfinishedAccidents {
+		record.Kill(record.GetVictim(), "be kill, interrupt accident")
+	}
+}
+
+func (ctx *actorContextRecipient) recordUnfinishedAccident(record AccidentRecord) {
+	if ctx.unfinishedAccidents == nil {
+		ctx.unfinishedAccidents = make(map[Path]AccidentRecord)
+	}
+	ctx.unfinishedAccidents[record.GetVictim().GetPath()] = record
+}
+
+func (ctx *actorContextRecipient) onAccidentFinished(record AccidentRecord) {
+	delete(ctx.unfinishedAccidents, record.GetVictim().GetPath())
 }

@@ -23,6 +23,7 @@ func NewActorSystemConfig() ActorSystemConfiguration {
 		codec: CodecProviderFn(func() Codec {
 			return newGobCodec()
 		}),
+		defaultSupervisorRestartLimit: 10,
 	}
 	c.LogicOptions = options.NewLogicOptions[ActorSystemOptionsFetcher, ActorSystemOptions](c, c)
 	return c
@@ -74,6 +75,9 @@ type ActorSystemOptions interface {
 
 	// WithListener 设置 ActorSystem 的监听器，该方法会覆盖 WithListen 方法
 	WithListener(listener net.Listener) ActorSystemOptionsFetcher
+
+	// WithDefaultSupervisorRestartLimit 设置 ActorSystem 的默认 Supervisor 重启次数限制
+	WithDefaultSupervisorRestartLimit(limit int) ActorSystemOptionsFetcher
 }
 
 // ActorSystemOptionsFetcher 是 ActorSystem 的配置选项获取器
@@ -98,16 +102,20 @@ type ActorSystemOptionsFetcher interface {
 
 	// FetchListener 获取 ActorSystem 的监听器
 	FetchListener() net.Listener
+
+	// FetchDefaultSupervisorRestartLimit 获取 ActorSystem 的默认 Supervisor 重启次数限制
+	FetchDefaultSupervisorRestartLimit() int
 }
 
 type defaultActorSystemConfig struct {
 	options.LogicOptions[ActorSystemOptionsFetcher, ActorSystemOptions]
-	readOnly             bool                 // 是否只读
-	name                 string               // ActorSystem 的名称
-	loggerProvider       log.Provider         // 日志记录器获取器
-	codec                CodecProvider        // 编解码器
-	remoteMessageBuilder RemoteMessageBuilder // 远程消息构建器
-	listener             net.Listener         // 监听器
+	readOnly                      bool                 // 是否只读
+	name                          string               // ActorSystem 的名称
+	loggerProvider                log.Provider         // 日志记录器获取器
+	codec                         CodecProvider        // 编解码器
+	remoteMessageBuilder          RemoteMessageBuilder // 远程消息构建器
+	listener                      net.Listener         // 监听器
+	defaultSupervisorRestartLimit int                  // 默认 Supervisor 重启次数限制
 }
 
 func (d *defaultActorSystemConfig) WithCodec(codec CodecProvider, builder RemoteMessageBuilder) ActorSystemConfiguration {
@@ -204,4 +212,15 @@ func (d *defaultActorSystemConfig) WithListener(listener net.Listener) ActorSyst
 
 func (d *defaultActorSystemConfig) FetchListener() net.Listener {
 	return d.listener
+}
+
+func (d *defaultActorSystemConfig) WithDefaultSupervisorRestartLimit(limit int) ActorSystemOptionsFetcher {
+	if !d.modifyReadOnlyCheck() {
+		d.defaultSupervisorRestartLimit = limit
+	}
+	return d
+}
+
+func (d *defaultActorSystemConfig) FetchDefaultSupervisorRestartLimit() int {
+	return d.defaultSupervisorRestartLimit
 }

@@ -111,57 +111,87 @@ func getActorWatchTimingLoopTaskKey(ref ActorRef) string {
 }
 
 func (ctx *actorContextActionsImpl) Watch(target ActorRef, handlers ...WatchHandler) error {
-	watchHandlerKey := target.String()
-	currHandlers, exist := ctx.watchHandlers[watchHandlerKey]
-	if !exist {
-		onWatch := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatch()
-		if err := ctx.ask(target, onWatch, SystemMessage, time.Hour).Wait(); err != nil {
-			return err
-		}
-	}
-
-	if ctx.watchHandlers == nil {
-		ctx.watchHandlers = make(map[string][]WatchHandler)
-	}
-
-	currHandlers = append(currHandlers, handlers...)
-	ctx.watchHandlers[watchHandlerKey] = currHandlers
-
-	// 通过 Ping/Pong 机制来保证监视的有效性，避免监视者已经终止但是监视者未收到通知，从而导致资源泄漏
-	// 需要确保监听对象非自身
-	if !target.Equal(ctx.Ref()) {
-		tw := ctx.getTimingWheel()
-		taskName := getActorWatchTimingLoopTaskKey(target)
-		interval := time.Second * 5
-
-		// 异步任务，严格避免操作 ctx 的行为
-		tw.Loop(taskName, interval, timing.NewLoopTask(interval, -1, timing.TaskFn(func() {
-			_, err := ctx.Ping(target, time.Second*3)
-			if err == nil {
-				return
+	var handler = func() error {
+		watchHandlerKey := target.String()
+		currHandlers, exist := ctx.watchHandlers[watchHandlerKey]
+		if !exist {
+			onWatch := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatch()
+			// Actor 自身等待自身将会超时，因此需要转为 tell 消息进行处理
+			if ctx.Ref().Equal(target) {
+				ctx.tell(ctx.Ref(), onWatch, SystemMessage)
+			} else {
+				if err := ctx.ask(target, onWatch, SystemMessage).Wait(); err != nil {
+					return err
+				}
 			}
-			tw.Stop(taskName)
-			onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped(target)
-			ctx.tell(ctx.Ref(), onWatchStopped, UserMessage)
-		})))
+		}
+
+		if ctx.watchHandlers == nil {
+			ctx.watchHandlers = make(map[string][]WatchHandler)
+		}
+
+		currHandlers = append(currHandlers, handlers...)
+		ctx.watchHandlers[watchHandlerKey] = currHandlers
+
+		// 通过 Ping/Pong 机制来保证监视的有效性，避免监视者已经终止但是监视者未收到通知，从而导致资源泄漏
+		// 需要确保监听对象非自身
+		if !target.Equal(ctx.Ref()) {
+			tw := ctx.getTimingWheel()
+			taskName := getActorWatchTimingLoopTaskKey(target)
+			interval := time.Second * 5
+
+			// 异步任务，严格避免操作 ctx 的行为
+			tw.Loop(taskName, interval, timing.NewLoopTask(interval, -1, timing.TaskFn(func() {
+				_, err := ctx.Ping(target, time.Second*3)
+				if err == nil {
+					return
+				}
+				tw.Stop(taskName)
+				onWatchStopped := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnWatchStopped(target)
+				ctx.tell(ctx.Ref(), onWatchStopped, UserMessage)
+			})))
+		}
+		return nil
 	}
 
-	return nil
+	if ctx.Parent() == nil {
+		// 对于根 Actor，需要转为消息进行处理，避免直接调用导致竞态问题
+		// 因为主线程或其他 Actor 中调用会导致消息和 Watch 函数并行
+		result := make(chan error)
+		ctx.tell(ctx.Ref(), contextFunc(func(ctx ActorContext) {
+			result <- handler()
+		}), SystemMessage)
+		return <-result
+	}
+
+	return handler()
 }
 
 func (ctx *actorContextActionsImpl) Unwatch(target ActorRef) {
-	watchHandlerKey := target.String()
-	if _, exist := ctx.watchHandlers[watchHandlerKey]; !exist {
+	handler := func() {
+		watchHandlerKey := target.String()
+		if _, exist := ctx.watchHandlers[watchHandlerKey]; !exist {
+			return
+		}
+
+		onUnwatch := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnUnwatch()
+		ctx.tell(target, onUnwatch, SystemMessage)
+
+		delete(ctx.watchHandlers, watchHandlerKey)
+		if len(ctx.watchHandlers) == 0 {
+			ctx.watchHandlers = nil
+		}
+	}
+
+	// 对于根 Actor，需要转为消息进行处理，避免直接调用导致竞态问题
+	if ctx.Parent() == nil {
+		ctx.tell(ctx.Ref(), contextFunc(func(ctx ActorContext) {
+			handler()
+		}), SystemMessage)
 		return
 	}
 
-	onUnwatch := ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnUnwatch()
-	ctx.tell(target, onUnwatch, SystemMessage)
-
-	delete(ctx.watchHandlers, watchHandlerKey)
-	if len(ctx.watchHandlers) == 0 {
-		ctx.watchHandlers = nil
-	}
+	handler()
 }
 
 func (ctx *actorContextActionsImpl) Restart(target ActorRef, gracefully bool, reason ...string) {

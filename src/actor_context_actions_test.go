@@ -74,7 +74,7 @@ func TestActorContextActionsImpl_Ask(t *testing.T) {
 func TestActorContextActionsImpl_AskRemote(t *testing.T) {
 	system1 := vivid.NewActorSystem().StartP()
 	system2 := vivid.NewActorSystem(vivid.ActorSystemConfiguratorFn(func(config vivid.ActorSystemConfiguration) {
-		config.WithListen(":8088")
+		config.WithListen(":0")
 	})).StartP()
 	defer system1.ShutdownP()
 	defer system2.ShutdownP()
@@ -162,7 +162,7 @@ func TestActorContextActionsImpl_Kill(t *testing.T) {
 func TestActorContextActionsImpl_RemoteKill(t *testing.T) {
 	system1 := vivid.NewActorSystem().StartP()
 	system2 := vivid.NewActorSystem(vivid.ActorSystemConfiguratorFn(func(config vivid.ActorSystemConfiguration) {
-		config.WithListen(":8088")
+		config.WithListen(":0")
 	})).StartP()
 	defer system1.ShutdownP()
 	defer system2.ShutdownP()
@@ -186,7 +186,7 @@ func TestActorContextActionsImpl_RemoteKill(t *testing.T) {
 func TestActorContextActionsImpl_RemotePoisonKill(t *testing.T) {
 	system1 := vivid.NewActorSystem().StartP()
 	system2 := vivid.NewActorSystem(vivid.ActorSystemConfiguratorFn(func(config vivid.ActorSystemConfiguration) {
-		config.WithListen(":8088")
+		config.WithListen(":0")
 	})).StartP()
 	defer system1.ShutdownP()
 	defer system2.ShutdownP()
@@ -210,16 +210,17 @@ func TestActorContextActionsImpl_RemotePoisonKill(t *testing.T) {
 func TestActorContextActionsImpl_Watch(t *testing.T) {
 	system1 := vivid.NewActorSystem().StartP()
 	system2 := vivid.NewActorSystem(vivid.ActorSystemConfiguratorFn(func(config vivid.ActorSystemConfiguration) {
-		config.WithListen(":8088")
+		config.WithListen(":0")
 	})).StartP()
 
-	defer system1.ShutdownP()
+	//defer system1.ShutdownP()
 	defer system2.ShutdownP()
 
 	wait := new(sync.WaitGroup)
 	wait.Add(1)
 
 	if err := system1.Watch(system2.Ref(), vivid.WatchHandlerFn(func(ctx vivid.ActorContext, stopped vivid.OnWatchStopped) {
+		t.Log("watched stopped")
 		wait.Done()
 	})); err != nil {
 		t.Error(err)

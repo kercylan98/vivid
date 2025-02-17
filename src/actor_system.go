@@ -124,6 +124,7 @@ func (sys *actorSystem) Start() error {
 		return new(guardActor)
 	}), ActorConfiguratorFn(func(config ActorConfiguration) {
 		config.WithLoggerProvider(sys.getConfig().FetchLoggerProvider())
+		config.WithSupervisor(getDefaultSupervisor(sys.getConfig().FetchDefaultSupervisorRestartLimit()))
 	}))
 	sys.daemon = daemon
 	sys.ActorContextSpawner = daemon
@@ -157,8 +158,9 @@ func (sys *actorSystem) Shutdown() error {
 
 	// 设置关闭监听
 	var wait = make(chan struct{})
+	defer close(wait)
 	if err := sys.daemon.Watch(sys.daemon.Ref(), WatchHandlerFn(func(ctx ActorContext, stopped OnWatchStopped) {
-		close(wait)
+		wait <- struct{}{}
 	})); err != nil {
 		return fmt.Errorf("%s watch daemon failed: %w", fmt.Sprintf("%s:%s", sys.getConfig().FetchName(), sys.getProcessManager().getHost()), err)
 	}

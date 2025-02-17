@@ -28,10 +28,10 @@ type Mailbox interface {
 	// Init 初始化邮箱
 	Init(recipient Recipient, dispatcher Dispatcher)
 
-	// Suspend 暂停邮箱
+	// Suspend 并发安全的暂停邮箱
 	Suspend()
 
-	// Resume 恢复邮箱
+	// Resume 并发安全的恢复邮箱
 	Resume()
 
 	// Delivery 投递消息到邮箱
