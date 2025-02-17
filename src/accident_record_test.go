@@ -173,7 +173,7 @@ func TestAccidentRecord_ExponentialBackoffRestart(t *testing.T) {
 		})
 	}, func(config vivid.ActorConfiguration) {
 		config.WithSupervisor(vivid.SupervisorFn(func(record vivid.AccidentRecord) {
-			record.ExponentialBackoffRestart(record.GetVictim(), "decision exponential backoff restart", 3, time.Millisecond*1000, time.Millisecond*2000, 2, 0.5)
+			record.ExponentialBackoffRestart(record.GetVictim(), "decision exponential backoff restart", 3, time.Millisecond*100, time.Millisecond*1000, 2, 0.5)
 		}))
 	})
 
