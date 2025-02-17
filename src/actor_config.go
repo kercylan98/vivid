@@ -72,6 +72,9 @@ type ActorOptions interface {
 	//
 	// 提供者如果返回的是空指针，不会引发任何异常，但会导致 Actor 在启动时无法获取到启动上下文
 	WithLaunchContextProvider(provider LaunchContextProvider) ActorConfiguration
+
+	// WithSupervisor 设置 Actor 的监管者，监管者用于对 Actor 异常情况进行监管策略的执行
+	WithSupervisor(supervisor Supervisor) ActorConfiguration
 }
 
 // ActorOptionsFetcher 是 Actor 的配置获取接口
@@ -97,6 +100,9 @@ type ActorOptionsFetcher interface {
 
 	// FetchLaunchContextProvider 获取 Actor 的启动上下文提供者
 	FetchLaunchContextProvider() LaunchContextProvider
+
+	// FetchSupervisor 获取 Actor 的监管者
+	FetchSupervisor() Supervisor
 }
 
 type defaultActorConfig struct {
@@ -107,6 +113,18 @@ type defaultActorConfig struct {
 	dispatcherProvider    DispatcherProvider    // 调度器
 	mailboxProvider       MailboxProvider       // 邮箱
 	launchContextProvider LaunchContextProvider // 启动上下文提供者
+	supervisor            Supervisor            // 监管者
+}
+
+func (d *defaultActorConfig) WithSupervisor(supervisor Supervisor) ActorConfiguration {
+	if !d.modifyReadOnlyCheck() {
+		d.supervisor = supervisor
+	}
+	return d
+}
+
+func (d *defaultActorConfig) FetchSupervisor() Supervisor {
+	return d.supervisor
 }
 
 func (d *defaultActorConfig) WithLaunchContextProvider(provider LaunchContextProvider) ActorConfiguration {

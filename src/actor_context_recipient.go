@@ -3,13 +3,13 @@ package vivid
 import (
 	"fmt"
 	"github.com/kercylan98/go-log/log"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 )
 
 const (
 	actorStatusAlive       uint32 = iota // Actor 存活状态
-	actorStatusRestarting                // Actor 正在重启
 	actorStatusTerminating               // Actor 正在终止
 	actorStatusTerminated                // Actor 已终止
 )
@@ -26,8 +26,9 @@ func newActorContextRecipient(ctx ActorContext) *actorContextRecipient {
 
 type actorContextRecipient struct {
 	ActorContext
-	status  atomic.Uint32 // Actor 状态
-	restart bool          // 是否需要重启
+	status         atomic.Uint32  // Actor 状态
+	restart        bool           // 是否需要重启
+	accidentRecord AccidentRecord // 当前的事故记录
 }
 
 func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope Envelope) {
@@ -68,7 +69,7 @@ func (ctx *actorContextRecipient) onProcessMessage(envelope Envelope) {
 func (ctx *actorContextRecipient) onProcessSystemMessage(envelope Envelope) {
 	switch m := envelope.GetMessage().(type) {
 	case OnLaunch:
-		ctx.onProcessUserMessage(envelope)
+		ctx.onProcessUserMessageWithActor()
 	case OnKill:
 		ctx.onKill(m)
 	case OnKilled:
@@ -79,6 +80,8 @@ func (ctx *actorContextRecipient) onProcessSystemMessage(envelope Envelope) {
 		ctx.deleteWatcher(ctx.Sender())
 	case OnPing:
 		ctx.Reply(ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildPong(m))
+	case AccidentRecord:
+		ctx.onAccidentRecord(m)
 	default:
 		panic("unknown system message")
 	}
@@ -108,9 +111,44 @@ func (ctx *actorContextRecipient) onProcessUserMessageWithActor() {
 	ctx.getActor().OnReceive(ctx)
 }
 
-func (ctx *actorContextRecipient) onAccident(reason any) {
-	//TODO implement me
-	panic("implement me")
+func (ctx *actorContextRecipient) onAccident(reason Message) {
+	// 暂停处理用户消息
+	ctx.getMailbox().Suspend()
+
+	switch ctx.Message().(type) {
+	case OnLaunch:
+		// 重启策略执行失败，记录重启次数
+		if ctx.accidentRecord != nil {
+			// 此时已经有事故记录了，直接写入新的事故信息覆盖后继续处理即可
+			ctx.accidentRecord.recordRestartFailed(ctx.Sender(), ctx.Ref(), ctx.Message(), reason, debug.Stack())
+
+			// 处理事故
+			ctx.onAccidentRecord(ctx.accidentRecord)
+			return
+		}
+	}
+
+	// 记录事故
+	ctx.accidentRecord = newAccidentRecord(ctx.getMailbox(), ctx.Sender(), ctx.Ref(), ctx.Message(), reason, debug.Stack())
+
+	// 处理事故
+	ctx.onAccidentRecord(ctx.accidentRecord)
+}
+
+func (ctx *actorContextRecipient) onAccidentRecord(record AccidentRecord) {
+	// 设置责任人
+	record.setResponsiblePerson(ctx)
+
+	// 使用责任人监管人进行决策
+	defer func() {
+		if reason := recover(); reason != nil {
+			// 如果监管者发生异常，那么将事故升级至上级 Actor 处理
+			ctx.Logger().Warn("onAccidentRecord", log.String("info", "supervisor decision failed, escalate to parent actor"), log.Any("record", record))
+			record.Escalate()
+		}
+	}()
+	supervisor := ctx.getConfig().FetchSupervisor()
+	supervisor.Decision(record)
 }
 
 func (ctx *actorContextRecipient) onKill(event OnKill) {
@@ -120,6 +158,9 @@ func (ctx *actorContextRecipient) onKill(event OnKill) {
 		// 重复终止一般是在销毁时再次尝试终止导致，该逻辑可避免非幂等影响
 		return
 	}
+
+	// 暂停邮箱继续处理用户消息
+	ctx.getMailbox().Suspend()
 
 	// 记录重启状态
 	ctx.restart = event.Restart()
@@ -163,11 +204,13 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 	ctx.onKillLog()
 
 	// 如果需要重启，那么不再需要通知监视着及父 Actor，避免误认为 Actor 已经终止
-	// 但是一些特殊情况可能需要处理，后续应该需要添加配置项来控制是否通知监视者
-	// TODO: 添加配置项来控制是否通知监视者
 	if ctx.restart {
 		// 重置 Actor 状态
 		ctx.resetActorState()
+
+		// 恢复 Actor 状态
+		ctx.restart = false
+		ctx.status.Store(actorStatusAlive)
 
 		// 发送 OnLaunch 消息
 		var launchContext map[any]any
@@ -176,9 +219,9 @@ func (ctx *actorContextRecipient) refreshTerminateStatus() {
 		}
 		ctx.tell(ctx.Ref(), ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildOnLaunch(time.Now(), launchContext, true), SystemMessage)
 
-		// 恢复 Actor 状态
-		ctx.restart = false
-		ctx.status.Store(actorStatusAlive)
+		// 恢复邮箱
+		ctx.getMailbox().Resume()
+
 	} else {
 		// 通知监视者
 		if watchers := ctx.getWatchers(); watchers != nil {

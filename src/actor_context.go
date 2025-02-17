@@ -12,7 +12,7 @@ var (
 
 // ActorContext 是定义了 Actor 完整的上下文。
 type ActorContext interface {
-	ActorContextProcess
+	actorContextProcessInternal
 	actorContextSpawnerInternal
 	actorContextLoggerInternal
 	actorContextLifeInternal
@@ -23,15 +23,29 @@ type ActorContext interface {
 }
 
 // ActorContextProcess 是 ActorContext 的子集，它确保了 Actor 与 Process 相关的内容
-type ActorContextProcess interface {
-	getProcessId() ActorRef
+type (
+	ActorContextProcess interface {
+	}
 
-	getProcess() Process
+	actorContextProcessInternal interface {
+		ActorContextProcess
 
-	sendToProcess(envelope Envelope)
+		// getProcessId 获取当前 Actor 的 ID
+		getProcessId() ActorRef
 
-	sendToSelfProcess(envelope Envelope)
-}
+		// getProcess 获取当前 Actor 的 Process
+		getProcess() Process
+
+		// sendToProcess 向 Process 发送消息
+		sendToProcess(envelope Envelope)
+
+		// sendToSelfProcess 向当前 Actor 发送消息
+		sendToSelfProcess(envelope Envelope)
+
+		// getMailbox 获取当前 Actor 的邮箱
+		getMailbox() Mailbox
+	}
+)
 
 // TimingTask 是定时任务的函数类型
 
@@ -235,7 +249,7 @@ type (
 func newActorContext(system ActorSystem, config ActorOptionsFetcher, provider ActorProvider, mailbox Mailbox, ref ActorRef, parentRef ActorRef) *actorContext {
 	ctx := &actorContext{}
 	ctx.recipient = newActorContextRecipient(ctx)
-	ctx.ActorContextProcess = newActorContextProcess(ctx, ref, mailbox)
+	ctx.actorContextProcessInternal = newActorContextProcess(ctx, ref, mailbox)
 	ctx.actorContextTransportInternal = newActorContextTransportImpl(ctx)
 	ctx.actorContextActionsInternal = newActorContextActionsImpl(ctx)
 	ctx.actorContextExternalRelationsInternal = newActorContextExternalRelationsImpl(system, ctx, parentRef)
@@ -247,7 +261,7 @@ func newActorContext(system ActorSystem, config ActorOptionsFetcher, provider Ac
 }
 
 type actorContext struct {
-	ActorContextProcess
+	actorContextProcessInternal
 	actorContextTransportInternal
 	actorContextActionsInternal
 	actorContextExternalRelationsInternal

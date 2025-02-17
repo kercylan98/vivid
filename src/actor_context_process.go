@@ -6,8 +6,8 @@ import (
 )
 
 var (
-	_ ActorContextProcess = (*actorContextProcess)(nil)
-	_ Process             = (*actorContextProcess)(nil)
+	_ actorContextProcessInternal = (*actorContextProcess)(nil)
+	_ Process                     = (*actorContextProcess)(nil)
 )
 
 func newActorContextProcess(ctx ActorContext, ref ActorRef, mailbox Mailbox) *actorContextProcess {
@@ -23,6 +23,10 @@ type actorContextProcess struct {
 	ref        ActorRef    // Actor 引用
 	mailbox    Mailbox     // Actor 的邮箱
 	terminated atomic.Bool // Actor 是否已终止
+}
+
+func (ctx *actorContextProcess) getMailbox() Mailbox {
+	return ctx.mailbox
 }
 
 func (ctx *actorContextProcess) getProcessId() ActorRef {
@@ -42,14 +46,7 @@ func (ctx *actorContextProcess) GetID() ID {
 //   - 如果是对于自身的消息且无需考虑优先级的消息，可直接调用 actorContext.onProcessMessage 函数来得到更高效的处理
 //   - 如果是对于其他 Actor 的消息，应该调用 actorContext.sendToProcess 函数来发送消息
 func (ctx *actorContextProcess) Send(envelope Envelope) {
-	switch envelope.GetMessage().(type) {
-	case *onResumeMailboxMessage:
-		ctx.mailbox.Resume()
-	case *onSuspendMailboxMessage:
-		ctx.mailbox.Suspend()
-	default:
-		ctx.mailbox.Delivery(envelope)
-	}
+	ctx.mailbox.Delivery(envelope)
 }
 
 func (ctx *actorContextProcess) Terminated() bool {
@@ -63,7 +60,7 @@ func (ctx *actorContextProcess) OnTerminate(operator ID) {
 func (ctx *actorContextProcess) sendToProcess(envelope Envelope) {
 	process, daemon := ctx.System().getProcessManager().getProcess(envelope.GetReceiver())
 	if daemon {
-		ctx.Logger().Warn("sendToProcess", log.Any("onReceiveRemoteStreamMessage not found", envelope))
+		ctx.Logger().Warn("sendToProcess", log.Any("process not found", envelope))
 		return
 	}
 	process.Send(envelope)
