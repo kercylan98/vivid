@@ -16,9 +16,7 @@ type ActorContext interface {
 	actorContextSpawnerInternal
 	actorContextLoggerInternal
 	actorContextLifeInternal
-	actorContextExternalRelationsInternal
 	actorContextTransportInternal
-	actorContextActionsInternal
 	actorContextTimingInternal
 }
 
@@ -100,12 +98,6 @@ type (
 
 	actorContextSpawnerInternal interface {
 		ActorContextSpawner
-
-		// getActor 获取当前 Actor
-		getActor() Actor
-
-		// resetActorState 重置 Actor 状态
-		resetActorState()
 	}
 )
 
@@ -127,48 +119,88 @@ type (
 type (
 	// ActorContextLife 是 ActorContext 的子集，它确保了对 Actor 生命周期的控制
 	ActorContextLife interface {
+		// System 获取当前 Actor 所属的 ActorSystem
+		System() ActorSystem
+
+		// Parent 获取父 Actor 的 ActorRef
+		Parent() ActorRef
+
 		// Ref 获取当前 Actor 的 ActorRef
+		//  - 如果是通过 ActorSystem 获取，那么将会得到根 Actor 的 ActorRef
 		Ref() ActorRef
 	}
 
 	actorContextLifeInternal interface {
 		ActorContextLife
 
+		// getSystemConfig 获取 Actor 系统配置
 		getSystemConfig() ActorSystemOptionsFetcher
 
+		// getConfig 获取 Actor 配置
 		getConfig() ActorOptionsFetcher
 
+		// getActor 获取当前 Actor
+		getActor() Actor
+
+		// resetActorState 重置 Actor 状态
+		resetActorState()
+
+		// getNextChildGuid 获取下一个子 Actor 的 GUID
 		getNextChildGuid() int64
 
+		// bindChild 绑定子 Actor
 		bindChild(child ActorRef)
 
+		// unbindChild 解绑子 Actor
 		unbindChild(ref ActorRef)
 
+		// getChildren 获取所有子 Actor
 		getChildren() map[Path]ActorRef
-	}
-)
-
-type (
-	// ActorContextExternalRelations 是 ActorContext 的子集，它确保了 Actor 的外界关系
-	ActorContextExternalRelations interface {
-		// Parent 获取父 Actor 的 ActorRef
-		Parent() ActorRef
-
-		// System 获取当前 Actor 所属的 ActorSystem
-		System() ActorSystem
-	}
-
-	actorContextExternalRelationsInternal interface {
-		ActorContextExternalRelations
 
 		// getMessageBuilder 获取消息构建器
 		getMessageBuilder() RemoteMessageBuilder
+
+		// onAccident 当 Actor 发生事故时的处理
+		onAccident(reason Message)
+
+		// removeAccidentRecord 移除事故记录
+		removeAccidentRecord(removedHandler func(record AccidentRecord))
+
+		// onKill 通过 OnKill 事件驱动终止 Actor
+		onKill(event OnKill)
+
+		// onKilled 告知该 Actor 其 Sender 已经终止
+		onKilled()
+
+		// terminated 判断 Actor 是否已经终止
+		terminated() bool
+
+		// onAccidentRecord 处理事故记录
+		onAccidentRecord(record AccidentRecord)
+
+		// onAccidentFinished 处理事故结束
+		onAccidentFinished(record AccidentRecord)
 	}
 )
 
 type (
-	// ActorContextActions 是 ActorContext 的子集，它定义了 Actor 所支持的动作
-	ActorContextActions interface {
+	// ActorContextTransport 是 ActorContext 的子集，它定义了 Actor 之间的通信接口
+	ActorContextTransport interface {
+		ActorContextTransportInteractive
+
+		// Sender 获取当前消息的发送者
+		Sender() ActorRef
+
+		// Message 获取当前消息的内容
+		Message() Message
+
+		// Reply 向消息的发送者回复消息
+		//  - 该函数是 Tell 的快捷方式，用于向消息的发送者回复消息
+		Reply(message Message)
+	}
+
+	// ActorContextTransportInteractive 是 ActorContextTransport 的子集，它定义了 Actor 之间的交互接口
+	ActorContextTransportInteractive interface {
 		// Kill 忽略一切尚未处理的消息，立即终止目标 Actor
 		Kill(target ActorRef, reason ...string)
 
@@ -185,6 +217,9 @@ type (
 		// Broadcast 向所有子 Actor 发送消息
 		Broadcast(message Message)
 
+		// Ping 尝试对目标 Actor 发送 Ping 消息，并返回 Pong 消息。
+		Ping(target ActorRef, timeout ...time.Duration) (Pong, error)
+
 		// Watch 监视目标 Actor 的生命周期，当目标 Actor 终止时，会收到 OnWatchStopped 消息。
 		// 该函数会向目标 Actor 发送 Watch 消息，目标 Actor 收到 Watch 消息后会将自己加入到监视列表中。
 		//  - 如果传入了 handler 函数，那么当目标 Actor 终止时，会调用 handler 函数，而不再投递 OnWatchStopped 消息。
@@ -200,8 +235,8 @@ type (
 		Restart(target ActorRef, gracefully bool, reason ...string)
 	}
 
-	actorContextActionsInternal interface {
-		ActorContextActions
+	actorContextTransportInternal interface {
+		ActorContextTransport
 
 		// tell 该函数用于向特定目标发送标准的消息，消息将经过包装并投递到目标 Actor 的邮箱中
 		//   - 该函数在对自身发送消息时会加速投递，避免通过进程管理器进行查找
@@ -210,6 +245,9 @@ type (
 		// ask 向目标 Actor 发送消息，并返回一个 Future 用于获取结果。
 		//  - 如果 timeout 参数不存在，那么将会在 DefaultFutureTimeout 时间内等待结果。
 		ask(target ActorRef, message Message, messageType MessageType, timeout ...time.Duration) Future[Message]
+
+		// onProcessMessage 当 Actor 收到的消息到达时，通过该函数进行处理
+		onProcessMessage(envelope Envelope)
 
 		addWatcher(watcher ActorRef)
 
@@ -220,34 +258,8 @@ type (
 		getWatcherHandlers(watcher ActorRef) ([]WatchHandler, bool)
 
 		deleteWatcherHandlers(watcher ActorRef)
-	}
-)
 
-type (
-	// ActorContextTransport 是 ActorContext 的子集，它确保了对 Actor 之间的通信
-	ActorContextTransport interface {
-		// Sender 获取当前消息的发送者
-		Sender() ActorRef
-
-		// Message 获取当前消息的内容
-		Message() Message
-
-		// Reply 向消息的发送者回复消息
-		//  - 该函数是 Tell 的快捷方式，用于向消息的发送者回复消息
-		Reply(message Message)
-
-		// Ping 尝试对目标 Actor 发送 Ping 消息，并返回 Pong 消息。
-		Ping(target ActorRef, timeout ...time.Duration) (Pong, error)
-	}
-
-	actorContextTransportInternal interface {
-		ActorContextTransport
-
-		// setEnvelope 设置当前消息
-		setEnvelope(envelope Envelope)
-
-		// getEnvelope 获取当前消息
-		getEnvelope() Envelope
+		onWatchStopped(m OnWatchStopped)
 	}
 )
 
@@ -256,11 +268,9 @@ func newActorContext(system ActorSystem, config ActorOptionsFetcher, provider Ac
 	ctx.recipient = newActorContextRecipient(ctx)
 	ctx.actorContextProcessInternal = newActorContextProcess(ctx, ref, mailbox)
 	ctx.actorContextTransportInternal = newActorContextTransportImpl(ctx)
-	ctx.actorContextActionsInternal = newActorContextActionsImpl(ctx)
-	ctx.actorContextExternalRelationsInternal = newActorContextExternalRelationsImpl(system, ctx, parentRef)
-	ctx.actorContextLifeInternal = newActorContextLifeImpl(ctx, config)
+	ctx.actorContextLifeInternal = newActorContextLifeImpl(system, ctx, config, provider, parentRef)
 	ctx.actorContextLoggerInternal = newActorContextLoggerImpl(ctx)
-	ctx.actorContextSpawnerInternal = newActorContextSpawnerImpl(ctx, provider)
+	ctx.actorContextSpawnerInternal = newActorContextSpawnerImpl(ctx)
 	ctx.actorContextTimingInternal = newActorContextTimingImpl(ctx)
 	return ctx
 }
@@ -268,8 +278,6 @@ func newActorContext(system ActorSystem, config ActorOptionsFetcher, provider Ac
 type actorContext struct {
 	actorContextProcessInternal
 	actorContextTransportInternal
-	actorContextActionsInternal
-	actorContextExternalRelationsInternal
 	actorContextLifeInternal
 	actorContextLoggerInternal
 	actorContextSpawnerInternal

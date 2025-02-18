@@ -79,7 +79,7 @@ type ActorSystem interface {
 	ActorContextSpawner
 	ActorContextLife
 	ActorContextLogger
-	ActorContextActions
+	ActorContextTransportInteractive
 
 	// Start 启动 Actor 系统
 	Start() error
@@ -99,7 +99,7 @@ type actorSystem struct {
 	ActorContextSpawner
 	ActorContextLife
 	ActorContextLogger
-	ActorContextActions
+	ActorContextTransportInteractive
 	daemon ActorContext // 根 Actor
 }
 
@@ -130,7 +130,7 @@ func (sys *actorSystem) Start() error {
 	sys.ActorContextSpawner = daemon
 	sys.ActorContextLife = daemon
 	sys.ActorContextLogger = daemon
-	sys.ActorContextActions = daemon
+	sys.ActorContextTransportInteractive = daemon
 	sys.getProcessManager().setDaemon(daemon.getProcess())
 
 	// 相关日志

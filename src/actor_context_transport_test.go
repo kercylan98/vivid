@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestActorContextActionsImpl_Tell(t *testing.T) {
+func TestActorContextTransportImplImpl_Tell(t *testing.T) {
 	system := vivid.NewActorSystem().StartP()
 	defer system.ShutdownP()
 
@@ -22,7 +22,7 @@ func TestActorContextActionsImpl_Tell(t *testing.T) {
 	system.Tell(ref, "Hello")
 }
 
-func TestActorContextActionsImpl_TellRemote(t *testing.T) {
+func TestActorContextTransportImplImpl_TellRemote(t *testing.T) {
 	system1 := vivid.NewActorSystem().StartP()
 	system2 := vivid.NewActorSystem(vivid.ActorSystemConfiguratorFn(func(config vivid.ActorSystemConfiguration) {
 		config.WithListen(":8088")
@@ -48,7 +48,7 @@ func TestActorContextActionsImpl_TellRemote(t *testing.T) {
 	wait.Wait()
 }
 
-func TestActorContextActionsImpl_Ask(t *testing.T) {
+func TestActorContextTransportImplImpl_Ask(t *testing.T) {
 	system := vivid.NewActorSystem().StartP()
 	defer system.ShutdownP()
 
@@ -71,7 +71,7 @@ func TestActorContextActionsImpl_Ask(t *testing.T) {
 	t.Log("Result", result)
 }
 
-func TestActorContextActionsImpl_AskRemote(t *testing.T) {
+func TestActorContextTransportImplImpl_AskRemote(t *testing.T) {
 	system1 := vivid.NewActorSystem().StartP()
 	system2 := vivid.NewActorSystem(vivid.ActorSystemConfiguratorFn(func(config vivid.ActorSystemConfiguration) {
 		config.WithListen(":0")
@@ -98,7 +98,7 @@ func TestActorContextActionsImpl_AskRemote(t *testing.T) {
 	t.Log("Result", result)
 }
 
-func TestActorContextActionsImpl_PoisonKill(t *testing.T) {
+func TestActorContextTransportImplImpl_PoisonKill(t *testing.T) {
 	system := vivid.NewActorSystem().StartP()
 	defer system.ShutdownP()
 
@@ -129,7 +129,7 @@ func TestActorContextActionsImpl_PoisonKill(t *testing.T) {
 	system.PoisonKill(ref)
 }
 
-func TestActorContextActionsImpl_Kill(t *testing.T) {
+func TestActorContextTransportImplImpl_Kill(t *testing.T) {
 	system := vivid.NewActorSystem().StartP()
 	defer system.ShutdownP()
 
@@ -159,7 +159,7 @@ func TestActorContextActionsImpl_Kill(t *testing.T) {
 	system.Kill(ref)
 }
 
-func TestActorContextActionsImpl_RemoteKill(t *testing.T) {
+func TestActorContextTransportImplImpl_RemoteKill(t *testing.T) {
 	system1 := vivid.NewActorSystem().StartP()
 	system2 := vivid.NewActorSystem(vivid.ActorSystemConfiguratorFn(func(config vivid.ActorSystemConfiguration) {
 		config.WithListen(":0")
@@ -183,7 +183,7 @@ func TestActorContextActionsImpl_RemoteKill(t *testing.T) {
 	wait.Wait()
 }
 
-func TestActorContextActionsImpl_RemotePoisonKill(t *testing.T) {
+func TestActorContextTransportImplImpl_RemotePoisonKill(t *testing.T) {
 	system1 := vivid.NewActorSystem().StartP()
 	system2 := vivid.NewActorSystem(vivid.ActorSystemConfiguratorFn(func(config vivid.ActorSystemConfiguration) {
 		config.WithListen(":0")
@@ -207,7 +207,7 @@ func TestActorContextActionsImpl_RemotePoisonKill(t *testing.T) {
 	wait.Wait()
 }
 
-func TestActorContextActionsImpl_Watch(t *testing.T) {
+func TestActorContextTransportImplImpl_Watch(t *testing.T) {
 	system1 := vivid.NewActorSystem().StartP()
 	system2 := vivid.NewActorSystem(vivid.ActorSystemConfiguratorFn(func(config vivid.ActorSystemConfiguration) {
 		config.WithListen(":0")
@@ -231,7 +231,7 @@ func TestActorContextActionsImpl_Watch(t *testing.T) {
 	wait.Wait()
 }
 
-func TestActorContextActionsImpl_Unwatch(t *testing.T) {
+func TestActorContextTransportImplImpl_Unwatch(t *testing.T) {
 	system := vivid.NewActorSystem().StartP()
 
 	defer system.ShutdownP()
@@ -261,7 +261,7 @@ func TestActorContextActionsImpl_Unwatch(t *testing.T) {
 	system.Kill(ref, "正常终止")
 }
 
-func TestActorContextActionsImpl_Restart(t *testing.T) {
+func TestActorContextTransportImplImpl_Restart(t *testing.T) {
 	system := vivid.NewActorSystem().StartP()
 	defer system.ShutdownP()
 
@@ -279,4 +279,28 @@ func TestActorContextActionsImpl_Restart(t *testing.T) {
 	})
 
 	system.Restart(ref, false)
+}
+
+func TestActorContextTransportImplImpl_Broadcast(t *testing.T) {
+	system := vivid.NewActorSystem().StartP()
+	defer system.ShutdownP()
+
+	var wait sync.WaitGroup
+	var refs []vivid.ActorRef
+
+	for i := 0; i < 10; i++ {
+		wait.Add(1)
+		refs = append(refs, system.ActorOfFn(func() vivid.Actor {
+			return vivid.ActorFn(func(ctx vivid.ActorContext) {
+				switch ctx.Message().(type) {
+				case string:
+					wait.Done()
+				}
+			})
+		}))
+	}
+
+	system.Broadcast("Hello")
+
+	wait.Wait()
 }

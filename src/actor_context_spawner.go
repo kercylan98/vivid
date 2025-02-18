@@ -11,26 +11,14 @@ var (
 	_ actorContextSpawnerInternal = (*actorContextSpawnerImpl)(nil)
 )
 
-func newActorContextSpawnerImpl(ctx ActorContext, provider ActorProvider) *actorContextSpawnerImpl {
+func newActorContextSpawnerImpl(ctx ActorContext) *actorContextSpawnerImpl {
 	return &actorContextSpawnerImpl{
 		ActorContext: ctx,
-		provider:     provider,
-		actor:        provider.Provide(),
 	}
 }
 
 type actorContextSpawnerImpl struct {
 	ActorContext
-	provider ActorProvider // Actor 提供者
-	actor    Actor         // Actor 实例
-}
-
-func (ctx *actorContextSpawnerImpl) getActor() Actor {
-	return ctx.actor
-}
-
-func (ctx *actorContextSpawnerImpl) resetActorState() {
-	ctx.actor = ctx.provider.Provide()
 }
 
 func (ctx *actorContextSpawnerImpl) ActorOf(provider ActorProvider, configurator ...ActorConfigurator) ActorRef {
