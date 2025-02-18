@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"github.com/kercylan98/chrono/timing"
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/internal/utils/options"
 	"log/slog"
@@ -75,6 +76,11 @@ type ActorOptions interface {
 
 	// WithSupervisor 设置 Actor 的监管者，监管者用于对 Actor 异常情况进行监管策略的执行
 	WithSupervisor(supervisor Supervisor) ActorConfiguration
+
+	// WithTimingWheel 设置 Actor 的定时器
+	//  - 如果 Actor 需要使用大量的定时器，可通过该选项指定独立的定时器
+	//  - 默认使用的是 ActorSystem 的全局定时器
+	WithTimingWheel(timing timing.Wheel) ActorConfiguration
 }
 
 // ActorOptionsFetcher 是 Actor 的配置获取接口
@@ -103,6 +109,9 @@ type ActorOptionsFetcher interface {
 
 	// FetchSupervisor 获取 Actor 的监管者
 	FetchSupervisor() Supervisor
+
+	// FetchTimingWheel 获取 Actor 的定时器
+	FetchTimingWheel() timing.Wheel
 }
 
 type defaultActorConfig struct {
@@ -114,6 +123,7 @@ type defaultActorConfig struct {
 	mailboxProvider       MailboxProvider       // 邮箱
 	launchContextProvider LaunchContextProvider // 启动上下文提供者
 	supervisor            Supervisor            // 监管者
+	timingWheel           timing.Wheel          // 定时器
 }
 
 func (d *defaultActorConfig) WithSupervisor(supervisor Supervisor) ActorConfiguration {
@@ -207,6 +217,16 @@ func (d *defaultActorConfig) FetchReadOnly() bool {
 	return d.readOnly
 }
 
+func (d *defaultActorConfig) WithTimingWheel(timing timing.Wheel) ActorConfiguration {
+	if !d.modifyReadOnlyCheck() {
+		d.timingWheel = timing
+	}
+	return d
+}
+
+func (d *defaultActorConfig) FetchTimingWheel() timing.Wheel {
+	return d.timingWheel
+}
 func (d *defaultActorConfig) InitDefault() ActorConfiguration {
 	d.readOnly = true
 	return d

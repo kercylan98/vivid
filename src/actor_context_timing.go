@@ -10,10 +10,17 @@ var (
 )
 
 func newActorContextTimingImpl(ctx ActorContext) *actorContextTimingImpl {
-	return &actorContextTimingImpl{
+	impl := &actorContextTimingImpl{
 		ActorContext: ctx,
-		timing:       ctx.System().getTimingWheel().Named(ctx.Ref().GetPath()),
 	}
+
+	if actorTimingWheel := ctx.getConfig().FetchTimingWheel(); actorTimingWheel != nil {
+		impl.timing = actorTimingWheel.Named(ctx.Ref().GetPath())
+	} else {
+		impl.timing = ctx.System().getTimingWheel().Named(ctx.Ref().GetPath())
+	}
+	
+	return impl
 }
 
 type actorContextTimingImpl struct {
