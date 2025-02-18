@@ -27,6 +27,7 @@ func init() {
 	registerInternalMessage(new(onPing))
 	registerInternalMessage(new(pong))
 	registerInternalMessage(new(onLaunch))
+	registerInternalMessage(new(onKillFailed))
 }
 
 // MessageType 是消息的类型，它用于区分消息的优先级及执行方式
@@ -47,6 +48,7 @@ type RemoteMessageBuilder interface {
 	OnPingBuilder
 	PongBuilder
 	OnLaunchBuilder
+	OnKillFailedBuilder
 }
 
 type defaultRemoteMessageBuilder struct {
@@ -60,6 +62,7 @@ type defaultRemoteMessageBuilder struct {
 	defaultOnPingBuilder
 	defaultOnPongBuilder
 	defaultOnLaunchBuilder
+	defaultOnKillFailedBuilder
 }
 
 var (
@@ -215,6 +218,7 @@ type (
 	}
 
 	// OnKill 该消息表示 Actor 在处理完成当前消息后，将会被立即终止。需要在该阶段完成状态的持久化及资源的释放等操作。
+	//  - 在 Actor 重启时不会收到该消息
 	OnKill interface {
 		_OnKill(mark dedicated.Mark)
 
@@ -233,6 +237,34 @@ type (
 
 	// DedicatedOnKill 是 OnKill 的专用标记实现，它可以用来实现自定义的 OnKill 消息
 	DedicatedOnKill struct{}
+)
+
+type (
+	// OnKillFailedBuilder 是用于构建 OnKillFailed 消息的接口
+	OnKillFailedBuilder interface {
+		// BuildOnKillFailed 构建一个 OnKillFailed 消息
+		BuildOnKillFailed(stack []byte, reason Message, sender ActorRef, message OnKill) OnKillFailed
+	}
+
+	// OnKillFailed 当 OnKill 消息发生异常，将会触发该事件，可根据需要进行处理
+	OnKillFailed interface {
+		_OnKillFailed(mark dedicated.Mark)
+
+		// GetStack 获取异常堆栈
+		GetStack() []byte
+
+		// GetReason 获取异常原因
+		GetReason() Message
+
+		// GetSender 获取 OnKill 消息发送者
+		GetSender() ActorRef
+
+		// GetMessage 获取 OnKill 消息
+		GetMessage() OnKill
+	}
+
+	// DedicatedOnKillFailed 是 OnKillFailed 的专用标记实现，它可以用来实现自定义的 OnKillFailed 消息
+	DedicatedOnKillFailed struct{}
 )
 
 var (
@@ -302,6 +334,43 @@ type onKilled struct {
 }
 
 func (*DedicatedOnKilled) _OnKilled(mark dedicated.Mark) {}
+
+type defaultOnKillFailedBuilder struct{}
+
+func (b *defaultOnKillFailedBuilder) BuildOnKillFailed(stack []byte, reason Message, sender ActorRef, message OnKill) OnKillFailed {
+	return &onKillFailed{
+		Stack:   stack,
+		Reason:  reason,
+		Sender:  sender,
+		Message: message,
+	}
+}
+
+type onKillFailed struct {
+	DedicatedOnKillFailed
+	Stack   []byte
+	Reason  Message
+	Sender  ActorRef
+	Message OnKill
+}
+
+func (*DedicatedOnKillFailed) _OnKillFailed(mark dedicated.Mark) {}
+
+func (o *onKillFailed) GetStack() []byte {
+	return o.Stack
+}
+
+func (o *onKillFailed) GetReason() Message {
+	return o.Reason
+}
+
+func (o *onKillFailed) GetSender() ActorRef {
+	return o.Sender
+}
+
+func (o *onKillFailed) GetMessage() OnKill {
+	return o.Message
+}
 
 type defaultOnLaunchBuilder struct{}
 

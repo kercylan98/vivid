@@ -182,6 +182,12 @@ type (
 
 		// onAccidentFinished 处理事故结束
 		onAccidentFinished(record AccidentRecord)
+
+		// onReceive 交由 Actor 处理当前消息
+		onReceive()
+
+		// onReceiveEnvelope 交由 Actor 处理特定消息
+		onReceiveEnvelope(envelope Envelope)
 	}
 )
 
@@ -235,6 +241,12 @@ type (
 
 		// Restart 重启目标 Actor
 		Restart(target ActorRef, gracefully bool, reason ...string)
+
+		// setEnvelope 设置 Actor 当前处理的 envelope
+		setEnvelope(envelope Envelope)
+
+		// getEnvelope 获取 Actor 当前处理的 envelope
+		getEnvelope() Envelope
 	}
 
 	actorContextTransportInternal interface {

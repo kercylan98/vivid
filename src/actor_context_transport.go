@@ -3,7 +3,6 @@ package vivid
 import (
 	"fmt"
 	"github.com/kercylan98/chrono/timing"
-	"github.com/kercylan98/go-log/log"
 	"strconv"
 	"time"
 )
@@ -23,6 +22,14 @@ type actorContextTransportImpl struct {
 	envelope      Envelope                  // 当前消息
 	watchHandlers map[string][]WatchHandler // 监视处理器（当 Key 存在表示正在监视目标）
 	watchers      map[ActorRef]struct{}     // 该 Actor 的监视者
+}
+
+func (ctx *actorContextTransportImpl) setEnvelope(envelope Envelope) {
+	ctx.envelope = envelope
+}
+
+func (ctx *actorContextTransportImpl) getEnvelope() Envelope {
+	return ctx.envelope
 }
 
 func (ctx *actorContextTransportImpl) Sender() ActorRef {
@@ -144,7 +151,7 @@ func (ctx *actorContextTransportImpl) Broadcast(message Message) {
 }
 
 func (ctx *actorContextTransportImpl) onProcessMessage(envelope Envelope) {
-	ctx.envelope = envelope
+	ctx.setEnvelope(envelope)
 	switch envelope.GetMessageType() {
 	case SystemMessage:
 		ctx.onProcessSystemMessage(envelope)
@@ -196,23 +203,6 @@ func (ctx *actorContextTransportImpl) onProcessUserMessage(envelope Envelope) {
 		m(ctx)
 	default:
 		ctx.onReceive()
-	}
-}
-func (ctx *actorContextTransportImpl) onReceive() {
-	// 交由用户处理的消息需保证异常捕获
-	defer func() {
-		if reason := recover(); reason != nil {
-			ctx.onAccident(reason)
-		}
-	}()
-
-	ctx.getActor().OnReceive(ctx)
-
-	switch ctx.Message().(type) {
-	case OnLaunch:
-		ctx.removeAccidentRecord(func(record AccidentRecord) {
-			ctx.Logger().Debug("actor", log.String("event", "restarted"), log.String("ref", ctx.Ref().String()))
-		})
 	}
 }
 

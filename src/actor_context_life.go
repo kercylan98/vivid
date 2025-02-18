@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"fmt"
 	"github.com/kercylan98/go-log/log"
 	"runtime/debug"
 	"sync/atomic"
@@ -312,4 +313,46 @@ func (ctx *actorContextLifeImpl) onKilled() {
 
 func (ctx *actorContextLifeImpl) terminated() bool {
 	return ctx.status.Load() == actorStatusTerminated
+}
+
+func (ctx *actorContextLifeImpl) onReceive() {
+	// 交由用户处理的消息需保证异常捕获
+	defer func() {
+		if reason := recover(); reason != nil {
+			switch m := ctx.Message().(type) {
+			case OnKill:
+				// 如果是 OnKill 中发生了异常，无需继续由监管策略处理，而是继续执行本该执行的停止逻辑
+				// 终止可能存在一些释放资源的逻辑，也需要提供消息使得用户能够感知
+				ctx.Logger().Error("actor", log.String("event", "kill"), log.String("ref", ctx.Ref().String()), log.String("reason", fmt.Sprint(reason)))
+
+				onKillFailed := ctx.getMessageBuilder().BuildStandardEnvelope(ctx.Ref(), ctx.Ref(), UserMessage,
+					ctx.getMessageBuilder().BuildOnKillFailed(debug.Stack(), reason, ctx.Sender(), m),
+				)
+				ctx.onReceiveEnvelope(onKillFailed)
+			case OnKillFailed:
+				// 如果是 OnKillFailed 中发生了异常，记录日志
+				ctx.Logger().Error("actor", log.String("event", "kill failed"), log.String("ref", ctx.Ref().String()), log.String("reason", fmt.Sprint(reason)))
+			default:
+				// 其他类型消息交由监管策略执行
+				ctx.onAccident(reason)
+			}
+		}
+	}()
+
+	ctx.getActor().OnReceive(ctx)
+
+	switch ctx.Message().(type) {
+	case OnLaunch:
+		ctx.removeAccidentRecord(func(record AccidentRecord) {
+			ctx.Logger().Debug("actor", log.String("event", "restarted"), log.String("ref", ctx.Ref().String()))
+		})
+	}
+}
+
+func (ctx *actorContextLifeImpl) onReceiveEnvelope(envelope Envelope) {
+	curr := ctx.getEnvelope()
+	defer ctx.setEnvelope(curr)
+	ctx.setEnvelope(envelope)
+	ctx.onReceive()
+
 }
