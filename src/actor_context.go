@@ -73,8 +73,10 @@ type (
 	actorContextTimingInternal interface {
 		ActorContextTiming
 
+		// 获取该 Actor 全局的子定时器
 		getTimingWheel() timing.Named
 
+		// accidentAfter 创建一个在一段时间后发送到 Actor 邮箱中执行的系统级事故决策任务
 		accidentAfter(name string, duration time.Duration, task accidentTimingTask)
 	}
 )
@@ -249,16 +251,10 @@ type (
 		// onProcessMessage 当 Actor 收到的消息到达时，通过该函数进行处理
 		onProcessMessage(envelope Envelope)
 
-		addWatcher(watcher ActorRef)
-
-		deleteWatcher(watcher ActorRef)
-
+		// getWatchers 获取监视者列表
 		getWatchers() map[ActorRef]struct{}
 
-		getWatcherHandlers(watcher ActorRef) ([]WatchHandler, bool)
-
-		deleteWatcherHandlers(watcher ActorRef)
-
+		// onWatchStopped 通过 OnWatchStopped 消息告知监视者目标已经终止
 		onWatchStopped(m OnWatchStopped)
 	}
 )

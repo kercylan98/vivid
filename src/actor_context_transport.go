@@ -67,7 +67,11 @@ func (ctx *actorContextTransportImpl) deleteWatcherHandlers(watcher ActorRef) {
 }
 
 func (ctx *actorContextTransportImpl) deleteWatcher(watcher ActorRef) {
-	delete(ctx.watchers, watcher)
+	for ref := range ctx.watchers {
+		if ref.Equal(watcher) {
+			delete(ctx.watchers, ref)
+		}
+	}
 	if len(ctx.watchers) == 0 {
 		ctx.watchers = nil
 	}
