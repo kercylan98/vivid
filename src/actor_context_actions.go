@@ -106,6 +106,12 @@ func (ctx *actorContextActionsImpl) ask(target ActorRef, message Message, messag
 	return future
 }
 
+func (ctx *actorContextActionsImpl) Broadcast(message Message) {
+	for _, child := range ctx.getChildren() {
+		ctx.tell(child, message, UserMessage)
+	}
+}
+
 func getActorWatchTimingLoopTaskKey(ref ActorRef) string {
 	return fmt.Sprintf(timingWheelNameWatchFormater, ref.String())
 }

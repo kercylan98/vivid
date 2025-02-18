@@ -182,6 +182,9 @@ type (
 		//  - 如果 timeout 参数不存在，那么将会在 DefaultFutureTimeout 时间内等待结果。
 		Ask(target ActorRef, message Message, timeout ...time.Duration) Future[Message]
 
+		// Broadcast 向所有子 Actor 发送消息
+		Broadcast(message Message)
+
 		// Watch 监视目标 Actor 的生命周期，当目标 Actor 终止时，会收到 OnWatchStopped 消息。
 		// 该函数会向目标 Actor 发送 Watch 消息，目标 Actor 收到 Watch 消息后会将自己加入到监视列表中。
 		//  - 如果传入了 handler 函数，那么当目标 Actor 终止时，会调用 handler 函数，而不再投递 OnWatchStopped 消息。
