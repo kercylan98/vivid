@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"context"
 	"fmt"
 	"github.com/kercylan98/go-log/log"
 	"runtime/debug"
@@ -16,6 +17,10 @@ const (
 
 const (
 	timingWheelNameWatchFormater = "[watch]%s"
+)
+
+var (
+	defaultSlowMessageCancel = context.CancelFunc(func() {})
 )
 
 var _ actorContextLifeInternal = (*actorContextLifeImpl)(nil)
@@ -316,8 +321,31 @@ func (ctx *actorContextLifeImpl) terminated() bool {
 }
 
 func (ctx *actorContextLifeImpl) onReceive() {
+	// 慢消息等待计数器
+	var slowMessageThreshold = ctx.System().getConfig().FetchSlowMessageThreshold()
+	if actorSlowMessageThreshold := ctx.getConfig().FetchSlowMessageThreshold(); actorSlowMessageThreshold > 0 {
+		slowMessageThreshold = actorSlowMessageThreshold
+	}
+	var slowMessageCancel = defaultSlowMessageCancel
+	var start time.Time
+	if slowMessageThreshold > 0 {
+		var slowMessageContext context.Context
+		slowMessageContext, slowMessageCancel = context.WithTimeout(context.Background(), slowMessageThreshold)
+		var message = ctx.Message()
+		go func() {
+			select {
+			case <-slowMessageContext.Done():
+				cost := time.Since(start)
+				if cost > slowMessageThreshold {
+					ctx.Logger().Error("actor", log.String("event", "slow message"), log.String("ref", ctx.Ref().String()), log.Duration("cost", cost), log.Any(fmt.Sprintf("message[%T]", message), message))
+				}
+			}
+		}()
+	}
+
 	// 交由用户处理的消息需保证异常捕获
 	defer func() {
+		slowMessageCancel()
 		if reason := recover(); reason != nil {
 			switch m := ctx.Message().(type) {
 			case OnKill:
@@ -338,6 +366,8 @@ func (ctx *actorContextLifeImpl) onReceive() {
 			}
 		}
 	}()
+
+	start = time.Now()
 
 	ctx.getActor().OnReceive(ctx)
 

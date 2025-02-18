@@ -5,6 +5,7 @@ import (
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/internal/utils/options"
 	"log/slog"
+	"time"
 )
 
 var (
@@ -81,6 +82,11 @@ type ActorOptions interface {
 	//  - 如果 Actor 需要使用大量的定时器，可通过该选项指定独立的定时器
 	//  - 默认使用的是 ActorSystem 的全局定时器
 	WithTimingWheel(timing timing.Wheel) ActorConfiguration
+
+	// WithSlowMessageThreshold 设置 Actor 的慢消息阈值，覆盖 ActorSystem 的全局慢消息阈值
+	//  - 用于设置 Actor 处理消息的阈值，当消息处理时间超过该阈值时，会记录一条 WARN 级别日志
+	//  - 当阈值为 <= 0 时，不会记录任何日志
+	WithSlowMessageThreshold(threshold time.Duration) ActorConfiguration
 }
 
 // ActorOptionsFetcher 是 Actor 的配置获取接口
@@ -112,6 +118,9 @@ type ActorOptionsFetcher interface {
 
 	// FetchTimingWheel 获取 Actor 的定时器
 	FetchTimingWheel() timing.Wheel
+
+	// FetchSlowMessageThreshold 获取 Actor 的慢消息阈值
+	FetchSlowMessageThreshold() time.Duration
 }
 
 type defaultActorConfig struct {
@@ -124,6 +133,18 @@ type defaultActorConfig struct {
 	launchContextProvider LaunchContextProvider // 启动上下文提供者
 	supervisor            Supervisor            // 监管者
 	timingWheel           timing.Wheel          // 定时器
+	slownessThreshold     time.Duration         // 慢消息阈值
+}
+
+func (d *defaultActorConfig) WithSlowMessageThreshold(threshold time.Duration) ActorConfiguration {
+	if !d.modifyReadOnlyCheck() {
+		d.slownessThreshold = threshold
+	}
+	return d
+}
+
+func (d *defaultActorConfig) FetchSlowMessageThreshold() time.Duration {
+	return d.slownessThreshold
 }
 
 func (d *defaultActorConfig) WithSupervisor(supervisor Supervisor) ActorConfiguration {

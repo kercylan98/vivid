@@ -6,6 +6,7 @@ import (
 	"github.com/kercylan98/vivid/src/internal/utils/options"
 	"log/slog"
 	"net"
+	"time"
 )
 
 var (
@@ -24,6 +25,7 @@ func NewActorSystemConfig() ActorSystemConfiguration {
 			return newGobCodec()
 		}),
 		defaultSupervisorRestartLimit: 10,
+		slowMessageThreshold:          500 * time.Millisecond,
 	}
 	c.LogicOptions = options.NewLogicOptions[ActorSystemOptionsFetcher, ActorSystemOptions](c, c)
 	return c
@@ -78,6 +80,11 @@ type ActorSystemOptions interface {
 
 	// WithDefaultSupervisorRestartLimit 设置 ActorSystem 的默认 Supervisor 重启次数限制
 	WithDefaultSupervisorRestartLimit(limit int) ActorSystemOptionsFetcher
+
+	// WithSlowMessageThreshold 设置 ActorSystem 的慢消息阈值
+	//  - 当消息处理时间超过阈值时，将会产生一条警告日志
+	//  - 阈值为 0 时，表示关闭慢消息检测，默认值为 500ms
+	WithSlowMessageThreshold(threshold time.Duration) ActorSystemOptionsFetcher
 }
 
 // ActorSystemOptionsFetcher 是 ActorSystem 的配置选项获取器
@@ -105,6 +112,9 @@ type ActorSystemOptionsFetcher interface {
 
 	// FetchDefaultSupervisorRestartLimit 获取 ActorSystem 的默认 Supervisor 重启次数限制
 	FetchDefaultSupervisorRestartLimit() int
+
+	// FetchSlowMessageThreshold 获取 ActorSystem 的慢消息阈值
+	FetchSlowMessageThreshold() time.Duration
 }
 
 type defaultActorSystemConfig struct {
@@ -116,6 +126,18 @@ type defaultActorSystemConfig struct {
 	remoteMessageBuilder          RemoteMessageBuilder // 远程消息构建器
 	listener                      net.Listener         // 监听器
 	defaultSupervisorRestartLimit int                  // 默认 Supervisor 重启次数限制
+	slowMessageThreshold          time.Duration        // 慢消息阈值
+}
+
+func (d *defaultActorSystemConfig) WithSlowMessageThreshold(threshold time.Duration) ActorSystemOptionsFetcher {
+	if !d.modifyReadOnlyCheck() {
+		d.slowMessageThreshold = threshold
+	}
+	return d
+}
+
+func (d *defaultActorSystemConfig) FetchSlowMessageThreshold() time.Duration {
+	return d.slowMessageThreshold
 }
 
 func (d *defaultActorSystemConfig) WithCodec(codec CodecProvider, builder RemoteMessageBuilder) ActorSystemConfiguration {
