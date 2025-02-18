@@ -176,7 +176,7 @@ func (ctx *actorContextLifeImpl) onAccidentFinished(record AccidentRecord) {
 }
 
 func (ctx *actorContextLifeImpl) removeAccidentRecord(removedHandler func(record AccidentRecord)) {
-	if ctx.accidentRecord == nil {
+	if ctx.accidentRecord != nil {
 		removedHandler(ctx.accidentRecord)
 		ctx.accidentRecord = nil
 	}
@@ -337,7 +337,7 @@ func (ctx *actorContextLifeImpl) onReceive() {
 			case <-slowMessageContext.Done():
 				cost := time.Since(start)
 				if cost > slowMessageThreshold {
-					ctx.Logger().Error("actor", log.String("event", "slow message"), log.String("ref", ctx.Ref().String()), log.Duration("cost", cost), log.Any(fmt.Sprintf("message[%T]", message), message))
+					ctx.Logger().Warn("actor", log.String("event", "slow message"), log.String("ref", ctx.Ref().String()), log.Duration("cost", cost), log.Any(fmt.Sprintf("message[%T]", message), message))
 				}
 			}
 		}()
