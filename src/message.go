@@ -76,7 +76,8 @@ type (
 		BuildPong(ping OnPing) Pong
 	}
 
-	// Pong 该消息为 Vivid 内部使用，用于响应 OnPing 消息
+	// Pong 该消息反应了一个 Actor 的延迟情况，当通过 ActorContextTransportInteractive.Ping 发起消息后，将会收到该消息
+	//  - 该消息支持在跨网络 ActorSystem 间传递
 	Pong interface {
 		_Pong(mark dedicated.Mark)
 
@@ -102,7 +103,9 @@ type (
 		BuildOnPing() OnPing
 	}
 
-	// OnPing 该消息为 Vivid 内部使用，用于检测 Actor 是否存活
+	// OnPing 是在 ActorSystem 中内部使用的消息类型，由于该消息被内部定义为系统消息，在用户消息中监听该消息仅会得到主动投递的用户级消息
+	//  - 自行依赖该消息实现 Ping-Pong 机制不能完整的代表网络通讯的延迟，仅代表 Actor 的消息处理延迟
+	//  - 该消息支持在跨网络 ActorSystem 间传递
 	OnPing interface {
 		_OnPing(mark dedicated.Mark)
 
@@ -125,7 +128,8 @@ type (
 		BuildOnUnwatch() OnUnwatch
 	}
 
-	// OnUnwatch 该消息为 Vivid 内部使用，用于告知 Actor 观察者已不再继续观察
+	// OnUnwatch 是在 ActorSystem 中内部使用的消息类型，它被用于告知 Actor 的观察者已停止对其的观察
+	//  - 该消息支持在跨网络 ActorSystem 间传递
 	OnUnwatch interface {
 		_OnUnwatch(mark dedicated.Mark)
 	}
@@ -145,7 +149,9 @@ type (
 		BuildOnWatchStopped(ref ActorRef) OnWatchStopped
 	}
 
-	// OnWatchStopped 该消息为 Vivid 内部使用，用于告知 Actor 观察者已停止观察
+	// OnWatchStopped 是用于告知 Actor 所观察的目标 Actor 已经停止运行的消息，该消息将会在目标 Actor 终止时投递给观察者
+	//  - 在使用过程中主动投递该消息不会影响内部的观察逻辑，所以在对已观察的目标投递该消息后，当目标 Actor 终止时，将会再次收到该消息，这将可能导致重复处理
+	//  - 该消息支持在跨网络 ActorSystem 间传递
 	OnWatchStopped interface {
 		_OnWatchStopped(mark dedicated.Mark)
 
@@ -170,7 +176,9 @@ type (
 		BuildOnWatch() OnWatch
 	}
 
-	// OnWatch 该消息为 Vivid 内部使用，用于告知 Actor 被观察
+	// OnWatch 是在 ActorSystem 中内部使用的消息类型，它被用于告知 Actor 的观察者已开始对其进行观察
+	//  - 该消息由于是系统消息，因此在用户消息中监听该消息将会得到主动投递的用户级消息
+	//  - 该消息支持在跨网络 ActorSystem 间传递
 	OnWatch interface {
 		_OnWatch(mark dedicated.Mark)
 	}
@@ -186,7 +194,10 @@ type (
 		BuildOnLaunch(launchAt time.Time, context map[any]any, isRestart bool) OnLaunch
 	}
 
-	// OnLaunch 在 Actor 启动时，将会作为第一条消息被处理，适用于初始化 Actor 状态等场景。
+	// OnLaunch 是在 Actor 启动时的消息，它包含了 Actor 的启动时间、启动上下文以及是否为重启的状态标识
+	//  - 该消息在 Actor 启动或重启时被投递，用于初始化 Actor 的状态
+	//  - 通常并不建议用户主动投递该消息，如果控制不良将会出现重复初始化等情况
+	//  - 该消息支持在跨网络 ActorSystem 间传递
 	OnLaunch interface {
 		_OnLaunch(mark dedicated.Mark)
 
@@ -219,6 +230,7 @@ type (
 
 	// OnKill 该消息表示 Actor 在处理完成当前消息后，将会被立即终止。需要在该阶段完成状态的持久化及资源的释放等操作。
 	//  - 在 Actor 重启时不会收到该消息
+	//  - 该消息支持在跨网络 ActorSystem 间传递
 	OnKill interface {
 		_OnKill(mark dedicated.Mark)
 
@@ -246,7 +258,11 @@ type (
 		BuildOnKillFailed(stack []byte, reason Message, sender ActorRef, message OnKill) OnKillFailed
 	}
 
-	// OnKillFailed 当 OnKill 消息发生异常，将会触发该事件，可根据需要进行处理
+	// OnKillFailed 在处理 OnKill 消息发生异常时，将会收到该消息，可用于处理异常情况
+	//  - 在处理该消息发生异常时，将不会再进行额外的处理，因此需要确保该消息的处理逻辑不会再次发生异常
+	//  - 该消息支持在跨网络 ActorSystem 间传递
+	//
+	// 异常：panic
 	OnKillFailed interface {
 		_OnKillFailed(mark dedicated.Mark)
 
@@ -276,6 +292,9 @@ type (
 		BuildOnKilled(ref ActorRef) OnKilled
 	}
 
+	// OnKilled 是在 ActorSystem 内部使用的消息类型，它被用于告知 Actor 其 Sender（子） 已经终止
+	//  - 该消息在 Actor 的 Sender 终止时被投递，用于处理 Actor 的状态
+	//  - 该消息支持在跨网络 ActorSystem 间传递
 	OnKilled interface {
 		_OnKilled(mark dedicated.Mark)
 	}
@@ -302,6 +321,7 @@ type (
 
 	// Envelope 是进程间通信的消息包装，包含原始消息内容和附加的头部信息，支持跨网络传输。
 	//   - 如果需要支持其他序列化方式，可以通过实现 Envelope 接口并自定义消息包装，同时实现 EnvelopeBuilder 接口来提供构建方式。
+	//   - 有一点值得注意，需要满足跨网络传输时，需确保 GetMessage 得到的消息支持 Codec 编解码。
 	Envelope interface {
 		// GetAgent 获取消息代理的 ID
 		GetAgent() ID
