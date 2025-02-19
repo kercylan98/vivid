@@ -159,7 +159,9 @@ func (d *defaultActorConfig) FetchSupervisor() Supervisor {
 }
 
 func (d *defaultActorConfig) WithLaunchContextProvider(provider LaunchContextProvider) ActorConfiguration {
-	d.launchContextProvider = provider
+	if !d.modifyReadOnlyCheck() {
+		d.launchContextProvider = provider
+	}
 	return d
 }
 
