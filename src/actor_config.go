@@ -16,7 +16,7 @@ var (
 func NewActorConfig(parent ActorContext) ActorConfiguration {
 	var loggerProvider log.Provider
 	if parent != nil {
-		loggerProvider = parent.GetLoggerProvider()
+		loggerProvider = parent.getLoggerProvider()
 	}
 	c := &defaultActorConfig{
 		loggerProvider:     loggerProvider,

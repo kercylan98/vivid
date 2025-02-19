@@ -16,7 +16,7 @@ type actorContextLoggerImpl struct {
 	ActorContext
 }
 
-func (ctx *actorContextLoggerImpl) GetLoggerProvider() log.Provider {
+func (ctx *actorContextLoggerImpl) getLoggerProvider() log.Provider {
 	return ctx.getConfig().FetchLoggerProvider()
 }
 
