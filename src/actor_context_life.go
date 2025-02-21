@@ -369,19 +369,27 @@ func (ctx *actorContextLifeImpl) onReceive() {
 
 	start = time.Now()
 
-	ctx.getActor().OnReceive(ctx)
-
 	switch ctx.Message().(type) {
 	case OnLaunch:
+		ctx.getActor().OnReceive(ctx)
+		ctx.persistentRecover()
 		ctx.removeAccidentRecord(func(record AccidentRecord) {
 			ctx.Logger().Debug("actor", log.String("event", "restarted"), log.String("ref", ctx.Ref().String()))
 		})
+	default:
+		ctx.getActor().OnReceive(ctx)
 	}
 }
 
 func (ctx *actorContextLifeImpl) onReceiveEnvelope(envelope Envelope) {
+	persistent := ctx.isPersistentMessage()
 	curr := ctx.getEnvelope()
-	defer ctx.setEnvelope(curr)
+	defer func() {
+		ctx.setEnvelope(curr)
+		if persistent {
+			ctx.setPersistentMessage()
+		}
+	}()
 	ctx.setEnvelope(envelope)
 	ctx.onReceive()
 

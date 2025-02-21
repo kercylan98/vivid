@@ -337,6 +337,9 @@ type (
 
 		// GetMessageType 获取消息的类型
 		GetMessageType() MessageType
+
+		// SetMessage 设置消息的内容
+		SetMessage(message Message)
 	}
 )
 
@@ -515,6 +518,10 @@ func (d *envelope) GetMessage() Message {
 
 func (d *envelope) GetMessageType() MessageType {
 	return d.MessageType
+}
+
+func (d *envelope) SetMessage(message Message) {
+	d.Message = message
 }
 
 type defaultOnWatchBuilder struct{}

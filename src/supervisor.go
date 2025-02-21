@@ -31,7 +31,7 @@ func (d *defaultSupervisor) Decision(record AccidentRecord) {
 			record.Kill(record.GetVictim(), "supervisor: OnLaunch failed")
 		} else {
 			// 否则尝试重启
-			record.ExponentialBackoffRestart(record.GetVictim(), "supervisor: try restart", d.restartLimit, time.Millisecond*100, time.Second, 2.0, 0.5)
+			record.ExponentialBackoffRestart(record.GetVictim(), d.restartLimit, time.Millisecond*100, time.Second, 2.0, 0.5, "supervisor: try restart")
 		}
 	case OnKill:
 		// TODO: 在该阶段发生失败时，Actor 的持久化可能由于网络等因素尚未完成。需要更合适的解决方案。
@@ -42,6 +42,6 @@ func (d *defaultSupervisor) Decision(record AccidentRecord) {
 		}
 	default:
 		// 其他情况下，尝试重启
-		record.ExponentialBackoffRestart(record.GetVictim(), "supervisor: try restart", d.restartLimit, time.Millisecond*100, time.Second, 2.0, 0.5)
+		record.ExponentialBackoffRestart(record.GetVictim(), d.restartLimit, time.Millisecond*100, time.Second, 2.0, 0.5, "supervisor: try restart")
 	}
 }

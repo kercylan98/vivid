@@ -3,6 +3,7 @@ package vivid_test
 import (
 	vivid "github.com/kercylan98/vivid/src"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -74,4 +75,44 @@ func TestDefaultActorConfig_WithSlowMessageThreshold(t *testing.T) {
 	}, func(config vivid.ActorConfiguration) {
 		config.WithSlowMessageThreshold(time.Millisecond * 900)
 	})
+}
+
+func TestDefaultActorConfig_WithPersistent(t *testing.T) {
+	system := vivid.NewActorSystem().StartP()
+	defer system.ShutdownP()
+
+	var once sync.Once
+	ref := system.ActorOfFn(func() vivid.Actor {
+		status := 0
+		return vivid.ActorFn(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case int64:
+				status = int(m)
+				t.Log("recovery:", status)
+			case int:
+				status += m
+				t.Log("status:", status)
+				if status%3 == 0 {
+					ctx.Snapshot(int64(status))
+				}
+				if err := ctx.Persist(); err != nil {
+					panic(err)
+				}
+				if status == 10 {
+					once.Do(func() {
+						panic("test")
+					})
+				}
+			}
+		})
+	}, func(config vivid.ActorConfiguration) {
+		config.WithPersistent("test", time.Minute, vivid.GetMemoryPersistentStorage())
+		config.WithSupervisor(vivid.SupervisorFn(func(record vivid.AccidentRecord) {
+			record.Restart(record.GetVictim())
+		}))
+	})
+
+	for i := 0; i < 100; i++ {
+		system.Tell(ref, vivid.PersistentEvent(1))
+	}
 }

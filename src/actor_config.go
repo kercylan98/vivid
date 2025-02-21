@@ -87,6 +87,11 @@ type ActorOptions interface {
 	//  - 用于设置 Actor 处理消息的阈值，当消息处理时间超过该阈值时，会记录一条 WARN 级别日志
 	//  - 当阈值为 <= 0 时，不会记录任何日志
 	WithSlowMessageThreshold(threshold time.Duration) ActorConfiguration
+
+	// WithPersistent 设置 Actor 为持久化 Actor
+	//  - 持久化 Actor 会将持久化消息进行记录，并在 Actor 重启时进行恢复
+	//  - 设置 interval 可指定持久化消息的自动存储间隔，当 <= 0 时，不会自动存储，需要主动调用 ActorContextPersistent.Persist 方法
+	WithPersistent(persistentId string, interval time.Duration, storage PersistentStorage) ActorConfiguration
 }
 
 // ActorOptionsFetcher 是 Actor 的配置获取接口
@@ -121,6 +126,15 @@ type ActorOptionsFetcher interface {
 
 	// FetchSlowMessageThreshold 获取 Actor 的慢消息阈值
 	FetchSlowMessageThreshold() time.Duration
+
+	// FetchPersistentId 获取 Actor 的持久化 ID
+	FetchPersistentId() string
+
+	// FetchPersistentInterval 获取 Actor 的持久化间隔
+	FetchPersistentInterval() time.Duration
+
+	// FetchPersistentStorage 获取 Actor 的持久化存储器
+	FetchPersistentStorage() PersistentStorage
 }
 
 type defaultActorConfig struct {
@@ -134,6 +148,9 @@ type defaultActorConfig struct {
 	supervisor            Supervisor            // 监管者
 	timingWheel           timing.Wheel          // 定时器
 	slownessThreshold     time.Duration         // 慢消息阈值
+	persistentId          string                // 持久化 ID
+	persistentInterval    time.Duration         // 持久化间隔
+	persistentStorage     PersistentStorage     // 持久化存储器
 }
 
 func (d *defaultActorConfig) WithSlowMessageThreshold(threshold time.Duration) ActorConfiguration {
@@ -270,4 +287,27 @@ type LaunchContextProviderFn func() map[any]any
 
 func (f LaunchContextProviderFn) Provide() map[any]any {
 	return f()
+}
+
+func (d *defaultActorConfig) WithPersistent(persistentId string, interval time.Duration, storage PersistentStorage) ActorConfiguration {
+	if !d.modifyReadOnlyCheck() {
+		if persistentId != "" && storage != nil {
+			d.persistentId = persistentId
+			d.persistentInterval = interval
+			d.persistentStorage = storage
+		}
+	}
+	return d
+}
+
+func (d *defaultActorConfig) FetchPersistentId() string {
+	return d.persistentId
+}
+
+func (d *defaultActorConfig) FetchPersistentInterval() time.Duration {
+	return d.persistentInterval
+}
+
+func (d *defaultActorConfig) FetchPersistentStorage() PersistentStorage {
+	return d.persistentStorage
 }

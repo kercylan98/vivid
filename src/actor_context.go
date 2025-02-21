@@ -30,6 +30,7 @@ type ActorContext interface {
 	actorContextLifeInternal
 	actorContextTransportInternal
 	actorContextTimingInternal
+	actorContextPersistentInternal
 }
 
 type (
@@ -67,6 +68,32 @@ type (
 		// getMailbox 获取当前 Actor 的邮箱。
 		// Actor 的邮箱用于存储接收到的消息，并提供相应的接口来处理消息的投递和消费。
 		getMailbox() Mailbox
+	}
+)
+
+type (
+	ActorContextPersistent interface {
+		// Snapshot 为当前 Actor 创建持久化快照并移除历史事件。
+		Snapshot(snapshot Message)
+
+		// Persist 主动将当前 Actor 的快照和事件持久化存储。
+		Persist() error
+	}
+
+	actorContextPersistentInternal interface {
+		ActorContextPersistent
+
+		// persistentRecover 恢复 Actor 的持久化状态
+		persistentRecover()
+
+		// persistentMessageParse 记录持久化事件
+		persistentMessageParse(envelope Envelope) Envelope
+
+		// isPersistentMessage 判断当前消息是否为持久化消息
+		isPersistentMessage() bool
+
+		// setPersistentMessage 设置当前消息为持久化消息
+		setPersistentMessage()
 	}
 )
 
@@ -462,6 +489,7 @@ func newActorContext(system ActorSystem, config ActorOptionsFetcher, provider Ac
 	ctx.actorContextLoggerInternal = newActorContextLoggerImpl(ctx)
 	ctx.actorContextSpawnerInternal = newActorContextSpawnerImpl(ctx)
 	ctx.actorContextTimingInternal = newActorContextTimingImpl(ctx)
+	ctx.actorContextPersistentInternal = newActorContextPersistentImpl(ctx)
 	return ctx
 }
 
@@ -472,6 +500,7 @@ type actorContext struct {
 	actorContextLoggerInternal
 	actorContextSpawnerInternal
 	actorContextTimingInternal
+	actorContextPersistentInternal
 
 	recipient Recipient
 }

@@ -41,5 +41,5 @@ func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope Envelope) {
 		}
 	}
 
-	ctx.onProcessMessage(envelope)
+	ctx.onProcessMessage(ctx.persistentMessageParse(envelope))
 }

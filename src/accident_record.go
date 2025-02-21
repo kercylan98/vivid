@@ -38,19 +38,19 @@ type AccidentRecord interface {
 	GetRestartCount() int
 
 	// Kill 立即停止目标 Actor 继续运行
-	Kill(ref ActorRef, reason string)
+	Kill(ref ActorRef, reason ...string)
 
 	// PoisonKill 在目标 Actor 处理完剩余消息后停止其运行
-	PoisonKill(ref ActorRef, reason string)
+	PoisonKill(ref ActorRef, reason ...string)
 
 	// Resume 忽略本条消息并恢复事故受害者的运行
 	Resume()
 
 	// Restart 重启目标 Actor，并在重启后继续处理剩余消息
-	Restart(ref ActorRef, reason string)
+	Restart(ref ActorRef, reason ...string)
 
 	// ExponentialBackoffRestart 退避指数重启
-	ExponentialBackoffRestart(ref ActorRef, reason string, restartCount int, baseDelay, maxDelay time.Duration, multiplier, randomization float64)
+	ExponentialBackoffRestart(ref ActorRef, restartCount int, baseDelay, maxDelay time.Duration, multiplier, randomization float64, reason ...string)
 
 	// Escalate 将事故升级至上级 Actor 处理
 	Escalate()
@@ -115,19 +115,19 @@ func (record *accidentRecord) GetStack() []byte {
 	return record.Stack
 }
 
-func (record *accidentRecord) Kill(ref ActorRef, reason string) {
+func (record *accidentRecord) Kill(ref ActorRef, reason ...string) {
 	if !record.Finished.CompareAndSwap(false, true) {
 		return
 	}
-	record.responsiblePerson.Kill(ref, reason)
+	record.responsiblePerson.Kill(ref, reason...)
 }
 
-func (record *accidentRecord) PoisonKill(ref ActorRef, reason string) {
+func (record *accidentRecord) PoisonKill(ref ActorRef, reason ...string) {
 	if !record.Finished.CompareAndSwap(false, true) {
 		return
 	}
 	record.Mailbox.Resume()
-	record.responsiblePerson.PoisonKill(ref, reason)
+	record.responsiblePerson.PoisonKill(ref, reason...)
 }
 
 func (record *accidentRecord) Resume() {
@@ -137,18 +137,18 @@ func (record *accidentRecord) Resume() {
 	record.Mailbox.Resume()
 }
 
-func (record *accidentRecord) Restart(ref ActorRef, reason string) {
+func (record *accidentRecord) Restart(ref ActorRef, reason ...string) {
 	if !record.Finished.CompareAndSwap(false, true) {
 		return
 	}
 	record.Mailbox.Resume()
 
 	// 当意外发生后，Actor 的状态无法得到保证，需要在重启后继续处理剩余消息，所以不需要优雅重启
-	record.responsiblePerson.Restart(ref, false, reason)
+	record.responsiblePerson.Restart(ref, false, reason...)
 }
 
 // ExponentialBackoffRestart 退避指数重启
-func (record *accidentRecord) ExponentialBackoffRestart(ref ActorRef, reason string, restartCount int, baseDelay, maxDelay time.Duration, multiplier, randomization float64) {
+func (record *accidentRecord) ExponentialBackoffRestart(ref ActorRef, restartCount int, baseDelay, maxDelay time.Duration, multiplier, randomization float64, reason ...string) {
 	if !record.Finished.CompareAndSwap(false, true) {
 		return
 	}
@@ -170,7 +170,7 @@ func (record *accidentRecord) ExponentialBackoffRestart(ref ActorRef, reason str
 		key := fmt.Sprintf("supervisor:restart:%s:%d", record.GetVictim().GetPath(), time.Now().UnixMilli())
 		record.ActorContext().accidentAfter(key, after, func(ctx ActorContext) {
 			record.Finished.Store(false)
-			record.Restart(ref, reason)
+			record.Restart(ref, reason...)
 			record.responsiblePerson.tell(record.responsiblePerson.Ref(), &accidentFinished{AccidentRecord: record}, SystemMessage)
 		})
 	}
