@@ -34,6 +34,14 @@ type actorContextPersistentImpl struct {
 	recovering        bool         // 是否正在恢复
 }
 
+func (a *actorContextPersistentImpl) IsPersistentRecovering() bool {
+	return a.recovering
+}
+
+func (a *actorContextPersistentImpl) GetPersistentEventNum() int {
+	return len(a.events)
+}
+
 func (a *actorContextPersistentImpl) persistentRecover() {
 	storage := a.ctx.getConfig().FetchPersistentStorage()
 	if storage == nil {
@@ -41,6 +49,9 @@ func (a *actorContextPersistentImpl) persistentRecover() {
 	}
 
 	a.persistentMessage = false
+	defer func() {
+		a.recovering = false
+	}()
 
 	snapshot, events, err := storage.Load(a.ctx.getConfig().FetchPersistentId())
 	if err != nil {
@@ -63,6 +74,11 @@ func (a *actorContextPersistentImpl) persistentRecover() {
 		for _, event := range a.events {
 			envelope.SetMessage(event)
 			a.ctx.onReceiveEnvelope(envelope)
+			if len(a.events) == 0 {
+				// 在持久化恢复过程中记录了快照，这是不被推荐的做法
+				a.ctx.Logger().Warn("actor", log.String("event", "recover"), log.String("ref", a.ctx.Ref().String()), log.String("info", "snapshot and events are mixed, remaining events will be ignored"))
+				break
+			}
 		}
 	}
 

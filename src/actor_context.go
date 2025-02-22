@@ -78,6 +78,12 @@ type (
 
 		// Persist 主动将当前 Actor 的快照和事件持久化存储。
 		Persist() error
+
+		// IsPersistentRecovering 判断当前 Actor 是否正在进行持久化恢复
+		IsPersistentRecovering() bool
+
+		// GetPersistentEventNum 获取当前 Actor 的持久化事件数量，可用于判断是否需要生成快照
+		GetPersistentEventNum() int
 	}
 
 	actorContextPersistentInternal interface {
