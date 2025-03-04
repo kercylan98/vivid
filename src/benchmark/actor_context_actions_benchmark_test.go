@@ -18,7 +18,7 @@ func BenchmarkActorContextTell(b *testing.B) {
 	}
 	b.StopTimer()
 
-	system.ShutdownP()
+	//system.ShutdownP()
 }
 
 func BenchmarkActorContextAsk(b *testing.B) {

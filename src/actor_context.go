@@ -58,12 +58,12 @@ type (
 		// 如果目标位于远端，应确保 Envelope.GetMessage 可以得到支持跨网络的消息。
 		//
 		// 该函数是并发安全的，可以在多个 goroutine 中调用。
-		sendToProcess(envelope Envelope)
+		sendToProcess(envelope *Envelope)
 
 		// sendToSelfProcess 将消息投递至当前 Actor 的进程中，该函数将直接进行消息的投递，而不再需要通过进程管理器查找进程信息。
 		//
 		// 该函数是并发安全的，可以在多个 goroutine 中调用。
-		sendToSelfProcess(envelope Envelope)
+		sendToSelfProcess(envelope *Envelope)
 
 		// getMailbox 获取当前 Actor 的邮箱。
 		// Actor 的邮箱用于存储接收到的消息，并提供相应的接口来处理消息的投递和消费。
@@ -93,7 +93,7 @@ type (
 		persistentRecover()
 
 		// persistentMessageParse 记录持久化事件
-		persistentMessageParse(envelope Envelope) Envelope
+		persistentMessageParse(envelope *Envelope) *Envelope
 
 		// isPersistentMessage 判断当前消息是否为持久化消息
 		isPersistentMessage() bool
@@ -334,7 +334,7 @@ type (
 		// onReceiveEnvelope 由 Actor 处理指定的消息封装。
 		//
 		// 该函数会在执行完毕后将当前正在处理的 Envelope 进行恢复。
-		onReceiveEnvelope(envelope Envelope)
+		onReceiveEnvelope(envelope *Envelope)
 	}
 )
 
@@ -458,7 +458,7 @@ type (
 		ask(target ActorRef, message Message, messageType MessageType, timeout ...time.Duration) Future[Message]
 
 		// onProcessMessage 当 Actor 收到的消息到达时，通过该函数进行处理
-		onProcessMessage(envelope Envelope)
+		onProcessMessage(envelope *Envelope)
 
 		// getWatchers 获取监视者列表
 		getWatchers() map[ActorRef]struct{}
@@ -470,13 +470,13 @@ type (
 		//
 		// 该函数用于内部使用，允许外部代码设置 Actor 当前正在处理的 envelope，
 		// 请谨慎使用，以免影响 Actor 的消息处理过程。
-		setEnvelope(envelope Envelope)
+		setEnvelope(envelope *Envelope)
 
 		// getEnvelope 获取 Actor 当前处理的 envelope。
 		//
 		// 该函数返回 Actor 当前正在处理的 envelope，通常用于调试或诊断 Actor 的运行状态。
 		// 在实际使用中，避免过度依赖此方法，尽量通过 Actor 的消息处理流程来获取所需信息。
-		getEnvelope() Envelope
+		getEnvelope() *Envelope
 	}
 )
 

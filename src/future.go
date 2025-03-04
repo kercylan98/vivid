@@ -108,12 +108,12 @@ func (f *future[M]) GetID() ID {
 	return f.ref
 }
 
-func (f *future[M]) Send(envelope Envelope) {
+func (f *future[M]) Send(envelope *Envelope) {
 	if f.closed.Load() {
 		return
 	}
 
-	message := envelope.GetMessage()
+	message := envelope.Message
 
 	if err, ok := message.(error); ok {
 		f.Close(err)
@@ -144,12 +144,12 @@ func (f *future[M]) AwaitForward(ref ActorRef, asyncFunc func() M) {
 	go func() {
 		if reason := recover(); reason != nil {
 			process, _ := f.sys.getProcessManager().getProcess(ref)
-			process.Send(f.sys.getConfig().FetchRemoteMessageBuilder().BuildStandardEnvelope(f.ref, ref, UserMessage, reason))
+			process.Send(newStandardEnvelope(f.ref, ref, UserMessage, reason))
 		}
 		m := asyncFunc()
 
 		process, _ := f.sys.getProcessManager().getProcess(ref)
-		process.Send(f.sys.getConfig().FetchRemoteMessageBuilder().BuildStandardEnvelope(f.ref, ref, UserMessage, m))
+		process.Send(newStandardEnvelope(f.ref, ref, UserMessage, m))
 	}()
 }
 
@@ -223,7 +223,7 @@ func (f *future[M]) execForward() {
 
 	for _, ref := range f.forwards {
 		process, _ := f.sys.getProcessManager().getProcess(ref)
-		process.Send(f.sys.getConfig().FetchRemoteMessageBuilder().BuildStandardEnvelope(f.ref, ref, UserMessage, m))
+		process.Send(newStandardEnvelope(f.ref, ref, UserMessage, m))
 	}
 	f.forwards = nil
 }

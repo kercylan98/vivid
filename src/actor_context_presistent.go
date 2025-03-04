@@ -60,19 +60,19 @@ func (a *actorContextPersistentImpl) persistentRecover() {
 		return
 	}
 
-	var envelope Envelope
+	var envelope *Envelope
 	if snapshot != nil {
 		a.recovering = true
-		envelope = a.ctx.getMessageBuilder().BuildStandardEnvelope(a.ctx.Ref(), a.ctx.Ref(), UserMessage, a.snapshot)
+		envelope = newStandardEnvelope(a.ctx.Ref(), a.ctx.Ref(), UserMessage, a.snapshot)
 		a.ctx.onReceiveEnvelope(envelope)
 	}
 	if len(a.events) > 0 {
 		a.recovering = true
 		if envelope == nil {
-			envelope = a.ctx.getMessageBuilder().BuildStandardEnvelope(a.ctx.Ref(), a.ctx.Ref(), UserMessage, a.events)
+			envelope = newStandardEnvelope(a.ctx.Ref(), a.ctx.Ref(), UserMessage, a.events)
 		}
 		for _, event := range a.events {
-			envelope.SetMessage(event)
+			envelope.Message = event
 			a.ctx.onReceiveEnvelope(envelope)
 			if len(a.events) == 0 {
 				// 在持久化恢复过程中记录了快照，这是不被推荐的做法
@@ -115,18 +115,18 @@ func (a *actorContextPersistentImpl) Persist() error {
 	return storage.Save(a.ctx.getConfig().FetchPersistentId(), a.snapshot, a.events)
 }
 
-func (a *actorContextPersistentImpl) persistentMessageParse(envelope Envelope) Envelope {
-	switch m := envelope.GetMessage().(type) {
+func (a *actorContextPersistentImpl) persistentMessageParse(envelope *Envelope) *Envelope {
+	switch m := envelope.Message.(type) {
 	case *persistentEvent:
 		storage := a.ctx.getConfig().FetchPersistentStorage()
 		if storage == nil {
 			a.ctx.Logger().Warn("actor", log.String("event", "persistent_event"), log.String("ref", a.ctx.Ref().String()), log.String("info", "storage is nil"))
-			envelope.SetMessage(m)
+			envelope.Message = m
 			return envelope
 		}
 		a.persistentMessage = true
 		a.events = append(a.events, m.m)
-		envelope.SetMessage(m.m)
+		envelope.Message = m.m
 		return envelope
 	default:
 		return envelope

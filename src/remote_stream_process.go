@@ -31,7 +31,7 @@ type remoteStreamProcess struct {
 	manager        *remoteStreamManager // 远程流管理器
 	id             ID                   // 指向的远程流的 ID
 	stream         remoteStream         // 远程流
-	batch          []Envelope           // 批量消息
+	batch          []*Envelope          // 批量消息
 	rw             sync.RWMutex         // 读写锁
 	state          atomic.Uint32        // 状态
 	recoveryWaiter sync.WaitGroup       // 恢复等待组
@@ -41,7 +41,7 @@ func (r *remoteStreamProcess) GetID() ID {
 	return r.id
 }
 
-func (r *remoteStreamProcess) Send(envelope Envelope) {
+func (r *remoteStreamProcess) Send(envelope *Envelope) {
 	r.recoveryWaiter.Wait()
 
 	r.rw.Lock()
@@ -88,7 +88,7 @@ func (r *remoteStreamProcess) send() (stop bool) {
 	for {
 		r.rw.Lock()
 		n := len(r.batch)
-		var batch []Envelope
+		var batch []*Envelope
 		if n < remoteStreamBatchLimit {
 			batch = r.batch
 			r.batch = nil
@@ -137,8 +137,7 @@ func (r *remoteStreamProcess) send() (stop bool) {
 					r.stream = nil
 					r.stream.close()
 				} else {
-					// 发送成功，退出循环
-					break
+					break // 发送成功，退出循环
 				}
 			}
 

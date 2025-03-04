@@ -206,10 +206,10 @@ func (r *remoteStreamManager) onStreamBatchMessage(stream remoteStream, batch *p
 		if err != nil {
 			// TODO: 不应该直接 panic
 			envelope, _ = r.processManager.getCodecProvider().Provide().Decode(messageBytes)
-			panic(fmt.Errorf("decode message %T error: %w", envelope.GetMessage(), err))
+			panic(fmt.Errorf("decode message %T error: %w", envelope.Message, err))
 		}
 
-		receiver := envelope.GetReceiver()
+		receiver := envelope.Receiver
 		path := receiver.GetPath()
 
 		// 加载缓存

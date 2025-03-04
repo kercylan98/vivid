@@ -6,8 +6,8 @@ import (
 )
 
 type Codec interface {
-	Encode(v Envelope) ([]byte, error)
-	Decode(data []byte) (Envelope, error)
+	Encode(v *Envelope) ([]byte, error)
+	Decode(data []byte) (*Envelope, error)
 }
 
 type CodecProvider interface {
@@ -37,7 +37,7 @@ type gobCodec struct {
 	decoder    *gob.Decoder
 }
 
-func (c *gobCodec) Encode(v Envelope) ([]byte, error) {
+func (c *gobCodec) Encode(v *Envelope) ([]byte, error) {
 	defer c.encoderBuf.Reset()
 
 	if err := c.encoder.Encode(v); err != nil {
@@ -48,11 +48,11 @@ func (c *gobCodec) Encode(v Envelope) ([]byte, error) {
 	return data, nil
 }
 
-func (c *gobCodec) Decode(data []byte) (Envelope, error) {
+func (c *gobCodec) Decode(data []byte) (*Envelope, error) {
 	c.decoderBuf.Write(data)
 	defer c.decoderBuf.Reset()
 
-	var envelope = getDefaultRemoteMessageBuilder().BuildEnvelope()
+	var envelope = newEnvelope()
 	if err := c.decoder.Decode(envelope); err != nil {
 		return nil, err
 	}

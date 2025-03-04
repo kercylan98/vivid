@@ -19,16 +19,16 @@ func newActorContextTransportImpl(ctx *actorContext) *actorContextTransportImpl 
 
 type actorContextTransportImpl struct {
 	ActorContext
-	envelope      Envelope                  // 当前消息
+	envelope      *Envelope                 // 当前消息
 	watchHandlers map[string][]WatchHandler // 监视处理器（当 Key 存在表示正在监视目标）
 	watchers      map[ActorRef]struct{}     // 该 Actor 的监视者
 }
 
-func (ctx *actorContextTransportImpl) setEnvelope(envelope Envelope) {
+func (ctx *actorContextTransportImpl) setEnvelope(envelope *Envelope) {
 	ctx.envelope = envelope
 }
 
-func (ctx *actorContextTransportImpl) getEnvelope() Envelope {
+func (ctx *actorContextTransportImpl) getEnvelope() *Envelope {
 	return ctx.envelope
 }
 
@@ -36,18 +36,18 @@ func (ctx *actorContextTransportImpl) Sender() ActorRef {
 	if ctx.envelope == nil {
 		return nil
 	}
-	return ctx.envelope.GetSender()
+	return ctx.envelope.Sender
 }
 
 func (ctx *actorContextTransportImpl) Message() Message {
 	if ctx.envelope == nil {
 		return nil
 	}
-	return ctx.envelope.GetMessage()
+	return ctx.envelope.Message
 }
 
 func (ctx *actorContextTransportImpl) Reply(message Message) {
-	var target = ctx.envelope.GetAgent()
+	var target = ctx.envelope.Agent
 	if target == nil {
 		target = ctx.Sender()
 	}
@@ -116,7 +116,7 @@ func (ctx *actorContextTransportImpl) Tell(target ActorRef, message Message) {
 }
 
 func (ctx *actorContextTransportImpl) tell(target ActorRef, message Message, messageType MessageType) {
-	envelope := ctx.getMessageBuilder().BuildStandardEnvelope(ctx.Ref(), target, messageType, message)
+	envelope := newStandardEnvelope(ctx.Ref(), target, messageType, message)
 
 	if ctx.Ref().Equal(target) {
 		// 如果目标是自己，那么通过 Send 函数来对消息进行加速
@@ -140,7 +140,7 @@ func (ctx *actorContextTransportImpl) ask(target ActorRef, message Message, mess
 
 	futureRef := ctx.Ref().Sub("future-" + string(strconv.AppendInt(nil, ctx.getNextChildGuid(), 10)))
 	future := newFuture[Message](ctx.System(), futureRef, t)
-	ctx.sendToProcess(ctx.getSystemConfig().FetchRemoteMessageBuilder().BuildAgentEnvelope(futureRef, ctx.Ref(), target, messageType, message))
+	ctx.sendToProcess(newAgentEnvelope(futureRef, ctx.Ref(), target, messageType, message))
 	return future
 }
 
@@ -150,9 +150,9 @@ func (ctx *actorContextTransportImpl) Broadcast(message Message) {
 	}
 }
 
-func (ctx *actorContextTransportImpl) onProcessMessage(envelope Envelope) {
+func (ctx *actorContextTransportImpl) onProcessMessage(envelope *Envelope) {
 	ctx.setEnvelope(envelope)
-	switch envelope.GetMessageType() {
+	switch envelope.MessageType {
 	case SystemMessage:
 		ctx.onProcessSystemMessage(envelope)
 	case UserMessage:
@@ -162,8 +162,8 @@ func (ctx *actorContextTransportImpl) onProcessMessage(envelope Envelope) {
 	}
 }
 
-func (ctx *actorContextTransportImpl) onProcessSystemMessage(envelope Envelope) {
-	switch m := envelope.GetMessage().(type) {
+func (ctx *actorContextTransportImpl) onProcessSystemMessage(envelope *Envelope) {
+	switch m := envelope.Message.(type) {
 	case OnLaunch:
 		ctx.onReceive()
 	case OnKill:
@@ -191,8 +191,8 @@ func (ctx *actorContextTransportImpl) onProcessSystemMessage(envelope Envelope) 
 	}
 }
 
-func (ctx *actorContextTransportImpl) onProcessUserMessage(envelope Envelope) {
-	switch m := envelope.GetMessage().(type) {
+func (ctx *actorContextTransportImpl) onProcessUserMessage(envelope *Envelope) {
+	switch m := envelope.Message.(type) {
 	case OnWatchStopped:
 		ctx.onWatchStopped(m)
 	case OnKill:

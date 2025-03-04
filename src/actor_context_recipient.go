@@ -21,16 +21,16 @@ type actorContextRecipient struct {
 	ActorContext
 }
 
-func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope Envelope) {
+func (ctx *actorContextRecipient) OnReceiveEnvelope(envelope *Envelope) {
 	if ctx.terminated() {
-		switch envelope.GetMessage().(type) {
+		switch envelope.Message.(type) {
 		case OnWatch, OnWatchStopped, contextFunc, *accidentFinished:
 			// 此类消息在关闭后依旧可能被发送，需要经过处理以达到状态一致，处理中需要确保考虑到 Actor 不同状态下的处理逻辑
 		case OnKill, OnUnwatch:
 			// 此类消息在关闭后依旧可能被发送，不处理的效果等同于已经处理
 			return
 		default:
-			ctx.Logger().Warn("OnReceiveEnvelope", log.String("actor is terminated", ctx.Ref().String()), log.String("sender", envelope.GetSender().String()), log.String("message", fmt.Sprintf("%T", envelope.GetMessage())))
+			ctx.Logger().Warn("OnReceiveEnvelope", log.String("actor is terminated", ctx.Ref().String()), log.String("sender", envelope.Sender.String()), log.String("message", fmt.Sprintf("%T", envelope.Message)))
 
 			// 如果该 Actor 不是顶级 Actor，那么将消息传递给顶级 Actor 确保异常被记录
 			// 如果已经是顶级 Actor，则说明 ActorSystem 正在关闭，需要丢弃消息

@@ -25,7 +25,6 @@ func NewActorSystemConfig() ActorSystemConfiguration {
 			return newGobCodec()
 		}),
 		defaultSupervisorRestartLimit: 10,
-		slowMessageThreshold:          500 * time.Millisecond,
 	}
 	c.LogicOptions = options.NewLogicOptions[ActorSystemOptionsFetcher, ActorSystemOptions](c, c)
 	return c
@@ -83,7 +82,7 @@ type ActorSystemOptions interface {
 
 	// WithSlowMessageThreshold 设置 ActorSystem 的慢消息阈值
 	//  - 当消息处理时间超过阈值时，将会产生一条警告日志
-	//  - 阈值为 0 时，表示关闭慢消息检测，默认值为 500ms
+	//  - 默认情况下不会开启慢消息检测，该功能对性能影响较大，建议在调试时开启
 	WithSlowMessageThreshold(threshold time.Duration) ActorSystemOptionsFetcher
 }
 

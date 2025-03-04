@@ -327,7 +327,7 @@ func (ctx *actorContextLifeImpl) onReceive() {
 		slowMessageThreshold = actorSlowMessageThreshold
 	}
 	var slowMessageCancel = defaultSlowMessageCancel
-	var start time.Time
+	var start *time.Time
 	if slowMessageThreshold > 0 {
 		var slowMessageContext context.Context
 		slowMessageContext, slowMessageCancel = context.WithTimeout(context.Background(), slowMessageThreshold)
@@ -335,12 +335,14 @@ func (ctx *actorContextLifeImpl) onReceive() {
 		go func() {
 			select {
 			case <-slowMessageContext.Done():
-				cost := time.Since(start)
+				cost := time.Since(*start)
 				if cost > slowMessageThreshold {
 					ctx.Logger().Warn("actor", log.String("event", "slow message"), log.String("ref", ctx.Ref().String()), log.Duration("cost", cost), log.Any(fmt.Sprintf("message[%T]", message), message))
 				}
 			}
 		}()
+		now := time.Now()
+		start = &now
 	}
 
 	// 交由用户处理的消息需保证异常捕获
@@ -353,10 +355,9 @@ func (ctx *actorContextLifeImpl) onReceive() {
 				// 终止可能存在一些释放资源的逻辑，也需要提供消息使得用户能够感知
 				ctx.Logger().Error("actor", log.String("event", "kill"), log.String("ref", ctx.Ref().String()), log.String("reason", fmt.Sprint(reason)))
 
-				onKillFailed := ctx.getMessageBuilder().BuildStandardEnvelope(ctx.Ref(), ctx.Ref(), UserMessage,
-					ctx.getMessageBuilder().BuildOnKillFailed(debug.Stack(), reason, ctx.Sender(), m),
-				)
-				ctx.onReceiveEnvelope(onKillFailed)
+				onKillFailed := ctx.getMessageBuilder().BuildOnKillFailed(debug.Stack(), reason, ctx.Sender(), m)
+				onKillFailedEnvelope := newStandardEnvelope(ctx.Ref(), ctx.Ref(), UserMessage, onKillFailed)
+				ctx.onReceiveEnvelope(onKillFailedEnvelope)
 			case OnKillFailed:
 				// 如果是 OnKillFailed 中发生了异常，记录日志
 				ctx.Logger().Error("actor", log.String("event", "kill failed"), log.String("ref", ctx.Ref().String()), log.String("reason", fmt.Sprint(reason)))
@@ -366,8 +367,6 @@ func (ctx *actorContextLifeImpl) onReceive() {
 			}
 		}
 	}()
-
-	start = time.Now()
 
 	switch ctx.Message().(type) {
 	case OnLaunch:
@@ -381,7 +380,7 @@ func (ctx *actorContextLifeImpl) onReceive() {
 	}
 }
 
-func (ctx *actorContextLifeImpl) onReceiveEnvelope(envelope Envelope) {
+func (ctx *actorContextLifeImpl) onReceiveEnvelope(envelope *Envelope) {
 	persistent := ctx.isPersistentMessage()
 	curr := ctx.getEnvelope()
 	defer func() {

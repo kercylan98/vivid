@@ -5,7 +5,7 @@ type Process interface {
 	GetID() ID
 
 	// Send 将包装后的消息交由进程处理
-	Send(envelope Envelope)
+	Send(envelope *Envelope)
 
 	// Terminated 检查进程是否已经终止
 	Terminated() bool

@@ -21,7 +21,7 @@ func defaultMailboxProvider() Mailbox {
 
 type Recipient interface {
 	// OnReceiveEnvelope 处理收到的信封
-	OnReceiveEnvelope(envelope Envelope)
+	OnReceiveEnvelope(envelope *Envelope)
 }
 
 type Mailbox interface {
@@ -35,7 +35,7 @@ type Mailbox interface {
 	Resume()
 
 	// Delivery 投递消息到邮箱
-	Delivery(envelope Envelope)
+	Delivery(envelope *Envelope)
 }
 
 type MailboxProvider interface {
@@ -75,14 +75,14 @@ func (m *defaultMailbox) Resume() {
 	m.dispatch()
 }
 
-func (m *defaultMailbox) Delivery(envelope Envelope) {
-	switch envelope.GetMessageType() {
+func (m *defaultMailbox) Delivery(envelope *Envelope) {
+	switch envelope.MessageType {
 	case UserMessage:
-		m.queue.Push(unsafe.Pointer(&envelope))
+		m.queue.Push(unsafe.Pointer(envelope))
 		atomic.AddInt32(&m.userNum, 1)
 		m.dispatch()
 	case SystemMessage:
-		m.systemQueue.Push(unsafe.Pointer(&envelope))
+		m.systemQueue.Push(unsafe.Pointer(envelope))
 		atomic.AddInt32(&m.sysNum, 1)
 		m.dispatch()
 	default:
@@ -110,10 +110,10 @@ func (m *defaultMailbox) process() {
 }
 
 func (m *defaultMailbox) processHandle() {
-	var envelope Envelope
+	var envelope *Envelope
 	for {
 		if ptr := m.systemQueue.Pop(); ptr != nil {
-			envelope = *(*Envelope)(ptr)
+			envelope = (*Envelope)(ptr)
 			atomic.AddInt32(&m.sysNum, -1)
 			m.recipient.OnReceiveEnvelope(envelope)
 			continue
@@ -124,7 +124,7 @@ func (m *defaultMailbox) processHandle() {
 		}
 
 		if ptr := m.queue.Pop(); ptr != nil {
-			envelope = *(*Envelope)(ptr)
+			envelope = (*Envelope)(ptr)
 			atomic.AddInt32(&m.userNum, -1)
 			m.recipient.OnReceiveEnvelope(envelope)
 			continue

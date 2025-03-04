@@ -17,7 +17,7 @@ var (
 )
 
 func init() {
-	registerInternalMessage(new(envelope))
+	registerInternalMessage(new(Envelope))
 	registerInternalMessage(new(defaultID))
 	registerInternalMessage(new(onKill))
 	registerInternalMessage(new(onKilled))
@@ -38,7 +38,6 @@ func getDefaultRemoteMessageBuilder() RemoteMessageBuilder {
 }
 
 type RemoteMessageBuilder interface {
-	EnvelopeBuilder
 	IDBuilder
 	OnKillBuilder
 	OnKilledBuilder
@@ -52,7 +51,6 @@ type RemoteMessageBuilder interface {
 }
 
 type defaultRemoteMessageBuilder struct {
-	defaultEnvelopeBuilder
 	defaultIDBuilder
 	defaultOnKillBuilder
 	defaultOnKilledBuilder
@@ -302,46 +300,46 @@ type (
 	DedicatedOnKilled struct{}
 )
 
-var (
-	_ Envelope = (*envelope)(nil)
-)
+func newEnvelope() *Envelope {
+	return &Envelope{}
+}
 
-type (
-	// EnvelopeBuilder 是 Envelope 的构建器，由于 Envelope 支持不同的实现，且包含多种构建方式，因此需要通过构建器来进行创建
-	EnvelopeBuilder interface {
-		// BuildEnvelope 构建一个空的消息包装，它不包含任何头部信息及消息内容，适用于反序列化场景
-		BuildEnvelope() Envelope
-
-		// BuildStandardEnvelope 构建一个标准的消息包装，它包含了消息的发送者、接收者、消息内容及消息类型
-		BuildStandardEnvelope(senderID ID, receiverID ID, messageType MessageType, message Message) Envelope
-
-		// BuildAgentEnvelope 构建一个代理的消息包装，它与标准消息包装相似，但是实际发送人为代理 Actor
-		BuildAgentEnvelope(agent, senderID, receiverID ID, messageType MessageType, message Message) Envelope
+func newStandardEnvelope(senderID, receiverID ID, messageType MessageType, message Message) *Envelope {
+	return &Envelope{
+		Sender:      senderID,
+		Receiver:    receiverID,
+		Message:     message,
+		MessageType: messageType,
 	}
+}
 
-	// Envelope 是进程间通信的消息包装，包含原始消息内容和附加的头部信息，支持跨网络传输。
-	//   - 如果需要支持其他序列化方式，可以通过实现 Envelope 接口并自定义消息包装，同时实现 EnvelopeBuilder 接口来提供构建方式。
-	//   - 有一点值得注意，需要满足跨网络传输时，需确保 GetMessage 得到的消息支持 Codec 编解码。
-	Envelope interface {
-		// GetAgent 获取消息代理的 ID
-		GetAgent() ID
-
-		// GetSender 获取消息发送者的 ID
-		GetSender() ID
-
-		// GetReceiver 获取消息接收者的 ID
-		GetReceiver() ID
-
-		// GetMessage 获取消息的内容
-		GetMessage() Message
-
-		// GetMessageType 获取消息的类型
-		GetMessageType() MessageType
-
-		// SetMessage 设置消息的内容
-		SetMessage(message Message)
+func newAgentEnvelope(agent, senderID, receiverID ID, messageType MessageType, message Message) *Envelope {
+	return &Envelope{
+		Agent:       agent,
+		Sender:      senderID,
+		Receiver:    receiverID,
+		Message:     message,
+		MessageType: messageType,
 	}
-)
+}
+
+// Envelope 是进程间通信的消息包装，包含原始消息内容和附加的头部信息。
+type Envelope struct {
+	// 消息的类型
+	MessageType MessageType
+
+	// 消息代理的 ID
+	Agent ID
+
+	// 消息发送者的 ID
+	Sender ID
+
+	// 消息接收者的 ID
+	Receiver ID
+
+	// 消息的内容
+	Message Message
+}
 
 type defaultOnKilledBuilder struct{}
 
@@ -464,65 +462,6 @@ func (k *onKill) Restart() bool {
 }
 
 func (*DedicatedOnKill) _OnKill(mark dedicated.Mark) {}
-
-// defaultEnvelopeBuilder 是 EnvelopeBuilder 的默认实现，它提供了 envelope 的构建方式
-type defaultEnvelopeBuilder struct{}
-
-func (d *defaultEnvelopeBuilder) BuildEnvelope() Envelope {
-	return &envelope{}
-}
-
-func (d *defaultEnvelopeBuilder) BuildStandardEnvelope(senderID, receiverID ID, messageType MessageType, message Message) Envelope {
-	return &envelope{
-		Sender:      senderID,
-		Receiver:    receiverID,
-		Message:     message,
-		MessageType: messageType,
-	}
-}
-
-func (d *defaultEnvelopeBuilder) BuildAgentEnvelope(agent, senderID, receiverID ID, messageType MessageType, message Message) Envelope {
-	return &envelope{
-		Agent:       agent,
-		Sender:      senderID,
-		Receiver:    receiverID,
-		Message:     message,
-		MessageType: messageType,
-	}
-}
-
-// envelope 是 Envelope 的默认实现，它基于 gob 序列化方式实现了 Envelope 接口
-type envelope struct {
-	Agent       ID
-	Sender      ID
-	Receiver    ID
-	Message     Message
-	MessageType MessageType
-}
-
-func (d *envelope) GetAgent() ID {
-	return d.Agent
-}
-
-func (d *envelope) GetSender() ID {
-	return d.Sender
-}
-
-func (d *envelope) GetReceiver() ID {
-	return d.Receiver
-}
-
-func (d *envelope) GetMessage() Message {
-	return d.Message
-}
-
-func (d *envelope) GetMessageType() MessageType {
-	return d.MessageType
-}
-
-func (d *envelope) SetMessage(message Message) {
-	d.Message = message
-}
 
 type defaultOnWatchBuilder struct{}
 
