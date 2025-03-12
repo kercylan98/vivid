@@ -29,6 +29,10 @@ type ActorSystem interface {
 
 	// ShutdownP 关闭 Actor 系统，并在发生异常时 panic
 	ShutdownP() ActorSystem
+
+	ActorOf(provider ActorProvider, configuration ...ActorConfiguration) ActorRef
+
+	Tell(target ActorRef, message Message)
 }
 
 type actorSystemProcess interface {

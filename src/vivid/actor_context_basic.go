@@ -1,8 +1,7 @@
 package vivid
 
 var (
-	_ actorContextBasic         = (*actorContextBasicImpl)(nil)
-	_ actorContextInternalBasic = (*actorContextBasicImpl)(nil)
+	_ actorContextBasic = (*actorContextBasicImpl)(nil)
 )
 
 func newActorContextBasic(ctx ActorContext, system ActorSystem, ref, parentRef ActorRef, provider ActorProvider) *actorContextBasicImpl {
@@ -22,10 +21,6 @@ type actorContextBasic interface {
 	getParent() ActorRef
 
 	getSystem() ActorSystem
-}
-
-type actorContextInternalBasic interface {
-	actorContextBasic
 
 	getActor() Actor
 }

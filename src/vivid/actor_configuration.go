@@ -2,7 +2,7 @@ package vivid
 
 import "github.com/kercylan98/go-log/log"
 
-func NewActorConfig(ctx ActorContext) ActorConfiguration {
+func NewActorConfig() ActorConfiguration {
 	return ActorConfiguration{
 		Mailbox:                   newMailbox(),
 		Dispatcher:                newDispatcher(),

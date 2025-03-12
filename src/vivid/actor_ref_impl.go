@@ -18,6 +18,10 @@ type actorRefImpl struct {
 	pid wasteland.ProcessId
 }
 
+func (ref *actorRefImpl) Equal(other ActorRef) bool {
+	return ref == other || (ref.Path() == other.Path() && ref.Address() == other.Address())
+}
+
 func (ref *actorRefImpl) processId() wasteland.ProcessId {
 	return ref.pid
 }

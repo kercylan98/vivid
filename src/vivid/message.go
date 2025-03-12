@@ -10,12 +10,12 @@ type addressableMessage struct {
 }
 
 var (
-	onLaunch = &OnLaunch{}
+	onLaunch = new(OnLaunch)
 )
 
 // LocalMessage is a mailboxMessageHandler that is sent to the local process.
 type (
-	OnLaunch struct{}
+	OnLaunch uint8
 )
 
 // RemoteMessage is a mailboxMessageHandler that is sent to the remote process.

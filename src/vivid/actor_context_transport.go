@@ -7,13 +7,16 @@ import (
 
 var _ actorContextTransport = (*actorContextTransportImpl)(nil)
 
-func newActorContextTransport(ctx ActorContext) *actorContextTransportImpl {
+func newActorContextTransport(ctx ActorContext, process actorContextProcess) *actorContextTransportImpl {
 	return &actorContextTransportImpl{
-		ctx: ctx,
+		ActorContext: ctx,
+		process:      process,
 	}
 }
 
 type actorContextTransport interface {
+	ActorContext
+
 	tell(target ActorRef, priority wasteland.MessagePriority, message Message)
 
 	probe(target ActorRef, priority wasteland.MessagePriority, message Message)
@@ -24,21 +27,27 @@ type actorContextTransport interface {
 }
 
 type actorContextTransportImpl struct {
-	ctx ActorContext
+	ActorContext
+	process actorContextProcess
 }
 
 func (a *actorContextTransportImpl) tell(target ActorRef, priority wasteland.MessagePriority, message Message) {
-	registry := a.ctx.System().(actorSystemProcess).getProcessRegistry()
+	if a.ActorContext.Ref().Equal(target) {
+		a.process.HandleMessage(nil, priority, message)
+		return
+	}
+
+	registry := a.ActorContext.System().(actorSystemProcess).getProcessRegistry()
 	process, err := registry.Get(target.(actorRefProcessInfo).processId())
 	if err != nil {
 		panic(err)
 	}
-	process.(wasteland.ProcessHandler).HandleMessage(a.ctx.Ref().(actorRefProcessInfo).processId(), priority, message)
+	process.(wasteland.ProcessHandler).HandleMessage(nil, priority, message)
 }
 
 func (a *actorContextTransportImpl) probe(target ActorRef, priority wasteland.MessagePriority, message Message) {
 	message = &addressableMessage{
-		Sender:  a.ctx.Ref(),
+		Sender:  a.ActorContext.Ref(),
 		Message: message,
 	}
 	a.tell(target, priority, message)

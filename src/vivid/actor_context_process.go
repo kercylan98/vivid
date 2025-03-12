@@ -39,7 +39,7 @@ func (a *actorContextProcessImpl) HandleMessage(sender wasteland.ProcessId, prio
 	mailbox := a.config.getConfig().Mailbox
 	if sender != nil {
 		message = &addressableMessage{
-			Sender:  sender,
+			Sender:  newActorRef(sender),
 			Message: message,
 		}
 	}
@@ -56,6 +56,5 @@ func (a *actorContextProcessImpl) Terminate(operator wasteland.ProcessId) {
 }
 
 func (a *actorContextProcessImpl) Terminated() bool {
-	//TODO implement me
-	panic("implement me")
+	return false
 }

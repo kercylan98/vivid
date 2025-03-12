@@ -1,8 +1,9 @@
 package vivid
 
-func newActorContextMailboxMessageHandler(ctx ActorContext) actorContextMailboxMessageHandler {
+func newActorContextMailboxMessageHandler(ctx ActorContext, basic actorContextBasic) actorContextMailboxMessageHandler {
 	return &actorContextMailboxMessageHandlerImpl{
-		ctx: ctx,
+		ctx:   ctx,
+		basic: basic,
 	}
 }
 
@@ -11,7 +12,8 @@ type actorContextMailboxMessageHandler interface {
 }
 
 type actorContextMailboxMessageHandlerImpl struct {
-	ctx ActorContext
+	ctx   ActorContext
+	basic actorContextBasic
 }
 
 func (a *actorContextMailboxMessageHandlerImpl) unwrapMessage(m Message) (sender ActorRef, message Message) {
@@ -22,7 +24,10 @@ func (a *actorContextMailboxMessageHandlerImpl) unwrapMessage(m Message) (sender
 }
 
 func (a *actorContextMailboxMessageHandlerImpl) HandleSystemMessage(message Message) {
-	
+	switch message.(type) {
+	case *OnLaunch:
+		a.basic.getActor().OnReceive(a.ctx)
+	}
 }
 
 func (a *actorContextMailboxMessageHandlerImpl) HandleUserMessage(message Message) {

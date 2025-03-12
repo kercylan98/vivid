@@ -1,12 +1,15 @@
 package vivid
 
-func newActorContextChildren(ctx ActorContext) actorContextChildren {
+func newActorContextChildren(ctx ActorContext, basic actorContextBasic) actorContextChildren {
 	return &actorContextChildrenImpl{
-		ctx: ctx,
+		ActorContext: ctx,
+		basic:        basic,
 	}
 }
 
 type actorContextChildren interface {
+	ActorContext
+
 	// nextGuid 获取一个新的 Guid
 	nextGuid() int64
 
@@ -15,10 +18,13 @@ type actorContextChildren interface {
 
 	// unbindChild 解绑一个子 Actor
 	unbindChild(child ActorRef)
+
+	actorOf(provider ActorProvider, configuration ...ActorConfiguration) ActorRef
 }
 
 type actorContextChildrenImpl struct {
-	ctx      ActorContext
+	ActorContext
+	basic    actorContextBasic
 	guid     int64             // Guid 计数器
 	children map[Path]ActorRef // 子 Actor 集合
 }
@@ -42,4 +48,14 @@ func (a *actorContextChildrenImpl) unbindChild(child ActorRef) {
 			a.children = nil
 		}
 	}
+}
+
+func (a *actorContextChildrenImpl) actorOf(provider ActorProvider, configuration ...ActorConfiguration) ActorRef {
+	var config ActorConfiguration
+	if len(configuration) > 0 {
+		config = configuration[0]
+	} else {
+		config = NewActorConfig()
+	}
+	return a.basic.getSystem().(actorSystemSpawner).actorOf(a.ActorContext, provider, config).Ref()
 }

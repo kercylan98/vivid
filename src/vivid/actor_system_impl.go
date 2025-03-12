@@ -10,7 +10,7 @@ var (
 	_ ActorSystem = (*actorSystemImpl)(nil)
 )
 
-func newActorSystem(config ActorSystemConfiguration) ActorSystem {
+func NewActorSystem(config ActorSystemConfiguration) ActorSystem {
 	return &actorSystemImpl{
 		config: &config, // 采用引用，避免内部使用过程中拷贝
 	}
@@ -19,6 +19,11 @@ func newActorSystem(config ActorSystemConfiguration) ActorSystem {
 type actorSystemImpl struct {
 	config          *ActorSystemConfiguration // 配置
 	processRegistry wasteland.ProcessRegistry // 进程注册表
+	guide           ActorContext
+}
+
+func (sys *actorSystemImpl) Tell(target ActorRef, message Message) {
+	sys.guide.(actorContextTransport).tell(target, messagePriorityUser, message)
 }
 
 func (sys *actorSystemImpl) getProcessRegistry() wasteland.ProcessRegistry {
@@ -61,10 +66,10 @@ func (sys *actorSystemImpl) actorOf(parent ActorContext, provider ActorProvider,
 	mailbox := config.Mailbox
 	dispatcher := config.Dispatcher
 	ctx := newActorContext(sys, ref, parentRef, provider, &config)
-	mailbox.Initialize(dispatcher, ctx.mailboxMessageHandler)
+	mailbox.Initialize(dispatcher, ctx.actorContextMailboxMessageHandler)
 
 	// 注册进程
-	if err := sys.processRegistry.Register(ctx.process); err != nil {
+	if err := sys.processRegistry.Register(ctx.actorContextProcess); err != nil {
 		panic(err)
 	}
 
@@ -74,7 +79,7 @@ func (sys *actorSystemImpl) actorOf(parent ActorContext, provider ActorProvider,
 	}
 
 	// 启动完成
-	ctx.Tell()
+	ctx.actorContextTransport.tell(ref, messagePrioritySystem, onLaunch)
 	return ctx
 }
 
@@ -89,6 +94,8 @@ func (sys *actorSystemImpl) Start() error {
 		Daemon:        nil,
 		LoggerProvide: sys.config.LoggerProvider,
 	})
+
+	sys.guide = sys.actorOf(nil, ActorProviderFn(func() Actor { return new(guide) }), NewActorConfig())
 
 	return sys.processRegistry.Run()
 }
@@ -113,4 +120,8 @@ func (sys *actorSystemImpl) ShutdownP() ActorSystem {
 		panic(err)
 	}
 	return sys
+}
+
+func (sys *actorSystemImpl) ActorOf(provider ActorProvider, configuration ...ActorConfiguration) ActorRef {
+	return sys.guide.ActorOf(provider, configuration...)
 }

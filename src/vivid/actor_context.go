@@ -10,12 +10,12 @@ var (
 func newActorContext(system ActorSystem, ref, parentRef ActorRef, provider ActorProvider, config *ActorConfiguration) *actorContextImpl {
 	ctx := new(actorContextImpl)
 
-	ctx.config = newActorContextConfigurationProvider(ctx, config)
-	ctx.children = newActorContextChildren(ctx)
-	ctx.base = newActorContextBasic(ctx, system, ref, parentRef, provider)
-	ctx.mailboxMessageHandler = newActorContextMailboxMessageHandler(ctx)
-	ctx.process = newActorContextProcess(ctx, ctx.base, ctx.config)
-	ctx.transport = newActorContextTransport(ctx)
+	ctx.actorContextConfigurationProvider = newActorContextConfigurationProvider(ctx, config)
+	ctx.actorContextBasic = newActorContextBasic(ctx, system, ref, parentRef, provider)
+	ctx.actorContextChildren = newActorContextChildren(ctx, ctx.actorContextBasic)
+	ctx.actorContextMailboxMessageHandler = newActorContextMailboxMessageHandler(ctx, ctx.actorContextBasic)
+	ctx.actorContextProcess = newActorContextProcess(ctx, ctx.actorContextBasic, ctx.actorContextConfigurationProvider)
+	ctx.actorContextTransport = newActorContextTransport(ctx, ctx.actorContextProcess)
 
 	return ctx
 }
@@ -26,25 +26,31 @@ type ActorContext interface {
 	Parent() ActorRef
 
 	System() ActorSystem
+
+	ActorOf(provider ActorProvider, configuration ...ActorConfiguration) ActorRef
 }
 
 type actorContextImpl struct {
-	base                  actorContextBasic
-	config                actorContextConfigurationProvider
-	children              actorContextChildren
-	mailboxMessageHandler actorContextMailboxMessageHandler
-	process               actorContextProcess
-	transport             actorContextTransport
+	actorContextBasic
+	actorContextConfigurationProvider
+	actorContextChildren
+	actorContextMailboxMessageHandler
+	actorContextProcess
+	actorContextTransport
 }
 
 func (a *actorContextImpl) Ref() ActorRef {
-	return a.base.getRef()
+	return a.getRef()
 }
 
 func (a *actorContextImpl) Parent() ActorRef {
-	return a.base.getParent()
+	return a.getParent()
 }
 
 func (a *actorContextImpl) System() ActorSystem {
-	return a.base.getSystem()
+	return a.getSystem()
+}
+
+func (a *actorContextImpl) ActorOf(provider ActorProvider, configuration ...ActorConfiguration) ActorRef {
+	return a.actorOf(provider, configuration...)
 }

@@ -78,7 +78,7 @@ func (m *mailboxImpl) processHandle() {
 	var message Message
 	for {
 		if ptr := m.systemQueue.Pop(); ptr != nil {
-			message = (*Message)(ptr)
+			message = *(*Message)(ptr)
 			atomic.AddInt32(&m.sysNum, -1)
 			m.handler.HandleSystemMessage(message)
 			continue
@@ -89,7 +89,7 @@ func (m *mailboxImpl) processHandle() {
 		}
 
 		if ptr := m.queue.Pop(); ptr != nil {
-			message = (*Message)(ptr)
+			message = *(*Message)(ptr)
 			atomic.AddInt32(&m.userNum, -1)
 			m.handler.HandleUserMessage(message)
 			continue
