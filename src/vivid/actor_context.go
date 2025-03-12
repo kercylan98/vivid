@@ -13,8 +13,9 @@ func newActorContext(system ActorSystem, ref, parentRef ActorRef, provider Actor
 	ctx.config = newActorContextConfigurationProvider(ctx, config)
 	ctx.children = newActorContextChildren(ctx)
 	ctx.base = newActorContextBasic(ctx, system, ref, parentRef, provider)
-	ctx.message = newActorContextMailboxMessageHandler(ctx)
+	ctx.mailboxMessageHandler = newActorContextMailboxMessageHandler(ctx)
 	ctx.process = newActorContextProcess(ctx, ctx.base, ctx.config)
+	ctx.transport = newActorContextTransport(ctx)
 
 	return ctx
 }
@@ -28,11 +29,12 @@ type ActorContext interface {
 }
 
 type actorContextImpl struct {
-	base     actorContextBasic
-	config   actorContextConfigurationProvider
-	children actorContextChildren
-	message  actorContextMailboxMessageHandler
-	process  actorContextProcess
+	base                  actorContextBasic
+	config                actorContextConfigurationProvider
+	children              actorContextChildren
+	mailboxMessageHandler actorContextMailboxMessageHandler
+	process               actorContextProcess
+	transport             actorContextTransport
 }
 
 func (a *actorContextImpl) Ref() ActorRef {

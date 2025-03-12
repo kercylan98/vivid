@@ -21,11 +21,6 @@ type actorContextProcess interface {
 	wasteland.ProcessHandler
 }
 
-type addressableMessage struct {
-	Sender  wasteland.ProcessId
-	Message wasteland.Message
-}
-
 type actorContextProcessImpl struct {
 	ctx    ActorContext
 	base   actorContextBasic

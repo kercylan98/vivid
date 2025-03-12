@@ -1,8 +1,11 @@
 package vivid
 
+import "github.com/kercylan98/wasteland/src/wasteland"
+
 var (
 	_ actorSystemConfigProvider = (*actorSystemImpl)(nil)
 	_ actorSystemSpawner        = (*actorSystemImpl)(nil)
+	_ actorSystemProcess        = (*actorSystemImpl)(nil)
 )
 
 // ActorSystem 是完整的 Actor 系统的接口，它包含了对于 Actor Model 的完整实现。
@@ -28,6 +31,12 @@ type ActorSystem interface {
 	ShutdownP() ActorSystem
 }
 
+type actorSystemProcess interface {
+	ActorSystem
+
+	getProcessRegistry() wasteland.ProcessRegistry
+}
+
 // actorSystemConfigProvider 是 Actor 系统配置提供者接口，它提供了 ActorSystem 的配置信息。
 type actorSystemConfigProvider interface {
 	ActorSystem
@@ -39,6 +48,6 @@ type actorSystemConfigProvider interface {
 // actorSystemSpawner 是 ActorSystem 的 Actor 生成器，它用于生成 Actor 实例
 type actorSystemSpawner interface {
 	ActorSystem
-	
+
 	actorOf(parent ActorContext, provider ActorProvider, config ActorConfiguration) ActorContext
 }

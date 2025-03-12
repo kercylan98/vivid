@@ -21,6 +21,10 @@ type actorSystemImpl struct {
 	processRegistry wasteland.ProcessRegistry // 进程注册表
 }
 
+func (sys *actorSystemImpl) getProcessRegistry() wasteland.ProcessRegistry {
+	return sys.processRegistry
+}
+
 func (sys *actorSystemImpl) actorOf(parent ActorContext, provider ActorProvider, config ActorConfiguration) ActorContext {
 	// 预设初始化
 	if config.ActorRuntimeConfiguration.LoggerProvider == nil {
@@ -31,7 +35,7 @@ func (sys *actorSystemImpl) actorOf(parent ActorContext, provider ActorProvider,
 	var name = config.Name
 	var parentRef ActorRef
 	if parent != nil {
-		parentRef = parent.getRef()
+		parentRef = parent.Ref()
 		if name == "" {
 			if children, cast := parent.(actorContextChildren); cast {
 				name = string(strconv.AppendInt(nil, children.nextGuid(), 10))
@@ -57,10 +61,10 @@ func (sys *actorSystemImpl) actorOf(parent ActorContext, provider ActorProvider,
 	mailbox := config.Mailbox
 	dispatcher := config.Dispatcher
 	ctx := newActorContext(sys, ref, parentRef, provider, &config)
-	mailbox.Initialize(dispatcher, ctx)
+	mailbox.Initialize(dispatcher, ctx.mailboxMessageHandler)
 
 	// 注册进程
-	if err := sys.processRegistry.Register(ctx); err != nil {
+	if err := sys.processRegistry.Register(ctx.process); err != nil {
 		panic(err)
 	}
 
@@ -70,6 +74,7 @@ func (sys *actorSystemImpl) actorOf(parent ActorContext, provider ActorProvider,
 	}
 
 	// 启动完成
+	ctx.Tell()
 	return ctx
 }
 
