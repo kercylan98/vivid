@@ -1,7 +1,9 @@
 package vivid
 
-func newActorContextChildren() actorContextChildren {
-	return &actorContextChildrenImpl{}
+func newActorContextChildren(ctx ActorContext) actorContextChildren {
+	return &actorContextChildrenImpl{
+		ctx: ctx,
+	}
 }
 
 type actorContextChildren interface {
@@ -16,6 +18,7 @@ type actorContextChildren interface {
 }
 
 type actorContextChildrenImpl struct {
+	ctx      ActorContext
 	guid     int64             // Guid 计数器
 	children map[Path]ActorRef // 子 Actor 集合
 }

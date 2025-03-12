@@ -1,7 +1,8 @@
 package vivid
 
-func newActorContextConfigurationProvider(config *ActorConfiguration) actorContextConfigurationProvider {
+func newActorContextConfigurationProvider(ctx ActorContext, config *ActorConfiguration) actorContextConfigurationProvider {
 	return &actorContextConfigurationProviderImpl{
+		ctx:    ctx,
 		config: config,
 	}
 }
@@ -11,6 +12,7 @@ type actorContextConfigurationProvider interface {
 }
 
 type actorContextConfigurationProviderImpl struct {
+	ctx    ActorContext
 	config *ActorConfiguration
 }
 

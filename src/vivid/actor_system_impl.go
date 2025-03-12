@@ -31,7 +31,7 @@ func (sys *actorSystemImpl) actorOf(parent ActorContext, provider ActorProvider,
 	var name = config.Name
 	var parentRef ActorRef
 	if parent != nil {
-		parentRef = parent.Ref()
+		parentRef = parent.getRef()
 		if name == "" {
 			if children, cast := parent.(actorContextChildren); cast {
 				name = string(strconv.AppendInt(nil, children.nextGuid(), 10))
@@ -56,7 +56,7 @@ func (sys *actorSystemImpl) actorOf(parent ActorContext, provider ActorProvider,
 	// 初始化邮箱及上下文
 	mailbox := config.Mailbox
 	dispatcher := config.Dispatcher
-	ctx := newActorContext(sys, ref, parentRef, &config)
+	ctx := newActorContext(sys, ref, parentRef, provider, &config)
 	mailbox.Initialize(dispatcher, ctx)
 
 	// 注册进程
@@ -66,7 +66,7 @@ func (sys *actorSystemImpl) actorOf(parent ActorContext, provider ActorProvider,
 
 	// 绑定父子关系
 	if parent != nil {
-		parent.bindChild(ref)
+		parent.(actorContextChildren).bindChild(ref)
 	}
 
 	// 启动完成

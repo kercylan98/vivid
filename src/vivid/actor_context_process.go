@@ -2,9 +2,16 @@ package vivid
 
 import "github.com/kercylan98/wasteland/src/wasteland"
 
-func newActorContextProcess(actorContextBasic actorContextBasic) actorContextProcess {
+const (
+	messagePriorityUser wasteland.MessagePriority = iota
+	messagePrioritySystem
+)
+
+func newActorContextProcess(ctx ActorContext, basic actorContextBasic, config actorContextConfigurationProvider) actorContextProcess {
 	return &actorContextProcessImpl{
-		actorContextBasic: actorContextBasic,
+		ctx:    ctx,
+		base:   basic,
+		config: config,
 	}
 }
 
@@ -14,22 +21,38 @@ type actorContextProcess interface {
 	wasteland.ProcessHandler
 }
 
+type addressableMessage struct {
+	Sender  wasteland.ProcessId
+	Message wasteland.Message
+}
+
 type actorContextProcessImpl struct {
-	actorContextBasic actorContextBasic
+	ctx    ActorContext
+	base   actorContextBasic
+	config actorContextConfigurationProvider
 }
 
 func (a *actorContextProcessImpl) GetID() wasteland.ProcessId {
-	return a.actorContextBasic.Ref().(actorRefProcessInfo).processId()
+	return a.base.getRef().(actorRefProcessInfo).processId()
 }
 
 func (a *actorContextProcessImpl) Initialize() {
-	//TODO implement me
-	panic("implement me")
+
 }
 
 func (a *actorContextProcessImpl) HandleMessage(sender wasteland.ProcessId, priority wasteland.MessagePriority, message wasteland.Message) {
-	//TODO implement me
-	panic("implement me")
+	mailbox := a.config.getConfig().Mailbox
+	if sender != nil {
+		message = &addressableMessage{
+			Sender:  sender,
+			Message: message,
+		}
+	}
+	if priority == messagePriorityUser {
+		mailbox.HandleUserMessage(message)
+	} else {
+		mailbox.HandleSystemMessage(message)
+	}
 }
 
 func (a *actorContextProcessImpl) Terminate(operator wasteland.ProcessId) {

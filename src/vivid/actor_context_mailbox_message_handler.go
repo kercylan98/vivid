@@ -1,7 +1,9 @@
 package vivid
 
-func newActorContextMailboxMessageHandler() actorContextMailboxMessageHandler {
-	return &actorContextMailboxMessageHandlerImpl{}
+func newActorContextMailboxMessageHandler(ctx ActorContext) actorContextMailboxMessageHandler {
+	return &actorContextMailboxMessageHandlerImpl{
+		ctx: ctx,
+	}
 }
 
 type actorContextMailboxMessageHandler interface {
@@ -9,6 +11,7 @@ type actorContextMailboxMessageHandler interface {
 }
 
 type actorContextMailboxMessageHandlerImpl struct {
+	ctx ActorContext
 }
 
 func (a *actorContextMailboxMessageHandlerImpl) HandleSystemMessage(message Message) {
