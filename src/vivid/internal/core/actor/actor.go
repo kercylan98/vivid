@@ -5,3 +5,19 @@ type Actor interface {
 	// OnReceive 当 Actor 接收到消息时，将调用此方法
 	OnReceive(ctx Context)
 }
+
+type FN func(ctx Context)
+
+func (fn FN) OnReceive(ctx Context) {
+	fn(ctx)
+}
+
+type Provider interface {
+	Provide() Actor
+}
+
+type ProviderFN func() Actor
+
+func (fn ProviderFN) Provide() Actor {
+	return fn()
+}

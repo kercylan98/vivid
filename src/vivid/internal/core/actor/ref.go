@@ -1,8 +1,13 @@
 package actor
 
-import "github.com/kercylan98/vivid/src/vivid/internal/core"
+import (
+	"github.com/kercylan98/vivid/src/vivid/internal/core"
+	"github.com/kercylan98/wasteland/src/wasteland"
+)
 
 type Ref interface {
+	wasteland.ProcessId
+
 	// Address 返回 Ref 的地址
 	Address() core.Address
 

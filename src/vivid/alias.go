@@ -1,7 +1,7 @@
 package vivid
 
 import (
-	"github.com/kercylan98/vivid/src/vivid/internal/features"
+	"github.com/kercylan98/vivid/src/vivid/internal/core"
 )
 
 type (

@@ -7,12 +7,16 @@ import (
 
 var _ actor.RelationContext = (*Relation)(nil)
 
+func NewRelation() *Relation {
+	return &Relation{}
+}
+
 type Relation struct {
-	guid     uint64                  // 子 Actor Guid 计数器
+	guid     int64                   // 子 Actor Guid 计数器
 	children map[core.Path]actor.Ref // 子 Actor 集合（懒加载）
 }
 
-func (r *Relation) NextGuid() uint64 {
+func (r *Relation) NextGuid() int64 {
 	r.guid++
 	return r.guid
 }

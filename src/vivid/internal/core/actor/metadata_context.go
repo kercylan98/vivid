@@ -10,4 +10,7 @@ type MetadataContext interface {
 
 	// System 返回 Actor 的 ActorSystem
 	System() System
+
+	// Config 返回 Actor 的配置
+	Config() *Config
 }
