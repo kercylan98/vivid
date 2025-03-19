@@ -9,4 +9,5 @@ type Context interface {
 	GenerateContext() GenerateContext
 	ProcessContext() ProcessContext
 	MessageContext() MessageContext
+	TransportContext() TransportContext
 }

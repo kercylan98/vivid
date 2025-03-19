@@ -15,7 +15,7 @@ const (
 
 func NewMailbox() mailbox.Mailbox {
 	return &mailboxImpl{
-		queue:       queues.NewLFQueue(),
+		queue:       queues.NewRingBuffer(1024),
 		systemQueue: queues.NewLFQueue(),
 	}
 }
@@ -23,7 +23,7 @@ func NewMailbox() mailbox.Mailbox {
 type mailboxImpl struct {
 	dispatcher  mailbox.Dispatcher
 	handler     mailbox.Handler
-	queue       *queues.LFQueue
+	queue       *queues.RingBuffer
 	systemQueue *queues.LFQueue
 	status      uint32
 	sysNum      int32
@@ -52,7 +52,7 @@ func (m *mailboxImpl) HandleSystemMessage(message core.Message) {
 }
 
 func (m *mailboxImpl) HandleUserMessage(message core.Message) {
-	m.queue.Push(unsafe.Pointer(&message))
+	m.queue.Push(message)
 	atomic.AddInt32(&m.userNum, 1)
 	m.dispatch()
 }
@@ -90,8 +90,7 @@ func (m *mailboxImpl) processHandle() {
 			return
 		}
 
-		if ptr := m.queue.Pop(); ptr != nil {
-			message = *(*core.Message)(ptr)
+		if message, _ = m.queue.Pop(); message != nil {
 			atomic.AddInt32(&m.userNum, -1)
 			m.handler.HandleUserMessage(message)
 			continue

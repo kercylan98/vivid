@@ -14,16 +14,18 @@ func New(system actor.System, config *actor.Config, ref actor.Ref, parent actor.
 	ctx.generate = NewGenerate(ctx, provider)
 	ctx.process = NewProcess(ctx)
 	ctx.message = NewMessage(ctx)
+	ctx.transport = NewTransport(ctx)
 	return ctx
 }
 
 type Context struct {
-	config   *actor.Config
-	metadata actor.MetadataContext
-	relation actor.RelationContext
-	generate actor.GenerateContext
-	process  actor.ProcessContext
-	message  actor.MessageContext
+	config    *actor.Config
+	metadata  actor.MetadataContext
+	relation  actor.RelationContext
+	generate  actor.GenerateContext
+	process   actor.ProcessContext
+	message   actor.MessageContext
+	transport actor.TransportContext
 }
 
 func (c *Context) MessageContext() actor.MessageContext {
@@ -48,4 +50,8 @@ func (c *Context) GenerateContext() actor.GenerateContext {
 
 func (c *Context) ProcessContext() actor.ProcessContext {
 	return c.process
+}
+
+func (c *Context) TransportContext() actor.TransportContext {
+	return c.transport
 }

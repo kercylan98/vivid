@@ -18,11 +18,9 @@ type Message struct {
 }
 
 func (m *Message) HandleSystemMessage(message core.Message) {
-	//TODO implement me
-	panic("implement me")
+	m.ctx.GenerateContext().Actor().OnReceive(m.ctx)
 }
 
 func (m *Message) HandleUserMessage(message core.Message) {
-	//TODO implement me
-	panic("implement me")
+	m.ctx.GenerateContext().Actor().OnReceive(m.ctx)
 }

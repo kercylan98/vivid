@@ -39,5 +39,9 @@ func (p *Process) GetID() wasteland.ProcessId {
 }
 
 func (p *Process) HandleMessage(sender wasteland.ProcessId, priority wasteland.MessagePriority, message wasteland.Message) {
-	//p.ctx.MetadataContext().Config().Mailbox
+	if priority == UserMessage {
+		p.ctx.MetadataContext().Config().Mailbox.HandleUserMessage(message)
+	} else {
+		p.ctx.MetadataContext().Config().Mailbox.HandleSystemMessage(message)
+	}
 }

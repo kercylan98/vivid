@@ -28,6 +28,18 @@ type System struct {
 	registry wasteland.ProcessRegistry
 }
 
+func (s *System) Register(ctx actor.Context) {
+	if err := s.registry.Register(ctx.ProcessContext()); err != nil {
+		panic(err)
+	}
+}
+
+func (s *System) Find(target actor.Ref) wasteland.ProcessHandler {
+	// System 会设置守护进程，所以这里可忽略错误
+	process, _ := s.registry.Get(target)
+	return process.(wasteland.ProcessHandler)
+}
+
 func (s *System) LoggerProvider() log.Provider {
 	return s.config.LoggerProvider
 }

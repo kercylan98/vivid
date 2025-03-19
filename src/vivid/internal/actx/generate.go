@@ -20,6 +20,15 @@ func NewGenerate(ctx actor.Context, provider actor.Provider) *Generate {
 type Generate struct {
 	ctx      actor.Context
 	provider actor.Provider
+	actor    actor.Actor
+}
+
+func (g *Generate) Actor() actor.Actor {
+	return g.actor
+}
+
+func (g *Generate) ResetActorState() {
+	g.actor = g.provider.Provide()
 }
 
 func (g *Generate) GenerateActorContext(system actor.System, parent actor.Context, provider actor.Provider, config actor.Config) actor.Context {
@@ -59,8 +68,11 @@ func (g *Generate) GenerateActorContext(system actor.System, parent actor.Contex
 
 	// 初始化邮箱及上下文
 	ctx := New(system, &config, actorRef, parentRef, provider)
+	ctx.GenerateContext().ResetActorState()
+	config.Mailbox.Initialize(config.Dispatcher, ctx.MessageContext())
 	if parent != nil {
 		parent.RelationContext().BindChild(actorRef)
+		system.Register(ctx)
 	}
 
 	return ctx

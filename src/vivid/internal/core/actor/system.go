@@ -15,4 +15,8 @@ type System interface {
 	Shutdown() error
 
 	Context() Context
+
+	Find(target Ref) wasteland.ProcessHandler
+
+	Register(ctx Context)
 }
