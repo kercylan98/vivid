@@ -7,6 +7,7 @@ import (
 
 type Ref interface {
 	wasteland.ProcessId
+	wasteland.ProcessIdCache
 
 	// Address 返回 Ref 的地址
 	Address() core.Address

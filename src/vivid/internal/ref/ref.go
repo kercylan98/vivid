@@ -19,12 +19,12 @@ func init() {
 // NewActorRef 创建根据指定的 wasteland.ProcessId 一个 ActorRef
 func NewActorRef(pid wasteland.ProcessId) actor.Ref {
 	return &actorRef{
-		ProcessId: pid,
+		ProcessIdCache: pid.(wasteland.ProcessIdCache),
 	}
 }
 
 type actorRef struct {
-	wasteland.ProcessId
+	wasteland.ProcessIdCache
 }
 
 func (ref *actorRef) Equal(other actor.Ref) bool {
@@ -40,6 +40,6 @@ func (ref *actorRef) GenerateSub(path core.Path) actor.Ref {
 	}
 
 	return &actorRef{
-		ProcessId: wasteland.NewProcessId(ref.ProcessId, path),
+		ProcessIdCache: wasteland.NewProcessId(ref.ProcessIdCache, path).(wasteland.ProcessIdCache),
 	}
 }

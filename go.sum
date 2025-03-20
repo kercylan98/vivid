@@ -18,8 +18,8 @@ github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnr
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
 github.com/kercylan98/go-log v1.0.1 h1:eggOLdwbMJd0T0OQq71Kh2qBwED9AS/7oe9faKnQ01w=
 github.com/kercylan98/go-log v1.0.1/go.mod h1:0EYmffyCPuzk11ZN4E/3pWC+tsjzR6wkvWbKPV/pinI=
-github.com/kercylan98/wasteland v0.0.1 h1:yhjgTQlxJs3rpPrAjh3bEoF+yMVCc2ozI0G7uVXG0CY=
-github.com/kercylan98/wasteland v0.0.1/go.mod h1:dDIMsc4vYSm7UIiwhM3FVr4Z1UqXfNoMtWK1PLh/nA4=
+github.com/kercylan98/wasteland v0.0.2 h1:kwklZqe3Utxxkzq2sCuzEorERMXk53pV/xHMFXjgmVA=
+github.com/kercylan98/wasteland v0.0.2/go.mod h1:dDIMsc4vYSm7UIiwhM3FVr4Z1UqXfNoMtWK1PLh/nA4=
 github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHPsaIE=
 github.com/mattn/go-colorable v0.1.14/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=

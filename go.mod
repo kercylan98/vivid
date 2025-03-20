@@ -16,7 +16,7 @@ require (
 
 require (
 	github.com/kercylan98/go-log v1.0.1
-	github.com/kercylan98/wasteland v0.0.1
+	github.com/kercylan98/wasteland v0.0.2
 )
 
 require (

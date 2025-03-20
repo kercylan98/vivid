@@ -27,7 +27,6 @@ type mailboxImpl struct {
 	systemQueue *queues.LFQueue
 	status      uint32
 	sysNum      int32
-	userNum     int32
 	suspended   uint32
 }
 
@@ -53,7 +52,6 @@ func (m *mailboxImpl) HandleSystemMessage(message core.Message) {
 
 func (m *mailboxImpl) HandleUserMessage(message core.Message) {
 	m.queue.Push(message)
-	atomic.AddInt32(&m.userNum, 1)
 	m.dispatch()
 }
 
@@ -67,7 +65,7 @@ func (m *mailboxImpl) process() {
 	for {
 		m.processHandle()
 		atomic.StoreUint32(&m.status, mailboxStatusIdle)
-		notEmpty := atomic.LoadInt32(&m.sysNum) > 0 || (atomic.LoadUint32(&m.suspended) == 0 && atomic.LoadInt32(&m.userNum) > 0)
+		notEmpty := atomic.LoadInt32(&m.sysNum) > 0 || (atomic.LoadUint32(&m.suspended) == 0 && m.queue.Length() > 0)
 		if !notEmpty {
 			break
 		} else if !atomic.CompareAndSwapUint32(&m.status, mailboxStatusIdle, mailboxStatusRunning) {
@@ -91,7 +89,6 @@ func (m *mailboxImpl) processHandle() {
 		}
 
 		if message, _ = m.queue.Pop(); message != nil {
-			atomic.AddInt32(&m.userNum, -1)
 			m.handler.HandleUserMessage(message)
 			continue
 		}
