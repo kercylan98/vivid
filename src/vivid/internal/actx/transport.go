@@ -3,6 +3,7 @@ package actx
 import (
 	"github.com/kercylan98/vivid/src/vivid/internal/core"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
+	"github.com/kercylan98/vivid/src/vivid/internal/core/addressing"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/future"
 	"github.com/kercylan98/wasteland/src/wasteland"
 	"time"
@@ -25,7 +26,8 @@ func (t *Transport) Tell(target actor.Ref, priority wasteland.MessagePriority, m
 }
 
 func (t *Transport) Probe(target actor.Ref, priority wasteland.MessagePriority, message core.Message) {
-
+	message = addressing.NewMessage(t.ctx.MetadataContext().Ref(), message)
+	t.ctx.MetadataContext().System().Find(target).HandleMessage(nil, priority, message)
 }
 
 func (t *Transport) Ask(target actor.Ref, priority wasteland.MessagePriority, message core.Message, timeout ...time.Duration) future.Future {

@@ -2,6 +2,7 @@ package actx
 
 import (
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
+	"github.com/kercylan98/vivid/src/vivid/internal/core/messages"
 	"github.com/kercylan98/vivid/src/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/src/vivid/internal/ref"
 	"github.com/kercylan98/wasteland/src/wasteland"
@@ -73,6 +74,11 @@ func (g *Generate) GenerateActorContext(system actor.System, parent actor.Contex
 	if parent != nil {
 		parent.RelationContext().BindChild(actorRef)
 		system.Register(ctx)
+	}
+
+	// 投递启动消息
+	if parent != nil {
+		parent.TransportContext().Tell(actorRef, SystemMessage, messages.OnLaunchMessageInstance)
 	}
 
 	return ctx
