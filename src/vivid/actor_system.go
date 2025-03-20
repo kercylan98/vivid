@@ -18,6 +18,12 @@ type ActorSystem interface {
 	ActorOf(provider ActorProvider, configuration ...ActorConfigurator) ActorRef
 
 	Tell(target ActorRef, message Message)
+
+	// Kill 杀死特定的 Actor
+	Kill(ref ActorRef)
+
+	// PoisonKill 毒杀特定的 Actor
+	PoisonKill(ref ActorRef)
 }
 
 func NewActorSystem(configurator ...ActorSystemConfigurator) ActorSystem {
@@ -30,6 +36,15 @@ func NewActorSystem(configurator ...ActorSystemConfigurator) ActorSystem {
 
 type actorSystem struct {
 	system actor.System
+}
+
+func (a *actorSystem) Kill(ref ActorRef) {
+	a.s
+}
+
+func (a *actorSystem) PoisonKill(ref ActorRef) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (a *actorSystem) Tell(target ActorRef, message Message) {
