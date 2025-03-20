@@ -4,12 +4,11 @@ import (
 	"github.com/kercylan98/vivid/src/vivid/internal/core"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/addressing"
-	"github.com/kercylan98/vivid/src/vivid/internal/core/messages"
 )
 
 var _ actor.MessageContext = (*Message)(nil)
 
-func NewMessage(ctx actor.Context) actor.MessageContext {
+func NewMessage(ctx actor.Context) *Message {
 	return &Message{
 		ctx: ctx,
 	}
@@ -43,18 +42,24 @@ func (m *Message) parseRawMessage(message core.Message) core.Message {
 func (m *Message) HandleSystemMessage(message core.Message) {
 	message = m.parseRawMessage(message)
 
-	switch message.(type) {
-	case *messages.OnLaunch:
+	switch msg := message.(type) {
+	case *actor.OnLaunch:
 		m.HandleUserMessage(message)
+	case *actor.OnKill:
+		m.ctx.LifecycleContext().Kill(msg)
+	case *actor.OnKilled:
+		m.ctx.RelationContext().UnbindChild(m.sender)
 	}
 }
 
 func (m *Message) HandleUserMessage(message core.Message) {
 	message = m.parseRawMessage(message)
 
-	switch message.(type) {
-	case *messages.OnLaunch:
+	switch msg := message.(type) {
+	case *actor.OnLaunch:
 		m.ctx.GenerateContext().Actor().OnReceive(m.ctx)
+	case *actor.OnKill:
+		m.ctx.LifecycleContext().Kill(msg)
 	default:
 		m.ctx.GenerateContext().Actor().OnReceive(m.ctx)
 	}

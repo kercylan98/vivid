@@ -4,7 +4,7 @@ import "github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 
 var _ actor.MetadataContext = (*Metadata)(nil)
 
-func NewMetadata(system actor.System, ref actor.Ref, parent actor.Ref, config *actor.Config) actor.MetadataContext {
+func NewMetadata(system actor.System, ref actor.Ref, parent actor.Ref, config *actor.Config) *Metadata {
 	return &Metadata{
 		system: system,
 		ref:    ref,

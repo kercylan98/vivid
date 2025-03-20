@@ -10,11 +10,12 @@ var _ actor.Context = (*Context)(nil)
 func New(system actor.System, config *actor.Config, ref actor.Ref, parent actor.Ref, provider actor.Provider) actor.Context {
 	ctx := &Context{config: config}
 	ctx.metadata = NewMetadata(system, ref, parent, config)
-	ctx.relation = NewRelation()
+	ctx.relation = NewRelation(ctx)
 	ctx.generate = NewGenerate(ctx, provider)
 	ctx.process = NewProcess(ctx)
 	ctx.message = NewMessage(ctx)
 	ctx.transport = NewTransport(ctx)
+	ctx.lifecycle = NewLifecycle(ctx)
 	return ctx
 }
 
@@ -26,6 +27,7 @@ type Context struct {
 	process   actor.ProcessContext
 	message   actor.MessageContext
 	transport actor.TransportContext
+	lifecycle actor.LifecycleContext
 }
 
 func (c *Context) MessageContext() actor.MessageContext {
@@ -54,4 +56,8 @@ func (c *Context) ProcessContext() actor.ProcessContext {
 
 func (c *Context) TransportContext() actor.TransportContext {
 	return c.transport
+}
+
+func (c *Context) LifecycleContext() actor.LifecycleContext {
+	return c.lifecycle
 }

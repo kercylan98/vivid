@@ -1,9 +1,11 @@
 package vivid
 
-import "github.com/kercylan98/vivid/src/vivid/internal/core/messages"
+import (
+	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
+)
 
 type OnKill struct {
-	m messages.OnKill
+	m actor.OnKill
 }
 
 func (o *OnKill) Operator() ActorRef {

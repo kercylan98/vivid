@@ -12,7 +12,7 @@ const (
 
 var _ actor.ProcessContext = (*Process)(nil)
 
-func NewProcess(ctx actor.Context) actor.ProcessContext {
+func NewProcess(ctx actor.Context) *Process {
 	return &Process{
 		ctx: ctx,
 	}

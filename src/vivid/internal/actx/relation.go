@@ -7,13 +7,20 @@ import (
 
 var _ actor.RelationContext = (*Relation)(nil)
 
-func NewRelation() *Relation {
-	return &Relation{}
+func NewRelation(ctx *Context) *Relation {
+	return &Relation{
+		ctx: ctx,
+	}
 }
 
 type Relation struct {
+	ctx      *Context
 	guid     int64                   // 子 Actor Guid 计数器
 	children map[core.Path]actor.Ref // 子 Actor 集合（懒加载）
+}
+
+func (r *Relation) Children() map[core.Path]actor.Ref {
+	return r.children
 }
 
 func (r *Relation) NextGuid() int64 {
@@ -33,6 +40,7 @@ func (r *Relation) UnbindChild(child actor.Ref) {
 		delete(r.children, child.Path())
 		if len(r.children) == 0 {
 			r.children = nil
+			r.ctx.LifecycleContext().TryRefreshTerminateStatus()
 		}
 	}
 }

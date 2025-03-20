@@ -2,7 +2,7 @@ package vivid
 
 import (
 	"github.com/kercylan98/vivid/src/vivid/internal/core"
-	"github.com/kercylan98/vivid/src/vivid/internal/core/messages"
+	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 )
 
 type (
@@ -12,5 +12,5 @@ type (
 )
 
 type (
-	OnLaunch = messages.OnLaunch
+	OnLaunch = actor.OnLaunch
 )

@@ -4,7 +4,6 @@ import (
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/vivid/internal/actx"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
-	"github.com/kercylan98/vivid/src/vivid/internal/core/messages"
 	"github.com/kercylan98/wasteland/src/wasteland"
 )
 
@@ -57,7 +56,7 @@ func (s *System) Run() error {
 		Daemon:        s.guide.ProcessContext(),
 		LoggerProvide: s.config.LoggerProvider,
 	})
-	s.guide.TransportContext().Tell(s.guide.MetadataContext().Ref(), actx.SystemMessage, messages.OnLaunchMessageInstance)
+	s.guide.TransportContext().Tell(s.guide.MetadataContext().Ref(), actx.SystemMessage, actor.OnLaunchMessageInstance)
 	return s.registry.Run()
 }
 
