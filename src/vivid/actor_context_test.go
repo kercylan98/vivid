@@ -11,7 +11,7 @@ func TestActorContext_Watch(t *testing.T) {
 
 	wait := make(chan struct{})
 
-	system.ActorOf(vivid.ActorProviderFN(func() vivid.Actor {
+	system.ActorOf(func() vivid.Actor {
 		return vivid.ActorFN(func(ctx vivid.ActorContext) {
 			switch ctx.Message().(type) {
 			case *vivid.OnLaunch:
@@ -25,7 +25,7 @@ func TestActorContext_Watch(t *testing.T) {
 				wait <- struct{}{}
 			}
 		})
-	}))
+	})
 
 	<-wait
 }

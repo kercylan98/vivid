@@ -10,14 +10,14 @@ func TestActorSystem_ActorOf(t *testing.T) {
 	system := vivid.NewActorSystem().StartP()
 	defer system.StopP()
 
-	system.ActorOf(vivid.ActorProviderFN(func() vivid.Actor {
+	system.ActorOf(func() vivid.Actor {
 		return vivid.ActorFN(func(ctx vivid.ActorContext) {
 			switch ctx.Message().(type) {
 			case *vivid.OnLaunch:
 				t.Log(ctx.Ref(), ctx.Sender(), "OnLaunch")
 			}
 		})
-	}))
+	})
 
 	time.Sleep(time.Second) // TODO: Stop 暂未实现，暂时用 Sleep 代替
 }
@@ -28,7 +28,7 @@ func TestActorContext_Kill(t *testing.T) {
 
 	counter := 100
 
-	ref := system.ActorOf(vivid.ActorProviderFN(func() vivid.Actor {
+	ref := system.ActorOf(func() vivid.Actor {
 		return vivid.ActorFN(func(ctx vivid.ActorContext) {
 			switch ctx.Message().(type) {
 			case *vivid.OnKill:
@@ -39,7 +39,7 @@ func TestActorContext_Kill(t *testing.T) {
 				counter--
 			}
 		})
-	}))
+	})
 
 	for i := 0; i < counter; i++ {
 		system.Tell(ref, i)
@@ -56,7 +56,7 @@ func TestActorContext_PoisonKill(t *testing.T) {
 	counter := 100
 	limit := counter
 
-	ref := system.ActorOf(vivid.ActorProviderFN(func() vivid.Actor {
+	ref := system.ActorOf(func() vivid.Actor {
 		return vivid.ActorFN(func(ctx vivid.ActorContext) {
 			switch ctx.Message().(type) {
 			case *vivid.OnKill:
@@ -67,7 +67,7 @@ func TestActorContext_PoisonKill(t *testing.T) {
 				counter--
 			}
 		})
-	}))
+	})
 
 	for i := 0; i < limit; i++ {
 		system.Tell(ref, i)
