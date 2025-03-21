@@ -14,5 +14,5 @@ type TransportContext interface {
 
 	Ask(target Ref, priority wasteland.MessagePriority, message core.Message, timeout ...time.Duration) future.Future
 
-	Reply(message core.Message)
+	Reply(priority wasteland.MessagePriority, message core.Message)
 }

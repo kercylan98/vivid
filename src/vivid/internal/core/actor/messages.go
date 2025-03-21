@@ -6,11 +6,16 @@ import (
 
 func init() {
 	gob.RegisterName("vivid.OnKill", new(OnKill))
+	gob.RegisterName("vivid.OnKilled", new(OnKilled))
+	gob.RegisterName("vivid.OnWatch", new(OnWatch))
+	gob.RegisterName("vivid.OnUnwatch", new(OnUnwatch))
+	gob.RegisterName("vivid.OnDead", new(OnDead))
 }
 
 var (
-	OnLaunchMessageInstance = new(OnLaunch)
-	OnKilledMessageInstance = new(OnKilled)
+	OnLaunchMessageInstance  = new(OnLaunch)
+	OnWatchMessageInstance   = new(OnWatch)
+	OnUnwatchMessageInstance = new(OnUnwatch)
 )
 
 type (
@@ -20,5 +25,10 @@ type (
 		Operator Ref    // 操作者
 		Poison   bool   // 是否为优雅终止
 	}
-	OnKilled int8
+	OnKilled  OnKill
+	OnWatch   int8
+	OnUnwatch int8
+	OnDead    struct {
+		Ref Ref // 生命周期结束的 Actor
+	}
 )

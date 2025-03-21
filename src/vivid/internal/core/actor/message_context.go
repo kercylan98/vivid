@@ -13,4 +13,7 @@ type MessageContext interface {
 
 	// Message 获取消息
 	Message() core.Message
+
+	// OnReceiveImplant 注入消息处理器，以特定的消息触发 Actor.OnReceive 方法
+	OnReceiveImplant(message core.Message)
 }

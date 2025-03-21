@@ -20,6 +20,15 @@ type Message struct {
 	message core.Message // 当前正在处理的消息
 }
 
+func (m *Message) OnReceiveImplant(message core.Message) {
+	backup := m.message
+	defer func() {
+		m.message = backup
+	}()
+	m.message = message
+	m.ctx.GenerateContext().Actor().OnReceive(m.ctx)
+}
+
 func (m *Message) Message() core.Message {
 	return m.message
 }
@@ -49,6 +58,11 @@ func (m *Message) HandleSystemMessage(message core.Message) {
 		m.ctx.LifecycleContext().Kill(msg)
 	case *actor.OnKilled:
 		m.ctx.RelationContext().UnbindChild(m.sender)
+		m.ctx.LifecycleContext().TryRefreshTerminateStatus(msg)
+	case *actor.OnWatch:
+		m.ctx.RelationContext().AddWatcher(m.sender)
+	case *actor.OnUnwatch:
+		m.ctx.RelationContext().RemoveWatcher(m.sender)
 	}
 }
 
@@ -59,7 +73,7 @@ func (m *Message) HandleUserMessage(message core.Message) {
 	case *actor.OnLaunch:
 		m.ctx.GenerateContext().Actor().OnReceive(m.ctx)
 	case *actor.OnKill:
-		m.ctx.LifecycleContext().Kill(msg)
+		m.ctx.LifecycleContext().Kill(msg) // from poison
 	default:
 		m.ctx.GenerateContext().Actor().OnReceive(m.ctx)
 	}

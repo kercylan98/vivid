@@ -1,7 +1,10 @@
 package actor
 
 type LifecycleContext interface {
-	Kill(kill *OnKill)
+	Kill(info *OnKill)
 
-	TryRefreshTerminateStatus()
+	TryRefreshTerminateStatus(info *OnKilled)
+
+	// Status 获取 Actor 状态
+	Status() uint32
 }

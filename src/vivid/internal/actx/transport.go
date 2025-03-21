@@ -34,6 +34,6 @@ func (t *Transport) Ask(target actor.Ref, priority wasteland.MessagePriority, me
 	return nil
 }
 
-func (t *Transport) Reply(message core.Message) {
-
+func (t *Transport) Reply(priority wasteland.MessagePriority, message core.Message) {
+	t.ctx.TransportContext().Tell(t.ctx.MessageContext().Sender(), priority, message)
 }

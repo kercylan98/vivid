@@ -88,7 +88,7 @@ func (m *mailboxImpl) processHandle() {
 			return
 		}
 
-		if message, _ = m.queue.Pop(); message != nil {
+		if message = m.queue.Pop(); message != nil {
 			m.handler.HandleUserMessage(message)
 			continue
 		}

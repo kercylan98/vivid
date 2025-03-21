@@ -9,9 +9,7 @@ func BenchmarkActorSystem_Tell(b *testing.B) {
 	system := vivid.NewActorSystem().StartP()
 
 	ref := system.ActorOf(vivid.ActorProviderFN(func() vivid.Actor {
-		return vivid.ActorFN(func(ctx vivid.ActorContext) {
-
-		})
+		return vivid.ActorFN(func(ctx vivid.ActorContext) {})
 	}))
 
 	b.ResetTimer()

@@ -63,7 +63,7 @@ func (g *Generate) GenerateActorContext(system actor.System, parent actor.Contex
 	if parentRef != nil {
 		actorRef = parentRef.GenerateSub(config.Name)
 	} else {
-		actorRef = ref.NewActorRef(wasteland.NewProcessId(system.Meta(), ""))
+		actorRef = ref.NewActorRef(wasteland.NewProcessId(system.Meta(), "/"))
 	}
 
 	// 初始化邮箱及上下文
@@ -71,8 +71,8 @@ func (g *Generate) GenerateActorContext(system actor.System, parent actor.Contex
 	ctx.GenerateContext().ResetActorState()
 	config.Mailbox.Initialize(config.Dispatcher, ctx.MessageContext())
 	if parent != nil {
-		parent.RelationContext().BindChild(actorRef)
 		system.Register(ctx)
+		parent.RelationContext().BindChild(actorRef)
 	}
 
 	// 投递启动消息

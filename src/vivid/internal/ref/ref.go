@@ -43,3 +43,11 @@ func (ref *actorRef) GenerateSub(path core.Path) actor.Ref {
 		ProcessIdCache: wasteland.NewProcessId(ref.ProcessIdCache, path).(wasteland.ProcessIdCache),
 	}
 }
+
+func (ref *actorRef) String() string {
+	return ref.Path()
+}
+
+func (ref *actorRef) URL() string {
+	return ref.Address() + ref.Path()
+}

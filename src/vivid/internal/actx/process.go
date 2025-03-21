@@ -31,7 +31,7 @@ func (p *Process) Terminate(operator wasteland.ProcessId) {
 }
 
 func (p *Process) Terminated() bool {
-	return false
+	return p.ctx.LifecycleContext().Status() == lifecycleStatusTerminated
 }
 
 func (p *Process) GetID() wasteland.ProcessId {

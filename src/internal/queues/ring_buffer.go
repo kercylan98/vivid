@@ -49,9 +49,9 @@ func (r *RingBuffer) Length() int64 {
 	return atomic.LoadInt64(&r.len)
 }
 
-func (r *RingBuffer) Pop() (any, bool) {
+func (r *RingBuffer) Pop() any {
 	if atomic.LoadInt64(&r.len) == 0 {
-		return nil, false
+		return nil
 	}
 
 	r.lock.Lock()
@@ -60,5 +60,5 @@ func (r *RingBuffer) Pop() (any, bool) {
 	r.buffer[r.head] = nil
 	atomic.AddInt64(&r.len, -1)
 	r.lock.Unlock()
-	return res, true
+	return res
 }

@@ -6,4 +6,5 @@ type (
 	Address = wasteland.Address
 	Path    = wasteland.Path
 	Message = wasteland.Message
+	URL     = string
 )

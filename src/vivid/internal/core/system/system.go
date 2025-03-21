@@ -1,6 +1,7 @@
 package system
 
 import (
+	"context"
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/vivid/internal/actx"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
@@ -17,6 +18,7 @@ func New(config Config) *System {
 	system := &System{
 		config: &config,
 	}
+	system.ctx, system.cancel = context.WithCancel(context.Background())
 
 	return system
 }
@@ -26,12 +28,18 @@ type System struct {
 	meta     wasteland.Meta
 	guide    actor.Context
 	registry wasteland.ProcessRegistry
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 func (s *System) Register(ctx actor.Context) {
 	if err := s.registry.Register(ctx.ProcessContext()); err != nil {
 		panic(err)
 	}
+}
+
+func (s *System) Unregister(operator, target actor.Ref) {
+	s.registry.Unregister(operator, target)
 }
 
 func (s *System) Find(target actor.Ref) wasteland.ProcessHandler {
@@ -50,17 +58,24 @@ func (s *System) Meta() wasteland.Meta {
 
 func (s *System) Run() error {
 	s.meta = wasteland.NewMeta(s.config.Address)
-	s.guide = (*actx.Generate)(nil).GenerateActorContext(s, nil, GuardProvider(), actor.Config{})
+	s.guide = (*actx.Generate)(nil).GenerateActorContext(s, nil, GuardProvider(s.cancel), actor.Config{})
 	s.registry = wasteland.NewProcessRegistry(wasteland.ProcessRegistryConfig{
 		Meta:          s.Meta(),
 		Daemon:        s.guide.ProcessContext(),
 		LoggerProvide: s.config.LoggerProvider,
 	})
+	s.Register(s.guide)
 	s.guide.TransportContext().Tell(s.guide.MetadataContext().Ref(), actx.SystemMessage, actor.OnLaunchMessageInstance)
 	return s.registry.Run()
 }
 
-func (s *System) Shutdown() error {
+func (s *System) Stop() error {
+	s.guide.TransportContext().Tell(s.guide.MetadataContext().Ref(), actx.UserMessage, &actor.OnKill{
+		Reason:   "actor system stop",
+		Operator: s.guide.MetadataContext().Ref(),
+		Poison:   true,
+	})
+	<-s.ctx.Done()
 	s.registry.Stop()
 	return nil
 }

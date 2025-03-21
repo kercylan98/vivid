@@ -20,4 +20,10 @@ type Ref interface {
 
 	// GenerateSub 生成一个子 Ref
 	GenerateSub(path core.Path) Ref
+
+	// String 返回 Ref 的字符串表示
+	String() string
+
+	// URL 返回 Ref 的 URL 表示
+	URL() string
 }

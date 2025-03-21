@@ -12,11 +12,13 @@ type System interface {
 
 	Run() error
 
-	Shutdown() error
+	Stop() error
 
 	Context() Context
 
 	Find(target Ref) wasteland.ProcessHandler
 
 	Register(ctx Context)
+
+	Unregister(operator, target Ref)
 }
