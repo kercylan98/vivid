@@ -1,11 +1,11 @@
 package vivid
 
 type ActorSystemConfigurator interface {
-	Configure(system *ActorSystemConfig)
+	Configure(config *ActorSystemConfig)
 }
 
-type ActorSystemConfiguratorFN func(system *ActorSystemConfig)
+type ActorSystemConfiguratorFN func(config *ActorSystemConfig)
 
-func (fn ActorSystemConfiguratorFN) Configure(system *ActorSystemConfig) {
-	fn(system)
+func (fn ActorSystemConfiguratorFN) Configure(config *ActorSystemConfig) {
+	fn(config)
 }
