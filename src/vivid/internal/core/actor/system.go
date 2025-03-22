@@ -21,4 +21,6 @@ type System interface {
 	Register(ctx Context)
 
 	Unregister(operator, target Ref)
+
+	Registry() wasteland.ProcessRegistry
 }

@@ -3,7 +3,6 @@ package vivid_test
 import (
 	"github.com/kercylan98/vivid/src/vivid"
 	"testing"
-	"time"
 )
 
 func TestActorSystem_ActorOf(t *testing.T) {
@@ -18,11 +17,74 @@ func TestActorSystem_ActorOf(t *testing.T) {
 			}
 		})
 	})
-
-	time.Sleep(time.Second) // TODO: Stop 暂未实现，暂时用 Sleep 代替
 }
 
-func TestActorContext_Kill(t *testing.T) {
+func TestActorSystem_Tell(t *testing.T) {
+	system := vivid.NewActorSystem().StartP()
+	defer system.StopP()
+
+	wait := make(chan struct{})
+	ref := system.ActorOf(func() vivid.Actor {
+		return vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case int:
+				wait <- struct{}{}
+			}
+		})
+	})
+
+	system.Tell(ref, 1)
+	<-wait
+}
+
+func TestActorSystem_Probe(t *testing.T) {
+	system := vivid.NewActorSystem().StartP()
+	defer system.StopP()
+
+	ref := system.ActorOf(func() vivid.Actor {
+		return vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case int:
+				ctx.Reply(1)
+			}
+		})
+	})
+
+	wait := make(chan struct{})
+	system.ActorOf(func() vivid.Actor {
+		return vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.Probe(ref, 1)
+			case int:
+				wait <- struct{}{}
+			}
+		})
+	})
+	<-wait
+}
+
+func TestActorSystem_Ask(t *testing.T) {
+	system := vivid.NewActorSystem().StartP()
+	defer system.StopP()
+
+	ref := system.ActorOf(func() vivid.Actor {
+		return vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case int:
+				ctx.Reply(1)
+			}
+		})
+	})
+
+	result, err := system.Ask(ref, 1).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(result)
+}
+
+func TestActorSystem_Kill(t *testing.T) {
 	system := vivid.NewActorSystem().StartP()
 	defer system.StopP()
 
@@ -46,10 +108,9 @@ func TestActorContext_Kill(t *testing.T) {
 	}
 
 	system.Kill(ref)
-	time.Sleep(time.Second) // TODO: Stop 暂未实现，暂时用 Sleep 代替
 }
 
-func TestActorContext_PoisonKill(t *testing.T) {
+func TestActorSystem_PoisonKill(t *testing.T) {
 	system := vivid.NewActorSystem().StartP()
 	defer system.StopP()
 
@@ -74,5 +135,4 @@ func TestActorContext_PoisonKill(t *testing.T) {
 	}
 
 	system.PoisonKill(ref)
-	time.Sleep(time.Second) // TODO: Stop 暂未实现，暂时用 Sleep 代替
 }

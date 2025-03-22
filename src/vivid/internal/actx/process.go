@@ -2,6 +2,7 @@ package actx
 
 import (
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
+	"github.com/kercylan98/vivid/src/vivid/internal/core/addressing"
 	"github.com/kercylan98/wasteland/src/wasteland"
 )
 
@@ -39,6 +40,10 @@ func (p *Process) GetID() wasteland.ProcessId {
 }
 
 func (p *Process) HandleMessage(sender wasteland.ProcessId, priority wasteland.MessagePriority, message wasteland.Message) {
+	if sender != nil {
+		message = addressing.NewMessage(sender.(actor.Ref), message)
+	}
+
 	if priority == UserMessage {
 		p.ctx.MetadataContext().Config().Mailbox.HandleUserMessage(message)
 	} else {

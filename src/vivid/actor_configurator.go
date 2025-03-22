@@ -4,8 +4,8 @@ type ActorConfigurator interface {
 	Configure(config *ActorConfig)
 }
 
-type ActorConfiguratorFn func(config *ActorConfig)
+type ActorConfiguratorFN func(config *ActorConfig)
 
-func (f ActorConfiguratorFn) Configure(config *ActorConfig) {
+func (f ActorConfiguratorFN) Configure(config *ActorConfig) {
 	f(config)
 }

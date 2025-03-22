@@ -15,9 +15,9 @@ func TestActorContext_Watch(t *testing.T) {
 		return vivid.ActorFN(func(ctx vivid.ActorContext) {
 			switch ctx.Message().(type) {
 			case *vivid.OnLaunch:
-				child := ctx.ActorOf(vivid.ActorProviderFN(func() vivid.Actor {
+				child := ctx.ActorOf(func() vivid.Actor {
 					return vivid.ActorFN(func(ctx vivid.ActorContext) {})
-				}))
+				})
 
 				ctx.Watch(child)
 				ctx.PoisonKill(child)

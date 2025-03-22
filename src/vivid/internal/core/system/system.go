@@ -42,6 +42,10 @@ func (s *System) Unregister(operator, target actor.Ref) {
 	s.registry.Unregister(operator, target)
 }
 
+func (s *System) Registry() wasteland.ProcessRegistry {
+	return s.registry
+}
+
 func (s *System) Find(target actor.Ref) wasteland.ProcessHandler {
 	// System 会设置守护进程，所以这里可忽略错误
 	process, _ := s.registry.Get(target)
