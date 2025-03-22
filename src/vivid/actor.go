@@ -25,7 +25,7 @@ func (fn ActorProviderFN) Provide() Actor {
 }
 
 // newActorFacade 创建一个 Actor 门面代理
-func newActorFacade(system actor.System, ctx actor.Context, provider ActorProvider, configuration ...ActorConfigurator) ActorRef {
+func newActorFacade(system actor.System, parent actor.Context, provider ActorProvider, configuration ...ActorConfigurator) ActorRef {
 	config := newActorConfig()
 	for _, c := range configuration {
 		c.Configure(config)
@@ -49,7 +49,7 @@ func newActorFacade(system actor.System, ctx actor.Context, provider ActorProvid
 		})
 		return facade
 	})
-	facadeCtx = newActorContext(ctx.GenerateContext().GenerateActorContext(system, ctx, facadeProvider, *config.config))
+	facadeCtx = newActorContext(parent.GenerateContext().GenerateActorContext(system, parent, facadeProvider, *config.config))
 	return facadeCtx.Ref()
 }
 
