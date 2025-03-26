@@ -1,7 +1,11 @@
 package vivid
 
 type ActorRef interface {
-	Address() Address
+    Address() Address
 
-	Path() Path
+    Path() Path
+
+    String() string
+
+    URL() string
 }
