@@ -1,6 +1,8 @@
 package actx
 
 import (
+	"fmt"
+	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/vivid/internal/core"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/future"
@@ -44,5 +46,12 @@ func (t *Transport) Ask(target actor.Ref, priority wasteland.MessagePriority, me
 }
 
 func (t *Transport) Reply(priority wasteland.MessagePriority, message core.Message) {
-	t.ctx.TransportContext().Tell(t.ctx.MessageContext().Sender(), priority, message)
+	sender := t.ctx.MessageContext().Sender()
+	t.ctx.TransportContext().Tell(sender, priority, message)
+
+	if sender == nil {
+		t.ctx.LoggerProvider().Provide().Warn("reply",
+			log.String("ref", t.ctx.MetadataContext().Ref().String()),
+			log.Err(fmt.Errorf("tell message can not reply, but reply message %T", message)))
+	}
 }
