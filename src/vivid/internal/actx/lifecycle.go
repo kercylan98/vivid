@@ -50,10 +50,10 @@ func (l *Lifecycle) Kill(info *actor.OnKill) {
 	}
 
 	// 尝试刷新自身终止状态
-	l.TryRefreshTerminateStatus((*actor.OnKilled)(info))
+	l.TerminateTest((*actor.OnKilled)(info))
 }
 
-func (l *Lifecycle) TryRefreshTerminateStatus(info *actor.OnKilled) {
+func (l *Lifecycle) TerminateTest(info *actor.OnKilled) {
 	// 如果子 Actor 已经全部终止，那么可以继续流程
 	if len(l.ctx.RelationContext().Children()) > 0 {
 		return

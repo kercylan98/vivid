@@ -58,7 +58,7 @@ func (m *Message) HandleSystemMessage(message core.Message) {
 		m.ctx.LifecycleContext().Kill(msg)
 	case *actor.OnKilled:
 		m.ctx.RelationContext().UnbindChild(m.sender)
-		m.ctx.LifecycleContext().TryRefreshTerminateStatus(msg)
+		m.ctx.LifecycleContext().TerminateTest(msg)
 	case *actor.OnWatch:
 		m.ctx.RelationContext().AddWatcher(m.sender)
 	case *actor.OnUnwatch:
