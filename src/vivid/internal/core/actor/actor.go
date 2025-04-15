@@ -10,29 +10,29 @@ package actor
 //
 // 实现一个 Actor 只需要实现 OnReceive 方法即可，同时也可以使用 Provider 来提供复杂构建的 Actor，以及使用 FN 实现简单的函数式 Actor。
 type Actor interface {
-    // OnReceive 是 Actor 接收消息的核心方法，它提供了一个完整的 Context 作为 Actor 的上下文。
-    //
-    // Actor 在接收到消息时会调用此方法来处理消息。在此方法中，Actor 可以访问上下文信息、发送消息、处理状态等。
-    // 该方法是 Actor 的主要入口点，所有的消息处理逻辑都应该在这里实现。
-    //
-    // 该方法是一个阻塞方法，直到消息处理完成后才会返回。
-    // Actor 在处理消息时可以使用上下文提供的方法来发送消息、获取 Actor 的状态等。
-    // 该方法的实现应该是非阻塞的，以避免阻塞整个 Actor 系统。
-    // 在该方法中，Actor 的消息是串行处理的，即使有多个消息同时到达，Actor 也只会处理一个消息。
-    // 其他消息会被放入 Actor 的邮箱中，等待处理。
-    //
-    // 在使用过程中应严格避免将 Context 向外部暴露，否则可能会导致上下文被篡改或泄露，同时引发竞态条件和死锁等问题。
-    //
-    // 在该函数中，可通过监听 *OnLaunch 消息来感知到 Actor 的启动并进行相应的初始化行为，同时应避免在构造过程中对 Actor 的初始化。
-    // 该函数也可以通过监听 *OnKill 消息来感知到 Actor 的关闭并进行相应的清理行为。
-    OnReceive(ctx Context)
+	// OnReceive 是 Actor 接收消息的核心方法，它提供了一个完整的 Context 作为 Actor 的上下文。
+	//
+	// Actor 在接收到消息时会调用此方法来处理消息。在此方法中，Actor 可以访问上下文信息、发送消息、处理状态等。
+	// 该方法是 Actor 的主要入口点，所有的消息处理逻辑都应该在这里实现。
+	//
+	// 该方法是一个阻塞方法，直到消息处理完成后才会返回。
+	// Actor 在处理消息时可以使用上下文提供的方法来发送消息、获取 Actor 的状态等。
+	// 该方法的实现应该是非阻塞的，以避免阻塞整个 Actor 系统。
+	// 在该方法中，Actor 的消息是串行处理的，即使有多个消息同时到达，Actor 也只会处理一个消息。
+	// 其他消息会被放入 Actor 的邮箱中，等待处理。
+	//
+	// 在使用过程中应严格避免将 Context 向外部暴露，否则可能会导致上下文被篡改或泄露，同时引发竞态条件和死锁等问题。
+	//
+	// 在该函数中，可通过监听 *OnLaunch 消息来感知到 Actor 的启动并进行相应的初始化行为，同时应避免在构造过程中对 Actor 的初始化。
+	// 该函数也可以通过监听 *OnKill 消息来感知到 Actor 的关闭并进行相应的清理行为。
+	OnReceive(ctx Context)
 }
 
 // FN 是一个函数类型，它实现了 Actor 接口，用于提供简单的函数式 Actor。
 type FN func(ctx Context)
 
 func (fn FN) OnReceive(ctx Context) {
-    fn(ctx)
+	fn(ctx)
 }
 
 // Provider 是 Actor 的提供者接口，它用于提供一个 Actor 实例。
@@ -41,10 +41,10 @@ func (fn FN) OnReceive(ctx Context) {
 //
 // 在使用过程中应避免 Provider 中提供一个全局的 Actor 实例，否则可能会导致状态共享和竞态条件等问题。
 type Provider interface {
-    // Provide 返回一个 Actor 实例。
-    //
-    // 该实例应该拥有独立的状态，而非全局的状态。
-    Provide() Actor
+	// Provide 返回一个 Actor 实例。
+	//
+	// 该实例应该拥有独立的状态，而非全局的状态。
+	Provide() Actor
 }
 
 // ProviderFN 是一个函数类型，它实现了 Provider 接口，用于提供一个 Actor 实例。
@@ -53,5 +53,5 @@ type Provider interface {
 type ProviderFN func() Actor
 
 func (fn ProviderFN) Provide() Actor {
-    return fn()
+	return fn()
 }

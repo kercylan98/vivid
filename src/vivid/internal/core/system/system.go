@@ -25,7 +25,7 @@ func New(config Config) *System {
 
 type System struct {
 	config   *Config
-	meta     wasteland.Meta
+	locator  wasteland.ResourceLocator
 	guide    actor.Context
 	registry wasteland.ProcessRegistry
 	ctx      context.Context
@@ -56,17 +56,19 @@ func (s *System) LoggerProvider() log.Provider {
 	return s.config.LoggerProvider
 }
 
-func (s *System) Meta() wasteland.Meta {
-	return s.meta
+func (s *System) ResourceLocator() wasteland.ResourceLocator {
+	return s.locator
 }
 
 func (s *System) Run() error {
-	s.meta = wasteland.NewMeta(s.config.Address)
+	s.locator = wasteland.NewResourceLocator(s.config.Address, "/")
 	s.guide = (*actx.Generate)(nil).GenerateActorContext(s, nil, GuardProvider(s.cancel), actor.Config{})
 	s.registry = wasteland.NewProcessRegistry(wasteland.ProcessRegistryConfig{
-		Meta:          s.Meta(),
-		Daemon:        s.guide.ProcessContext(),
-		LoggerProvide: s.config.LoggerProvider,
+		Locator:           s.ResourceLocator(),
+		Daemon:            s.guide.ProcessContext(),
+		LoggerProvide:     s.config.LoggerProvider,
+		CodecProvider:     s.config.CodecProvider,
+		RPCMessageBuilder: s.config.RPCMessageBuilder,
 	})
 	s.Register(s.guide)
 	s.guide.TransportContext().Tell(s.guide.MetadataContext().Ref(), actx.SystemMessage, actor.OnLaunchMessageInstance)

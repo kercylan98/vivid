@@ -46,7 +46,7 @@ type Future struct {
 	message  wasteland.Message
 }
 
-func (f *Future) GetID() wasteland.ProcessId {
+func (f *Future) GetID() wasteland.ResourceLocator {
 	return f.ref
 }
 
@@ -73,7 +73,7 @@ func (f *Future) Result() (any, error) {
 	return m, f.err
 }
 
-func (f *Future) HandleMessage(sender wasteland.ProcessId, priority wasteland.MessagePriority, message wasteland.Message) {
+func (f *Future) HandleMessage(sender wasteland.ResourceLocator, priority wasteland.MessagePriority, message wasteland.Message) {
 	if f.closed.Load() {
 		return
 	}

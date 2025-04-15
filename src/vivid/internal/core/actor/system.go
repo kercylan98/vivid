@@ -8,7 +8,7 @@ import (
 type System interface {
 	LoggerProvider() log.Provider
 
-	Meta() wasteland.Meta
+	ResourceLocator() wasteland.ResourceLocator
 
 	Run() error
 

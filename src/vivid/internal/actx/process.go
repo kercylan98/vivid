@@ -27,7 +27,7 @@ func (p *Process) Initialize() {
 
 }
 
-func (p *Process) Terminate(operator wasteland.ProcessId) {
+func (p *Process) Terminate(operator wasteland.ResourceLocator) {
 
 }
 
@@ -35,11 +35,11 @@ func (p *Process) Terminated() bool {
 	return p.ctx.LifecycleContext().Status() == lifecycleStatusTerminated
 }
 
-func (p *Process) GetID() wasteland.ProcessId {
+func (p *Process) GetID() wasteland.ResourceLocator {
 	return p.ctx.MetadataContext().Ref()
 }
 
-func (p *Process) HandleMessage(sender wasteland.ProcessId, priority wasteland.MessagePriority, message wasteland.Message) {
+func (p *Process) HandleMessage(sender wasteland.ResourceLocator, priority wasteland.MessagePriority, message wasteland.Message) {
 	if sender != nil {
 		message = addressing.NewMessage(sender.(actor.Ref), message)
 	}

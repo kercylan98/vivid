@@ -6,6 +6,8 @@ import (
 )
 
 type Config struct {
-	LoggerProvider log.Provider      // 日志提供者
-	Address        wasteland.Address // 网络地址
+	LoggerProvider    log.Provider      // 日志提供者
+	Address           wasteland.Address // 网络地址
+	CodecProvider     wasteland.CodecProvider
+	RPCMessageBuilder wasteland.RPCMessageBuilder
 }

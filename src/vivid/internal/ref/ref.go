@@ -1,7 +1,6 @@
 package ref
 
 import (
-	"encoding/gob"
 	"github.com/kercylan98/vivid/src/vivid/internal/core"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 	"github.com/kercylan98/wasteland/src/wasteland"
@@ -9,22 +8,32 @@ import (
 )
 
 var (
-	_ actor.Ref = &actorRef{}
+	_ actor.Ref               = (*actorRef)(nil)
+	_ wasteland.ResourceCache = (*actorRef)(nil)
 )
 
-func init() {
-	gob.RegisterName("vivid:actorRef", &actorRef{})
-}
-
 // NewActorRef 创建根据指定的 wasteland.ProcessId 一个 ActorRef
-func NewActorRef(pid wasteland.ProcessId) actor.Ref {
+func NewActorRef(resourceLocator wasteland.ResourceLocator) actor.Ref {
 	return &actorRef{
-		ProcessIdCache: pid.(wasteland.ProcessIdCache),
+		ResourceLocator: resourceLocator,
 	}
 }
 
 type actorRef struct {
-	wasteland.ProcessIdCache
+	wasteland.ResourceLocator
+}
+
+func (ref *actorRef) Load() wasteland.Process {
+	if cache, ok := ref.ResourceLocator.(wasteland.ResourceCache); ok {
+		return cache.Load()
+	}
+	return nil
+}
+
+func (ref *actorRef) Store(process wasteland.Process) {
+	if cache, ok := ref.ResourceLocator.(wasteland.ResourceCache); ok {
+		cache.Store(process)
+	}
 }
 
 func (ref *actorRef) Equal(other actor.Ref) bool {
@@ -40,7 +49,7 @@ func (ref *actorRef) GenerateSub(path core.Path) actor.Ref {
 	}
 
 	return &actorRef{
-		ProcessIdCache: wasteland.NewProcessId(ref.ProcessIdCache, path).(wasteland.ProcessIdCache),
+		ResourceLocator: wasteland.NewResourceLocator(ref.ResourceLocator.Address(), path),
 	}
 }
 

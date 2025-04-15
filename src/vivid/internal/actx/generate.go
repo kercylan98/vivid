@@ -4,7 +4,6 @@ import (
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 	"github.com/kercylan98/vivid/src/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/src/vivid/internal/ref"
-	"github.com/kercylan98/wasteland/src/wasteland"
 	"strconv"
 )
 
@@ -63,7 +62,7 @@ func (g *Generate) GenerateActorContext(system actor.System, parent actor.Contex
 	if parentRef != nil {
 		actorRef = parentRef.GenerateSub(config.Name)
 	} else {
-		actorRef = ref.NewActorRef(wasteland.NewProcessId(system.Meta(), "/"))
+		actorRef = ref.NewActorRef(system.ResourceLocator())
 	}
 
 	// 初始化邮箱及上下文
