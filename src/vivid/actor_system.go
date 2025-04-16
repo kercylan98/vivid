@@ -11,6 +11,7 @@ import (
 
 type ActorSystem interface {
 	context
+
 	// Start 启动 ActorSystem
 	Start() error
 
@@ -90,10 +91,30 @@ func (a *actorSystem) StopP() {
 	}
 }
 
-func (a *actorSystem) ActorOf(provider ActorProviderFN, configuration ...ActorConfiguratorFN) ActorRef {
-	if len(configuration) > 0 {
-		var cs = make([]ActorConfigurator, len(configuration))
-		for i, c := range configuration {
+func (a *actorSystem) ActorOf(provider ActorProviderFN, configurator ...ActorConfiguratorFN) ActorRef {
+	return a.ActorOfP(provider, configurator...)
+}
+
+func (a *actorSystem) ActorOfP(provider ActorProvider, configurator ...ActorConfiguratorFN) ActorRef {
+	var cs = make([]ActorConfigurator, len(configurator))
+	for i, cfg := range configurator {
+		cs[i] = cfg
+	}
+	return a.ActorOfPC(provider, cs...)
+}
+
+func (a *actorSystem) ActorOfC(provider ActorProviderFN, configurator ...ActorConfigurator) ActorRef {
+	var cs = make([]ActorConfigurator, len(configurator))
+	for i, cfg := range configurator {
+		cs[i] = cfg
+	}
+	return a.ActorOfPC(provider, cs...)
+}
+
+func (a *actorSystem) ActorOfPC(provider ActorProvider, configurator ...ActorConfigurator) ActorRef {
+	if len(configurator) > 0 {
+		var cs = make([]ActorConfigurator, len(configurator))
+		for i, c := range configurator {
 			cs[i] = c
 		}
 		return newActorFacade(a.system, a.system.Context(), provider, cs...)

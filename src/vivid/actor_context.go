@@ -11,13 +11,33 @@ import (
 var _ ActorContext = (*actorContext)(nil)
 
 type context interface {
-	// Logger 通过配置的日志提供器获取日志记录器
+	// Logger 函数将通过配置的日志提供器返回一个日志记录器
 	//
-	// 通常建议一次消息处理至多获取一次日志记录器，这样可以保证同一消息上下文中日志记录器的一致性
+	// 这个日志记录器根据 log.Provider 实现的不同，得到的结果是无法确定的，例如上一次获取到的是一个 Debug 级别的日志记录器，而下一刻
+	// 获取到的可能是一个 Info 级别的日志记录器
+	//
+	// 在使用过程中，通常建议一次消息处理至多获取一次日志记录器，这样可以保证同一消息上下文中日志记录器的一致性
 	Logger() log.Logger
 
-	// ActorOf 创建一个新的 Actor，并返回 ActorRef
-	ActorOf(provider ActorProviderFN, configuration ...ActorConfiguratorFN) ActorRef
+	// ActorOf 是一个简洁方便的 Actor 生成函数，它可以使用简单的函数式编程风格来快速创建 Actor 实例并返回其 ActorRef
+	//
+	// 如果具有更复杂的构建流程，可考虑 ActorOfP、 ActorOfC 或 ActorOfPC 函数
+	ActorOf(provider ActorProviderFN, configurator ...ActorConfiguratorFN) ActorRef
+
+	// ActorOfP 支持使用 ActorProvider 接口来创建 Actor 实例并提供函数式配置的 Actor 实例生成函数，它将返回生成实例的 ActorRef
+	//
+	// 该函数与 ActorOf 结果相同，但它支持使用更灵活的方式来创建 Actor 实例
+	ActorOfP(provider ActorProvider, configurator ...ActorConfiguratorFN) ActorRef
+
+	// ActorOfC 支持使用 ActorConfigurator 接口来创建 Actor 实例并提供函数式配置的 Actor 实例生成函数，它将返回生成实例的 ActorRef
+	//
+	// 该函数与 ActorOf 结果相同，但它支持使用更灵活的方式来创建 Actor 实例
+	ActorOfC(provider ActorProviderFN, configurator ...ActorConfigurator) ActorRef
+
+	// ActorOfPC 支持使用 ActorProvider 和 ActorConfigurator 接口来创建 Actor 实例并提供函数式配置的 Actor 实例生成函数，它将返回生成实例的 ActorRef
+	//
+	// 该函数与 ActorOf 结果相同，但它支持使用最灵活的方式来创建 Actor 实例
+	ActorOfPC(provider ActorProvider, configurator ...ActorConfigurator) ActorRef
 
 	// Tell 向特定的 Actor 发送不可被回复的消息
 	Tell(target ActorRef, message Message)
@@ -84,11 +104,31 @@ func (c *actorContext) Reply(message Message) {
 	c.ctx.TransportContext().Reply(actx.UserMessage, message)
 }
 
-func (c *actorContext) ActorOf(provider ActorProviderFN, configuration ...ActorConfiguratorFN) ActorRef {
+func (c *actorContext) ActorOf(provider ActorProviderFN, configurator ...ActorConfiguratorFN) ActorRef {
+	return c.ActorOfP(provider, configurator...)
+}
+
+func (c *actorContext) ActorOfP(provider ActorProvider, configurator ...ActorConfiguratorFN) ActorRef {
+	var cs = make([]ActorConfigurator, len(configurator))
+	for i, cfg := range configurator {
+		cs[i] = cfg
+	}
+	return c.ActorOfPC(provider, cs...)
+}
+
+func (c *actorContext) ActorOfC(provider ActorProviderFN, configurator ...ActorConfigurator) ActorRef {
+	var cs = make([]ActorConfigurator, len(configurator))
+	for i, cfg := range configurator {
+		cs[i] = cfg
+	}
+	return c.ActorOfPC(provider, cs...)
+}
+
+func (c *actorContext) ActorOfPC(provider ActorProvider, configurator ...ActorConfigurator) ActorRef {
 	system := c.ctx.MetadataContext().System()
-	if len(configuration) > 0 {
-		var cs = make([]ActorConfigurator, len(configuration))
-		for i, c := range configuration {
+	if len(configurator) > 0 {
+		var cs = make([]ActorConfigurator, len(configurator))
+		for i, c := range configurator {
 			cs[i] = c
 		}
 		return newActorFacade(system, c.ctx, provider, cs...)
