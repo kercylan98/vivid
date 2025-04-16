@@ -8,3 +8,8 @@ type (
 	Message = wasteland.Message
 	URL     = string
 )
+
+const (
+	UserMessage   = wasteland.MessagePriority(0)
+	SystemMessage = wasteland.MessagePriority(1)
+)

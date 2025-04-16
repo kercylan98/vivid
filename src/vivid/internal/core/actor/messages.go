@@ -14,6 +14,7 @@ func init() {
 
 var (
 	OnLaunchMessageInstance  = new(OnLaunch)
+	OnRestartMessageInstance = new(OnLaunch)
 	OnWatchMessageInstance   = new(OnWatch)
 	OnUnwatchMessageInstance = new(OnUnwatch)
 )
@@ -24,6 +25,7 @@ type (
 		Reason   string // 结束原因
 		Operator Ref    // 操作者
 		Poison   bool   // 是否为优雅终止
+		Restart  bool   // 是否需要终止后重启
 	}
 	OnKilled  OnKill
 	OnWatch   int8
@@ -32,3 +34,7 @@ type (
 		Ref Ref // 生命周期结束的 Actor
 	}
 )
+
+func (o *OnLaunch) Restarted() bool {
+	return o == OnRestartMessageInstance
+}

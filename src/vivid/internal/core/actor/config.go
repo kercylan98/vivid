@@ -28,4 +28,7 @@ type Config struct {
 	//
 	// 在默认情况下，Actor 将会使用一个基于 Goroutine 实现的事件驱动消息调度器。
 	Dispatcher mailbox.Dispatcher
+
+	// Supervisor 表示了一个 Actor 的监管者，它将在 Actor 发生事故时用于处理事故。
+	Supervisor Supervisor
 }

@@ -40,9 +40,9 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
 			// 内部消息类型转换
 			switch msg := ctx.MessageContext().Message().(type) {
 			case *actor.OnKill:
-				ctx.MessageContext().OnReceiveImplant(&OnKill{m: msg})
+				ctx.MessageContext().HandleWith(&OnKill{m: msg})
 			case *actor.OnDead:
-				ctx.MessageContext().OnReceiveImplant(&OnDead{m: msg})
+				ctx.MessageContext().HandleWith(&OnDead{m: msg})
 			default:
 				facade.actor.OnReceive(facadeCtx)
 			}

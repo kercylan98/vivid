@@ -1,5 +1,7 @@
 package actor
 
+import "github.com/kercylan98/vivid/src/vivid/internal/core"
+
 type LifecycleContext interface {
 	// Kill 会以特定的 OnKill 消息终止此 Actor 的生命周期
 	//
@@ -16,4 +18,10 @@ type LifecycleContext interface {
 
 	// Status 获取 Actor 的生命周期状态
 	Status() uint32
+
+	// Accident 声明事故发生
+	Accident(reason core.Message)
+
+	// HandleAccidentSnapshot 处理事故快照
+	HandleAccidentSnapshot(snapshot Snapshot)
 }

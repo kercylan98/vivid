@@ -1,14 +1,15 @@
 package actx
 
 import (
+	"github.com/kercylan98/vivid/src/vivid/internal/core"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/addressing"
 	"github.com/kercylan98/wasteland/src/wasteland"
 )
 
 const (
-	UserMessage   = wasteland.MessagePriority(0)
-	SystemMessage = wasteland.MessagePriority(1)
+	UserMessage   = core.UserMessage
+	SystemMessage = core.SystemMessage
 )
 
 var _ actor.ProcessContext = (*Process)(nil)

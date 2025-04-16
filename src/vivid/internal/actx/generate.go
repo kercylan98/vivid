@@ -22,8 +22,14 @@ type Generate struct {
 	actor    actor.Actor
 }
 
-func (g *Generate) Actor() actor.Actor {
-	return g.actor
+func (g *Generate) Handle() {
+	defer func() {
+		if r := recover(); r != nil {
+			g.ctx.LifecycleContext().Accident(r)
+		}
+	}()
+
+	g.actor.OnReceive(g.ctx)
 }
 
 func (g *Generate) ResetActorState() {
