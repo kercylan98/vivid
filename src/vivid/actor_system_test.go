@@ -1,6 +1,8 @@
 package vivid_test
 
 import (
+	"errors"
+	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/vivid"
 	"testing"
 )
@@ -135,4 +137,25 @@ func TestActorSystem_PoisonKill(t *testing.T) {
 	}
 
 	system.PoisonKill(ref)
+}
+
+func TestActorSystemConfig_WithGuardDefaultRestartLimit(t *testing.T) {
+	system := vivid.NewActorSystem().StartP()
+	defer system.StopP()
+
+	ref := system.ActorOf(func() vivid.Actor {
+		return vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.Logger().Info("Actor started", log.Bool("restart", m.Restarted()))
+				if m.Restarted() {
+					panic("restart")
+				}
+			case error:
+				panic(m)
+			}
+		})
+	})
+
+	system.Tell(ref, errors.New("down"))
 }

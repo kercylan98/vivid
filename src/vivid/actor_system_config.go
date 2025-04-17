@@ -6,9 +6,15 @@ import (
 	"github.com/kercylan98/wasteland/src/wasteland"
 )
 
+const (
+	// GuardDefaultRestartLimit 守护 Actor 在执行监管策略时默认最大重启次数
+	GuardDefaultRestartLimit = 10
+)
+
 func newActorSystemConfig() *ActorSystemConfig {
 	return &ActorSystemConfig{config: &system.Config{
-		RPCMessageBuilder: wasteland.DefaultRPCMessageBuilder(),
+		RPCMessageBuilder:        wasteland.DefaultRPCMessageBuilder(),
+		GuardDefaultRestartLimit: GuardDefaultRestartLimit,
 	}}
 }
 
@@ -32,4 +38,15 @@ func (c *ActorSystemConfig) WithLoggerProvider(provider log.Provider) *ActorSyst
 func (c *ActorSystemConfig) WithCodec(provider wasteland.CodecProvider, builder wasteland.RPCMessageBuilder) {
 	c.config.CodecProvider = provider
 	c.config.RPCMessageBuilder = builder
+}
+
+// WithGuardDefaultRestartLimit 设置守护 Actor 在执行监管策略时默认最大重启次数
+//
+// 默认值可参考 GuardDefaultRestartLimit
+func (c *ActorSystemConfig) WithGuardDefaultRestartLimit(limit int) *ActorSystemConfig {
+	if limit <= 0 {
+		panic("invalid guard default restart limit")
+	}
+	c.config.GuardDefaultRestartLimit = limit
+	return c
 }

@@ -28,14 +28,28 @@ type Lifecycle struct {
 	status              atomic.Uint32
 	unfinishedAccidents map[core.Path]actor.Snapshot // 自身负责的且尚未完结的事故记录
 	restart             bool                         // 是否重启中
+	accidentSnapshot    actor.Snapshot               // 事故快照
 }
 
 func (l *Lifecycle) Accident(reason core.Message) {
 	// 暂停处理用户消息
 	l.ctx.MetadataContext().Config().Mailbox.Suspend()
 
+	switch l.ctx.MessageContext().Message().(type) {
+	case *actor.OnLaunch:
+		// 重启策略执行失败，记录重启次数
+		if l.accidentSnapshot != nil {
+			// 此时已经有事故记录了，直接写入新的事故信息覆盖后继续处理即可
+			l.accidentSnapshot.RecordRestartFailed(l.ctx.MessageContext().Sender(), l.ctx.MetadataContext().Ref(), l.ctx.MessageContext().Message(), reason, debug.Stack())
+
+			// 处理事故
+			l.HandleAccident(l.accidentSnapshot)
+			return
+		}
+	}
+
 	// 创建事故快照
-	snapshot := accident.NewSnapshot(
+	l.accidentSnapshot = accident.NewSnapshot(
 		l.ctx.MetadataContext().Config().Mailbox,
 		l.ctx.MessageContext().Sender(),
 		l.ctx.MetadataContext().Ref(),
@@ -45,7 +59,7 @@ func (l *Lifecycle) Accident(reason core.Message) {
 	)
 
 	// 处理事故
-	l.HandleAccident(snapshot)
+	l.HandleAccident(l.accidentSnapshot)
 }
 
 func (l *Lifecycle) HandleAccident(snapshot actor.Snapshot) {
@@ -84,7 +98,7 @@ func (l *Lifecycle) HandleAccident(snapshot actor.Snapshot) {
 	}
 }
 
-func (l *Lifecycle) HandleAccidentSnapshot(snapshot actor.Snapshot) {
+func (l *Lifecycle) AccidentEnd(snapshot actor.Snapshot) {
 	if snapshot.IsFinished() {
 		delete(l.unfinishedAccidents, snapshot.GetVictim().Path())
 		if len(l.unfinishedAccidents) == 0 {
@@ -92,7 +106,9 @@ func (l *Lifecycle) HandleAccidentSnapshot(snapshot actor.Snapshot) {
 		}
 		return
 	}
+}
 
+func (l *Lifecycle) HandleAccidentSnapshot(snapshot actor.Snapshot) {
 	l.HandleAccident(snapshot)
 }
 

@@ -125,13 +125,13 @@ func (s *Snapshot) ExponentialBackoffRestart(ref actor.Ref, restartCount int, ba
 		s.Finished.Store(false)
 		s.Kill(ref, "supervisor: OnLaunch restart fail count limit")
 
-		s.responsiblePerson.TransportContext().Tell(ref, core.SystemMessage, s)
+		s.responsiblePerson.TransportContext().Tell(ref, core.SystemMessage, actor.SnapshotEnd{Snapshot: s})
 	} else {
 		// 使用当前责任人的定时器来执行重启操作
 		time.AfterFunc(after, func() {
 			s.Finished.Store(false)
 			s.Restart(ref, reason...)
-			s.responsiblePerson.TransportContext().Tell(ref, core.SystemMessage, s)
+			s.responsiblePerson.TransportContext().Tell(ref, core.SystemMessage, actor.SnapshotEnd{Snapshot: s})
 		})
 	}
 }

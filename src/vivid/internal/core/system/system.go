@@ -62,7 +62,9 @@ func (s *System) ResourceLocator() wasteland.ResourceLocator {
 
 func (s *System) Run() error {
 	s.locator = wasteland.NewResourceLocator(s.config.Address, "/")
-	s.guide = (*actx.Generate)(nil).GenerateActorContext(s, nil, GuardProvider(s.cancel), actor.Config{})
+	s.guide = (*actx.Generate)(nil).GenerateActorContext(s, nil, GuardProvider(s.cancel), actor.Config{
+		Supervisor: actx.GetDefaultSupervisor(s.config.GuardDefaultRestartLimit),
+	})
 	s.registry = wasteland.NewProcessRegistry(wasteland.ProcessRegistryConfig{
 		Locator:           s.ResourceLocator(),
 		Daemon:            s.guide.ProcessContext(),
