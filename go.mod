@@ -1,6 +1,6 @@
 module github.com/kercylan98/vivid
 
-go 1.24.0
+go 1.24.2
 
 require (
 	github.com/fatih/color v1.18.0 // indirect

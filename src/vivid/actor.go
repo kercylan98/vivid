@@ -1,6 +1,9 @@
 package vivid
 
-import "github.com/kercylan98/vivid/src/vivid/internal/core/actor"
+import (
+    "github.com/kercylan98/vivid/src/vivid/internal/core/actor"
+    "sync"
+)
 
 var _ actor.Actor = (*actorFacade)(nil)
 
@@ -58,11 +61,12 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
     for _, c := range configuration {
         c.Configure(config)
     }
+    // 创建 Actor 门面代理的提供器，确保每次生成均能够获得全新的 Actor 实例
+    var facadeCtx ActorContext
     // 由于是异步，所以需要等待 facadeCtx 的创建
-    waiter := make(chan ActorContext)
+    var waiter sync.WaitGroup
+    waiter.Add(1)
     facadeProvider := actor.ProviderFN(func() actor.Actor {
-        // 创建 Actor 门面代理的提供器，确保每次生成均能够获得全新的 Actor 实例
-        var facadeCtx ActorContext
         // 创建 Actor 门面代理
         facade := &actorFacade{actor: provider.Provide()}
         // 设置 Actor 门面代理的 Actor 方法
@@ -70,10 +74,8 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
             // 内部消息类型转换，处理系统消息和用户消息
             switch msg := ctx.MessageContext().Message().(type) {
             case *actor.OnLaunch:
-                if facadeCtx == nil {
-                    facadeCtx = <-waiter
-                }
-                ctx.MessageContext().HandleWith(msg)
+                waiter.Wait()
+                facade.actor.OnReceive(facadeCtx)
             case *actor.OnKill:
                 ctx.MessageContext().HandleWith(&OnKill{m: msg})
             case *actor.OnDead:
@@ -86,8 +88,8 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
     })
 
     // 创建上下文完毕后写入 waiter，通知 Actor 初始化完成（避免竞态问题）
-    facadeCtx := newActorContext(parent.GenerateContext().GenerateActorContext(system, parent, facadeProvider, *config.config))
-    waiter <- facadeCtx
+    facadeCtx = newActorContext(parent.GenerateContext().GenerateActorContext(system, parent, facadeProvider, *config.config))
+    waiter.Done()
     return facadeCtx.Ref()
 }
 
