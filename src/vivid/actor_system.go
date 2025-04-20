@@ -134,11 +134,7 @@ func (a *actorSystem) ActorOfC(provider ActorProviderFN, configurator ...ActorCo
 
 func (a *actorSystem) ActorOfPC(provider ActorProvider, configurator ...ActorConfigurator) ActorRef {
     if len(configurator) > 0 {
-        var cs = make([]ActorConfigurator, len(configurator))
-        for i, c := range configurator {
-            cs[i] = c
-        }
-        return newActorFacade(a.system, a.system.Context(), provider, cs...)
+        return newActorFacade(a.system, a.system.Context(), provider, configurator...)
     }
     return newActorFacade(a.system, a.system.Context(), provider)
 }
