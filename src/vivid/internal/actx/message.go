@@ -68,6 +68,10 @@ func (m *Message) HandleSystemMessage(message core.Message) {
 		m.ctx.LifecycleContext().AccidentEnd(msg.Snapshot)
 	case actor.Snapshot:
 		m.ctx.LifecycleContext().HandleAccidentSnapshot(msg)
+	case *actor.OnPing:
+		m.ctx.TransportContext().HandlePing(msg)
+	case *actor.OnPong:
+		m.ctx.TransportContext().HandlePong(msg, m.sender)
 	}
 }
 

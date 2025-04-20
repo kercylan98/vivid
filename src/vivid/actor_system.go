@@ -23,6 +23,12 @@ type ActorSystem interface {
 
 	// StopP 停止 ActorSystem，并在停止失败时引发 panic
 	StopP()
+
+	// Ping 向特定的 Actor 发送 ping 消息并等待 pong 响应
+	// 直接返回 Pong 结构体和可能的错误
+	// 如果目标 Actor 不可达或者超时，将返回错误
+	// 这个方法可以用来检测网络可用性并获取详细的响应信息
+	Ping(target ActorRef, timeout ...time.Duration) (*Pong, error)
 }
 
 func NewActorSystem(configurator ...ActorSystemConfigurator) ActorSystem {
@@ -68,6 +74,10 @@ func (a *actorSystem) Probe(target ActorRef, message Message) {
 
 func (a *actorSystem) Ask(target ActorRef, message Message, timeout ...time.Duration) Future {
 	return a.system.Context().TransportContext().Ask(target.(actor.Ref), actx.UserMessage, message, timeout...)
+}
+
+func (a *actorSystem) Ping(target ActorRef, timeout ...time.Duration) (*Pong, error) {
+	return a.system.Context().TransportContext().Ping(target.(actor.Ref), timeout...)
 }
 
 func (a *actorSystem) Start() error {

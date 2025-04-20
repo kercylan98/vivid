@@ -1,6 +1,8 @@
 package vivid
 
-import "github.com/kercylan98/vivid/src/vivid/internal/core/actor"
+import (
+	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
+)
 
 type (
 	// OnLaunch 是 Actor 在启动时候会收到的第一条消息，它标志着 Actor 已经可以正常工作
@@ -40,3 +42,6 @@ type OnDead struct {
 func (o *OnDead) Ref() ActorRef {
 	return o.m.Ref
 }
+
+// Pong 是 Ping 操作的响应结构体，包含了往返时间信息
+type Pong = actor.OnPong
