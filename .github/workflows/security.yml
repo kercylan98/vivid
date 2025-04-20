@@ -12,11 +12,16 @@ jobs:
   gosec:
     name: GoSec Security Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Run Gosec Security Scanner
+        id: gosec
         uses: securego/gosec@master
         with:
           args: -no-fail -fmt sarif -out results.sarif ./src/vivid/...
@@ -25,25 +30,87 @@ jobs:
         uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: results.sarif
-          
+
+      - name: Check for vulnerabilities in SARIF file
+        id: check_sarif
+        run: |
+          if grep -q "\"level\":\"error\"" results.sarif; then
+            echo "vulnerabilities_found=true" >> $GITHUB_OUTPUT
+          else
+            echo "vulnerabilities_found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Issue on Security Vulnerabilities Found
+        if: steps.check_sarif.outputs.vulnerabilities_found == 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            let title = '[BUG] Workflow 检测失败: GoSec 发现安全漏洞';
+
+            let body = `## Bug Description | 错误描述\n**English:**\nSecurity vulnerabilities detected by GoSec scanner in the CI/CD pipeline.\n\n**中文:**\nCI/CD 流程中 GoSec 扫描器检测到安全漏洞。\n\n`;
+
+            body += `## Reproduction Steps | 复现步骤\n**English:**\n1. Check the [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n2. Review the security findings in the Security tab\n\n**中文:**\n1. 查看 [工作流运行](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n2. 在安全选项卡中查看安全发现\n\n`;
+
+            body += `## Environment | 环境\n**English:**\n- Workflow: ${process.env.GITHUB_WORKFLOW}\n- Commit: ${process.env.GITHUB_SHA}\n- Branch: ${process.env.GITHUB_REF}\n\n**中文:**\n- 工作流: ${process.env.GITHUB_WORKFLOW}\n- 提交: ${process.env.GITHUB_SHA}\n- 分支: ${process.env.GITHUB_REF}\n\n`;
+
+            body += `## Additional Context | 附加上下文\n**English:**\nThis issue was automatically created by the GitHub Actions workflow because GoSec found security vulnerabilities.\n\n**中文:**\n此问题由 GitHub Actions 工作流自动创建，因为 GoSec 发现了安全漏洞。`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['bug', 'automated', 'security', 'gosec']
+            });
+
   govulncheck:
     name: Go Vulnerability Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        
+
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.24.0'
-          
+
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
-        
+
       - name: Run govulncheck
+        id: vulncheck
         run: govulncheck ./src/vivid/...
-        
+        continue-on-error: true
+
+      - name: Create Issue on Vulnerability Check Failure
+        if: steps.vulncheck.outcome == 'failure'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            let title = '[BUG] Workflow 检测失败: 安全漏洞检查失败';
+
+            let body = `## Bug Description | 错误描述\n**English:**\nVulnerability check failure detected in the CI/CD pipeline.\n\n**中文:**\nCI/CD 流程中检测到安全漏洞检查失败。\n\n`;
+
+            body += `## Reproduction Steps | 复现步骤\n**English:**\n1. Check the [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n**中文:**\n1. 查看 [工作流运行](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n`;
+
+            body += `## Environment | 环境\n**English:**\n- Workflow: ${process.env.GITHUB_WORKFLOW}\n- Commit: ${process.env.GITHUB_SHA}\n- Branch: ${process.env.GITHUB_REF}\n\n**中文:**\n- 工作流: ${process.env.GITHUB_WORKFLOW}\n- 提交: ${process.env.GITHUB_SHA}\n- 分支: ${process.env.GITHUB_REF}\n\n`;
+
+            body += `## Additional Context | 附加上下文\n**English:**\nThis issue was automatically created by the GitHub Actions workflow.\n\n**中文:**\n此问题由 GitHub Actions 工作流自动创建。`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['bug', 'automated', 'security']
+            });
+
   codeql:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
@@ -51,14 +118,41 @@ jobs:
       security-events: write
       actions: read
       contents: read
+      issues: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v2
         with:
           languages: go
-          
+
       - name: Perform CodeQL Analysis
+        id: codeql
         uses: github/codeql-action/analyze@v2
+        continue-on-error: true
+
+      - name: Create Issue on CodeQL Analysis Failure
+        if: steps.codeql.outcome == 'failure'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            let title = '[BUG] Workflow 检测失败: CodeQL 分析失败';
+
+            let body = `## Bug Description | 错误描述\n**English:**\nCodeQL analysis failure detected in the CI/CD pipeline.\n\n**中文:**\nCI/CD 流程中检测到 CodeQL 分析失败。\n\n`;
+
+            body += `## Reproduction Steps | 复现步骤\n**English:**\n1. Check the [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n**中文:**\n1. 查看 [工作流运行](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n`;
+
+            body += `## Environment | 环境\n**English:**\n- Workflow: ${process.env.GITHUB_WORKFLOW}\n- Commit: ${process.env.GITHUB_SHA}\n- Branch: ${process.env.GITHUB_REF}\n\n**中文:**\n- 工作流: ${process.env.GITHUB_WORKFLOW}\n- 提交: ${process.env.GITHUB_SHA}\n- 分支: ${process.env.GITHUB_REF}\n\n`;
+
+            body += `## Additional Context | 附加上下文\n**English:**\nThis issue was automatically created by the GitHub Actions workflow.\n\n**中文:**\n此问题由 GitHub Actions 工作流自动创建。`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['bug', 'automated', 'security', 'codeql']
+            });

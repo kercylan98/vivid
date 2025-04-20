@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
     - uses: actions/checkout@v3
 
@@ -18,10 +21,14 @@ jobs:
         go-version: '1.24.0'
 
     - name: Build
+      id: build
       run: go build -v ./src/vivid/...
+      continue-on-error: true
 
     - name: Test with Coverage
+      id: test
       run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./src/vivid/...
+      continue-on-error: true
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -29,3 +36,33 @@ jobs:
         file: ./coverage.txt
         fail_ci_if_error: false
         verbose: true
+      if: steps.test.outcome == 'success'
+
+    - name: Create Issue on Failure
+      if: steps.build.outcome == 'failure' || steps.test.outcome == 'failure'
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const buildFailed = '${{ steps.build.outcome }}' === 'failure';
+          const testFailed = '${{ steps.test.outcome }}' === 'failure';
+
+          let title = '[BUG] Workflow 检测失败: ';
+          if (buildFailed) title += '构建失败';
+          else if (testFailed) title += '测试失败';
+
+          let body = `## Bug Description | 错误描述\n**English:**\nWorkflow failure detected in the CI/CD pipeline.\n\n**中文:**\nCI/CD 流程中检测到工作流失败。\n\n`;
+
+          body += `## Reproduction Steps | 复现步骤\n**English:**\n1. Check the [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n**中文:**\n1. 查看 [工作流运行](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n`;
+
+          body += `## Environment | 环境\n**English:**\n- Workflow: ${process.env.GITHUB_WORKFLOW}\n- Commit: ${process.env.GITHUB_SHA}\n- Branch: ${process.env.GITHUB_REF}\n\n**中文:**\n- 工作流: ${process.env.GITHUB_WORKFLOW}\n- 提交: ${process.env.GITHUB_SHA}\n- 分支: ${process.env.GITHUB_REF}\n\n`;
+
+          body += `## Additional Context | 附加上下文\n**English:**\nThis issue was automatically created by the GitHub Actions workflow.\n\n**中文:**\n此问题由 GitHub Actions 工作流自动创建。`;
+
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['bug', 'automated']
+          });
