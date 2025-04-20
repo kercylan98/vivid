@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"github.com/kercylan98/chrono/timing"
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/vivid/internal/actx"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
@@ -58,6 +59,7 @@ type context interface {
 
 type ActorContext interface {
 	context
+	actor.TimingContext
 
 	// Ref 获取自身 Actor 的引用
 	Ref() ActorRef
@@ -86,6 +88,30 @@ func newActorContext(ctx actor.Context) ActorContext {
 
 type actorContext struct {
 	ctx actor.Context
+}
+
+func (c *actorContext) After(name string, duration time.Duration, task timing.Task) {
+	c.ctx.TimingContext().After(name, duration, task)
+}
+
+func (c *actorContext) Loop(name string, duration, interval time.Duration, times int, task timing.Task) {
+	c.ctx.TimingContext().Loop(name, duration, interval, times, task)
+}
+
+func (c *actorContext) ForeverLoop(name string, duration, interval time.Duration, task timing.Task) {
+	c.ctx.TimingContext().ForeverLoop(name, duration, interval, task)
+}
+
+func (c *actorContext) Cron(name string, cron string, task timing.Task) error {
+	return c.ctx.TimingContext().Cron(name, cron, task)
+}
+
+func (c *actorContext) Stop(name string) {
+	c.ctx.TimingContext().Stop(name)
+}
+
+func (c *actorContext) Clear() {
+	c.ctx.TimingContext().Clear()
 }
 
 func (c *actorContext) Tell(target ActorRef, message Message) {

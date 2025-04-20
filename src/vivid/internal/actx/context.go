@@ -16,6 +16,7 @@ func New(system actor.System, config *actor.Config, ref actor.Ref, parent actor.
 	ctx.message = NewMessage(ctx)
 	ctx.transport = NewTransport(ctx)
 	ctx.lifecycle = NewLifecycle(ctx)
+	ctx.timing = NewTiming(ctx)
 	return ctx
 }
 
@@ -28,6 +29,7 @@ type Context struct {
 	message   actor.MessageContext
 	transport actor.TransportContext
 	lifecycle actor.LifecycleContext
+	timing    actor.TimingContext
 }
 
 func (c *Context) MessageContext() actor.MessageContext {
@@ -60,4 +62,8 @@ func (c *Context) TransportContext() actor.TransportContext {
 
 func (c *Context) LifecycleContext() actor.LifecycleContext {
 	return c.lifecycle
+}
+
+func (c *Context) TimingContext() actor.TimingContext {
+	return c.timing
 }

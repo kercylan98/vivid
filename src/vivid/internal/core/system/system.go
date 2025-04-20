@@ -2,10 +2,12 @@ package system
 
 import (
 	"context"
+	"github.com/kercylan98/chrono/timing"
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/vivid/internal/actx"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 	"github.com/kercylan98/wasteland/src/wasteland"
+	"time"
 )
 
 var _ actor.System = (*System)(nil)
@@ -15,8 +17,23 @@ func New(config Config) *System {
 		config.LoggerProvider = log.ProviderFn(log.GetDefault)
 	}
 
+	if config.TimingWheelTick <= 0 {
+		config.TimingWheelTick = time.Millisecond * 50
+	}
+	if config.TimingWheelSize <= 0 {
+		config.TimingWheelSize = 20
+	}
+
 	system := &System{
 		config: &config,
+		timingWheel: timing.New(timing.ConfiguratorFN(func(timingConfig timing.Configuration) {
+			timingConfig.
+				WithSize(config.TimingWheelSize).
+				WithTick(config.TimingWheelTick).
+				WithExecutor(timing.ExecutorFN(func(task func()) {
+					task() // 不再 recover，以使监管策略生效
+				}))
+		})),
 	}
 	system.ctx, system.cancel = context.WithCancel(context.Background())
 
@@ -24,12 +41,13 @@ func New(config Config) *System {
 }
 
 type System struct {
-	config   *Config
-	locator  wasteland.ResourceLocator
-	guide    actor.Context
-	registry wasteland.ProcessRegistry
-	ctx      context.Context
-	cancel   context.CancelFunc
+	config      *Config                   // 系统配置
+	locator     wasteland.ResourceLocator // ActorSystem 的资源定位符
+	guide       actor.Context             // 顶级守护 Actor
+	registry    wasteland.ProcessRegistry // 进程注册表
+	ctx         context.Context           // 系统上下文
+	cancel      context.CancelFunc        // 系统上下文取消函数
+	timingWheel timing.Wheel              // 系统时间轮
 }
 
 func (s *System) Register(ctx actor.Context) {
@@ -90,4 +108,8 @@ func (s *System) Stop() error {
 
 func (s *System) Context() actor.Context {
 	return s.guide
+}
+
+func (s *System) GetTimingWheel() timing.Wheel {
+	return s.timingWheel
 }

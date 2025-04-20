@@ -29,4 +29,7 @@ type Context interface {
 
 	// LifecycleContext 是 Actor 的生命周期上下文，它包含了 Actor 的生命周期行为。
 	LifecycleContext() LifecycleContext
+
+	// TimingContext 是 Actor 的定时上下文，它包含了 Actor 的定时行为。
+	TimingContext() TimingContext
 }

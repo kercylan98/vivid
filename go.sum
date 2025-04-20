@@ -14,10 +14,16 @@ github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeN
 github.com/google/gofuzz v1.0.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/gorhill/cronexpr v0.0.0-20180427100037-88b0669f7d75 h1:f0n1xnMSmBLzVfsMMvriDyA75NB/oBgILX2GcHXIQzY=
+github.com/gorhill/cronexpr v0.0.0-20180427100037-88b0669f7d75/go.mod h1:g2644b03hfBX9Ov0ZBDgXXens4rxSxmqFBbhvKv2yVA=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
+github.com/kercylan98/chrono v0.1.1 h1:YDH7fgCtXkoSWPtrIs0zD+iNZropSUs0YgZOvQynvtI=
+github.com/kercylan98/chrono v0.1.1/go.mod h1:QbmrOio44lPWrz4YldC/69c9l1+1MuwyLYV3DDCYC8A=
 github.com/kercylan98/go-log v1.0.1 h1:eggOLdwbMJd0T0OQq71Kh2qBwED9AS/7oe9faKnQ01w=
 github.com/kercylan98/go-log v1.0.1/go.mod h1:0EYmffyCPuzk11ZN4E/3pWC+tsjzR6wkvWbKPV/pinI=
+github.com/kercylan98/options v0.0.1 h1:6fU6gXICujx3SjUTyRDyICl4onec5JWVLq3prta3nqc=
+github.com/kercylan98/options v0.0.1/go.mod h1:CdMbmdwhUdGaxulOCWYpPecNd1YGgJCPR6k0oOCKias=
 github.com/kercylan98/wasteland v0.0.5 h1:xeAMxfdmthEkXf8+o24gK8S1+b5G9lGjkI6LqFPwz4Y=
 github.com/kercylan98/wasteland v0.0.5/go.mod h1:8VzL5XGEI3ARSfC/UZBDatgSUG13KqwQ834oRF1y0xk=
 github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHPsaIE=

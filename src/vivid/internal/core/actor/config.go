@@ -1,6 +1,7 @@
 package actor
 
 import (
+	"github.com/kercylan98/chrono/timing"
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/mailbox"
 )
@@ -29,6 +30,9 @@ type Config struct {
 	// 在默认情况下，Actor 将会使用一个基于 Goroutine 实现的事件驱动消息调度器。
 	Dispatcher mailbox.Dispatcher
 
-	// Supervisor 表示了一个 Actor 的监管者，它将在 Actor 发生事故时用于处理事故。
+	// Supervisor 是 Actor 的监管者，它用于在 Actor 发生事故时处理事故。
 	Supervisor Supervisor
+
+	// TimingWheel 是 Actor 的定时器轮，它将在 Actor 中用于处理定时器事件。
+	TimingWheel timing.Wheel
 }

@@ -4,6 +4,7 @@ import (
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/system"
 	"github.com/kercylan98/wasteland/src/wasteland"
+	"time"
 )
 
 const (
@@ -48,5 +49,27 @@ func (c *ActorSystemConfig) WithGuardDefaultRestartLimit(limit int) *ActorSystem
 		panic("invalid guard default restart limit")
 	}
 	c.config.GuardDefaultRestartLimit = limit
+	return c
+}
+
+// WithTimingWheelTick 设置定时器滴答时间
+//
+// 默认值为 100ms
+func (c *ActorSystemConfig) WithTimingWheelTick(tick time.Duration) *ActorSystemConfig {
+	if tick <= 0 {
+		panic("invalid timing wheel tick")
+	}
+	c.config.TimingWheelTick = tick
+	return c
+}
+
+// WithTimingWheelSize 设置定时器大小
+//
+// 默认值为 20
+func (c *ActorSystemConfig) WithTimingWheelSize(size int) *ActorSystemConfig {
+	if size <= 0 {
+		panic("invalid timing wheel size")
+	}
+	c.config.TimingWheelSize = size
 	return c
 }

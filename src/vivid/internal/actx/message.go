@@ -1,6 +1,7 @@
 package actx
 
 import (
+	"github.com/kercylan98/chrono/timing"
 	"github.com/kercylan98/vivid/src/vivid/internal/core"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/addressing"
@@ -78,6 +79,8 @@ func (m *Message) HandleUserMessage(message core.Message) {
 		m.ctx.GenerateContext().Handle()
 	case *actor.OnKill:
 		m.ctx.LifecycleContext().Kill(msg) // from poison
+	case timing.Task:
+		msg.Execute()
 	default:
 		m.ctx.GenerateContext().Handle()
 	}
