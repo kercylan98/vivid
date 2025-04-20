@@ -68,7 +68,7 @@ func (f *Future) Result() (any, error) {
 	switch f.message.(type) {
 	case nil:
 	default:
-		m = f.message.(any)
+		m = f.message
 	}
 	return m, f.err
 }

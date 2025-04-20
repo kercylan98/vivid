@@ -29,9 +29,14 @@ func (r *RingBuffer) Push(item any) {
 		newLen := r.size * 2
 		newBuff := make([]any, newLen)
 
-		for i := int64(0); i < r.size; i++ {
-			buffIndex := (r.tail + i) % r.size
-			newBuff[i] = r.buffer[buffIndex]
+		// 使用copy替代循环复制
+		if r.head < r.tail {
+			// 如果数据是连续的，直接复制
+			copy(newBuff, r.buffer[r.head+1:r.tail+1])
+		} else {
+			// 如果数据是分段的，分两次复制
+			copy(newBuff, r.buffer[r.head+1:])
+			copy(newBuff[r.size-r.head-1:], r.buffer[:r.tail+1])
 		}
 
 		r.buffer = newBuff

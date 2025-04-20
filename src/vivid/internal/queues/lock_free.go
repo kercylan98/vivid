@@ -5,13 +5,9 @@ import (
 	"unsafe"
 )
 
-const cacheLineSize = 64 // 现代CPU缓存行大小
-
 type LFQueue struct {
-	headPad [cacheLineSize]byte    // 隔离head的缓存行
-	head    atomic.Pointer[lfNode] // 使用泛型原子指针
-	tailPad [cacheLineSize]byte    // 隔离tail的缓存行
-	tail    atomic.Pointer[lfNode]
+	head atomic.Pointer[lfNode] // 使用泛型原子指针
+	tail atomic.Pointer[lfNode]
 }
 
 type lfNode struct {
