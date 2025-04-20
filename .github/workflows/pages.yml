@@ -1,0 +1,154 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        
+      - name: Setup Pages
+        uses: actions/configure-pages@v3
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.0'
+          
+      - name: Install Hugo
+        run: |
+          wget https://github.com/gohugoio/hugo/releases/download/v0.111.3/hugo_extended_0.111.3_linux-amd64.deb
+          sudo dpkg -i hugo_extended_0.111.3_linux-amd64.deb
+          
+      - name: Setup Hugo site
+        run: |
+          if [ ! -d "website" ]; then
+            hugo new site website
+            cd website
+            git init
+            git submodule add https://github.com/theNewDynamic/gohugo-theme-ananke.git themes/ananke
+            echo 'theme = "ananke"' >> config.toml
+            sed -i '1s/^/baseURL = "https:\/\/${{ github.repository_owner }}.github.io\/vivid\/"\n/' config.toml
+            sed -i '1s/^/languageCode = "zh-cn"\n/' config.toml
+            sed -i '1s/^/title = "Vivid - Actor Model for Go"\n/' config.toml
+            mkdir -p content/posts
+            cat > content/_index.md << 'EOL'
+            ---
+            title: "Vivid - Actor Model for Go"
+            description: "高性能 Go 语言 Actor 模型实现"
+            ---
+            
+            # Vivid
+            
+            Vivid 是一个为分布式系统设计的完整 Actor 模型实现，源于 `Minotaur` 项目的功能拆解重构。
+            
+            ## 特性
+            
+            - **高性能消息传递**：优化的消息队列和调度机制，确保高效的 Actor 间通信
+            - **灵活的 Actor 生命周期管理**：完整支持 Actor 的创建、监督和终止
+            - **强大的监督策略**：内置故障恢复机制，支持自定义监督策略
+            - **定时任务支持**：内置定时器功能，支持延迟执行、循环执行和 Cron 表达式
+            - **分布式通信**：支持跨网络的 Actor 通信，适用于分布式系统
+            
+            [查看 GitHub 仓库](https://github.com/${{ github.repository_owner }}/vivid)
+            EOL
+            
+            cat > content/posts/getting-started.md << 'EOL'
+            ---
+            title: "快速开始"
+            date: 2023-01-01
+            draft: false
+            ---
+            
+            # 快速开始
+            
+            ## 安装
+            
+            Vivid 需要 Go 1.24.0 或更高版本。使用以下命令安装：
+            
+            ```bash
+            go get github.com/kercylan98/vivid
+            ```
+            
+            ## 简单示例
+            
+            以下是一个简单的示例，展示如何创建和使用 Actor：
+            
+            ```go
+            package main
+            
+            import (
+                "github.com/kercylan98/vivid/src/vivid"
+                "fmt"
+            )
+            
+            func main() {
+                // 创建并启动 Actor 系统
+                system := vivid.NewActorSystem().StartP()
+                defer system.StopP()
+            
+                // 创建一个简单的 Actor
+                ref := system.ActorOf(func() vivid.Actor {
+                    return vivid.ActorFN(func(ctx vivid.ActorContext) {
+                        // 处理不同类型的消息
+                        switch msg := ctx.Message().(type) {
+                        case *vivid.OnLaunch:
+                            fmt.Println("Actor 已启动")
+                        case string:
+                            fmt.Println("收到消息:", msg)
+                            ctx.Reply("已收到: " + msg)
+                        }
+                    })
+                })
+            
+                // 发送消息给 Actor
+                system.Tell(ref, "你好，Actor！")
+            
+                // 发送消息并等待回复
+                result, err := system.Ask(ref, "需要回复的消息").Result()
+                if err != nil {
+                    fmt.Println("错误:", err)
+                } else {
+                    fmt.Println("收到回复:", result)
+                }
+            }
+            ```
+            EOL
+          fi
+          
+      - name: Build with Hugo
+        run: |
+          cd website
+          hugo --minify
+          
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: ./website/public
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
