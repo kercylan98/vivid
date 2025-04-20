@@ -129,11 +129,7 @@ func (a *actorSystem) ActorOfP(provider ActorProvider, configurator ...ActorConf
 }
 
 func (a *actorSystem) ActorOfC(provider ActorProviderFN, configurator ...ActorConfigurator) ActorRef {
-    var cs = make([]ActorConfigurator, len(configurator))
-    for i, cfg := range configurator {
-        cs[i] = cfg
-    }
-    return a.ActorOfPC(provider, cs...)
+    return a.ActorOfPC(provider, configurator...)
 }
 
 func (a *actorSystem) ActorOfPC(provider ActorProvider, configurator ...ActorConfigurator) ActorRef {

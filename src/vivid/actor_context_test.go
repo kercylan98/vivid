@@ -56,9 +56,7 @@ func TestActorContext_Ping(t *testing.T) {
 	defer system.StopP()
 
 	ref := system.ActorOf(func() vivid.Actor {
-		return vivid.ActorFN(func(ctx vivid.ActorContext) {
-			return
-		})
+		return vivid.ActorFN(func(ctx vivid.ActorContext) {})
 	})
 
 	pong, err := system.Ping(ref, time.Second)
