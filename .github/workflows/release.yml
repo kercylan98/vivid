@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.0'
+
+      - name: Run tests
+        run: go test -v ./src/vivid/...
+
+      - name: Build
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o vivid-linux-amd64 ./src/vivid/...
+          GOOS=windows GOARCH=amd64 go build -o vivid-windows-amd64.exe ./src/vivid/...
+          GOOS=darwin GOARCH=amd64 go build -o vivid-darwin-amd64 ./src/vivid/...
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Linux Build
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./vivid-linux-amd64
+          asset_name: vivid-linux-amd64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Windows Build
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./vivid-windows-amd64.exe
+          asset_name: vivid-windows-amd64.exe
+          asset_content_type: application/octet-stream
+
+      - name: Upload macOS Build
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./vivid-darwin-amd64
+          asset_name: vivid-darwin-amd64
+          asset_content_type: application/octet-stream
