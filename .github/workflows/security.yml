@@ -27,7 +27,7 @@ jobs:
           args: -no-fail -fmt sarif -out results.sarif ./src/vivid/...
 
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: results.sarif
 
@@ -124,13 +124,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v2
+        uses: github/codeql-action/init@v3
         with:
           languages: go
 
       - name: Perform CodeQL Analysis
         id: codeql
-        uses: github/codeql-action/analyze@v2
+        uses: github/codeql-action/analyze@v3
         continue-on-error: true
 
       - name: Create Issue on CodeQL Analysis Failure
