@@ -49,7 +49,7 @@ func (ref *actorRef) GenerateSub(path core.Path) actor.Ref {
 	}
 
 	return &actorRef{
-		ResourceLocator: wasteland.NewResourceLocator(ref.ResourceLocator.Address(), path),
+		ResourceLocator: wasteland.NewResourceLocator(ref.Address(), path),
 	}
 }
 
