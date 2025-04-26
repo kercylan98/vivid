@@ -51,13 +51,13 @@ jobs:
           if (buildFailed) title += '构建失败';
           else if (testFailed) title += '测试失败';
 
-          let body = `## Bug Description | 错误描述\n**English:**\nWorkflow failure detected in the CI/CD pipeline.\n\n**中文:**\nCI/CD 流程中检测到工作流失败。\n\n`;
+          let body = `## 错误描述\nCI/CD 流程中检测到工作流失败。\n\n`;
 
-          body += `## Reproduction Steps | 复现步骤\n**English:**\n1. Check the [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n**中文:**\n1. 查看 [工作流运行](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n`;
+          body += `## 复现步骤\n1. 查看 [工作流运行](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})\n\n`;
 
-          body += `## Environment | 环境\n**English:**\n- Workflow: ${process.env.GITHUB_WORKFLOW}\n- Commit: ${process.env.GITHUB_SHA}\n- Branch: ${process.env.GITHUB_REF}\n\n**中文:**\n- 工作流: ${process.env.GITHUB_WORKFLOW}\n- 提交: ${process.env.GITHUB_SHA}\n- 分支: ${process.env.GITHUB_REF}\n\n`;
+          body += `## 环境\n- 工作流: ${process.env.GITHUB_WORKFLOW}\n- 提交: ${process.env.GITHUB_SHA}\n- 分支: ${process.env.GITHUB_REF}\n\n`;
 
-          body += `## Additional Context | 附加上下文\n**English:**\nThis issue was automatically created by the GitHub Actions workflow.\n\n**中文:**\n此问题由 GitHub Actions 工作流自动创建。`;
+          body += `## 附加上下文\n此问题由 GitHub Actions 工作流自动创建。`;
 
           await github.rest.issues.create({
             owner: context.repo.owner,
