@@ -42,7 +42,7 @@ jobs:
 
       - name: Create Issue on Security Vulnerabilities Found
         if: steps.check_sarif.outputs.vulnerabilities_found == 'true'
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -89,7 +89,7 @@ jobs:
 
       - name: Create Issue on Vulnerability Check Failure
         if: steps.vulncheck.outcome == 'failure'
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -135,7 +135,7 @@ jobs:
 
       - name: Create Issue on CodeQL Analysis Failure
         if: steps.codeql.outcome == 'failure'
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
