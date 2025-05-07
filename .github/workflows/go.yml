@@ -31,7 +31,7 @@ jobs:
       continue-on-error: true
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v5
       with:
         file: ./coverage.txt
         fail_ci_if_error: false
@@ -40,7 +40,7 @@ jobs:
 
     - name: Create Issue on Failure
       if: steps.build.outcome == 'failure' || steps.test.outcome == 'failure'
-      uses: actions/github-script@v6
+      uses: actions/github-script@v7
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
