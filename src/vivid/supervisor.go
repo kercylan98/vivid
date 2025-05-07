@@ -58,12 +58,12 @@ type AccidentSnapshot interface {
 	Escalate()
 }
 
-func newAccidentSnapshot(snapshot actor.Snapshot) AccidentSnapshot {
+func newAccidentSnapshot(snapshot actor.AccidentSnapshot) AccidentSnapshot {
 	return &accidentSnapshot{snapshot: snapshot}
 }
 
 type accidentSnapshot struct {
-	snapshot actor.Snapshot
+	snapshot actor.AccidentSnapshot
 }
 
 func (a *accidentSnapshot) ActorContext() ActorContext {

@@ -23,8 +23,8 @@ type LifecycleContext interface {
     Accident(reason core.Message)
 
     // HandleAccidentSnapshot 处理事故快照
-    HandleAccidentSnapshot(snapshot Snapshot)
+    HandleAccidentSnapshot(snapshot AccidentSnapshot)
 
     // AccidentEnd 事故结束
-    AccidentEnd(snapshot Snapshot)
+    AccidentEnd(snapshot AccidentSnapshot)
 }

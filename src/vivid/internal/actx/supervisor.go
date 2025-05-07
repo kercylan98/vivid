@@ -13,7 +13,7 @@ type supervisor struct {
 	restartLimit int
 }
 
-func (d *supervisor) Decision(snapshot actor.Snapshot) {
+func (d *supervisor) Decision(snapshot actor.AccidentSnapshot) {
 	switch m := snapshot.GetMessage().(type) {
 	case *actor.OnLaunch:
 		if !m.Restarted() {

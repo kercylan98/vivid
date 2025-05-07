@@ -5,12 +5,12 @@ import (
 	"time"
 )
 
-type SnapshotEnd struct {
-	Snapshot Snapshot
+type AccidentSnapshotEnd struct {
+	Snapshot AccidentSnapshot
 }
 
-// Snapshot 事故快照，当事故发生时必须通过任一非 Get 方法来处理事故，当事故未被处理时将会自动进一步升级
-type Snapshot interface {
+// AccidentSnapshot 事故快照，当事故发生时必须通过任一非 Get 方法来处理事故，当事故未被处理时将会自动进一步升级
+type AccidentSnapshot interface {
 	// ActorContext 获取当前责任人上下文
 	ActorContext() Context
 

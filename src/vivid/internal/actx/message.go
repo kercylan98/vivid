@@ -64,9 +64,9 @@ func (m *Message) HandleSystemMessage(message core.Message) {
 		m.ctx.RelationContext().AddWatcher(m.sender)
 	case *actor.OnUnwatch:
 		m.ctx.RelationContext().RemoveWatcher(m.sender)
-	case *actor.SnapshotEnd:
+	case *actor.AccidentSnapshotEnd:
 		m.ctx.LifecycleContext().AccidentEnd(msg.Snapshot)
-	case actor.Snapshot:
+	case actor.AccidentSnapshot:
 		m.ctx.LifecycleContext().HandleAccidentSnapshot(msg)
 	case *actor.OnPing:
 		m.ctx.TransportContext().HandlePing(msg)

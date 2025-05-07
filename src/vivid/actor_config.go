@@ -48,7 +48,7 @@ func (c *ActorConfig) WithLoggerProvider(provider log.Provider) *ActorConfig {
 //
 // 监管者是用于在 Actor 发生异常时对其执行监管策略的对象
 func (c *ActorConfig) WithSupervisor(supervisor Supervisor) *ActorConfig {
-	c.config.Supervisor = actor.SupervisorFN(func(snapshot actor.Snapshot) {
+	c.config.Supervisor = actor.SupervisorFN(func(snapshot actor.AccidentSnapshot) {
 		supervisor.Decision(newAccidentSnapshot(snapshot))
 	})
 	return c

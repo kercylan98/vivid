@@ -26,9 +26,9 @@ func NewLifecycle(ctx actor.Context) *Lifecycle {
 type Lifecycle struct {
 	ctx                 actor.Context
 	status              atomic.Uint32
-	unfinishedAccidents map[core.Path]actor.Snapshot // 自身负责的且尚未完结的事故记录
-	restart             bool                         // 是否重启中
-	accidentSnapshot    actor.Snapshot               // 事故快照
+	unfinishedAccidents map[core.Path]actor.AccidentSnapshot // 自身负责的且尚未完结的事故记录
+	restart             bool                                 // 是否重启中
+	accidentSnapshot    actor.AccidentSnapshot               // 事故快照
 }
 
 func (l *Lifecycle) Accident(reason core.Message) {
@@ -62,7 +62,7 @@ func (l *Lifecycle) Accident(reason core.Message) {
 	l.HandleAccident(l.accidentSnapshot)
 }
 
-func (l *Lifecycle) HandleAccident(snapshot actor.Snapshot) {
+func (l *Lifecycle) HandleAccident(snapshot actor.AccidentSnapshot) {
 	// 设置事故责任人
 	snapshot.SetResponsiblePerson(l.ctx)
 
@@ -90,7 +90,7 @@ func (l *Lifecycle) HandleAccident(snapshot actor.Snapshot) {
 			// 延迟处理的策略，增加未完结事故记录
 			if snapshot.IsDelayFinished() {
 				if l.unfinishedAccidents == nil {
-					l.unfinishedAccidents = make(map[core.Path]actor.Snapshot)
+					l.unfinishedAccidents = make(map[core.Path]actor.AccidentSnapshot)
 				}
 				l.unfinishedAccidents[snapshot.GetVictim().Path()] = snapshot
 			}
@@ -98,7 +98,7 @@ func (l *Lifecycle) HandleAccident(snapshot actor.Snapshot) {
 	}
 }
 
-func (l *Lifecycle) AccidentEnd(snapshot actor.Snapshot) {
+func (l *Lifecycle) AccidentEnd(snapshot actor.AccidentSnapshot) {
 	if snapshot.IsFinished() {
 		delete(l.unfinishedAccidents, snapshot.GetVictim().Path())
 		if len(l.unfinishedAccidents) == 0 {
@@ -108,7 +108,7 @@ func (l *Lifecycle) AccidentEnd(snapshot actor.Snapshot) {
 	}
 }
 
-func (l *Lifecycle) HandleAccidentSnapshot(snapshot actor.Snapshot) {
+func (l *Lifecycle) HandleAccidentSnapshot(snapshot actor.AccidentSnapshot) {
 	l.HandleAccident(snapshot)
 }
 
