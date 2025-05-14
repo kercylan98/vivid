@@ -14,7 +14,7 @@ var _ actor.System = (*System)(nil)
 
 func New(config Config) *System {
 	if config.LoggerProvider == nil {
-		config.LoggerProvider = log.ProviderFn(log.GetDefault)
+		config.LoggerProvider = log.ProviderFn(log.GetBuilder().Production)
 	}
 
 	if config.TimingWheelTick <= 0 {
