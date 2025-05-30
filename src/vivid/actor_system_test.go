@@ -88,7 +88,7 @@ func TestActorSystem_Ask(t *testing.T) {
 
 func TestActorSystem_Kill(t *testing.T) {
 	system := vivid.NewActorSystem().StartP()
-	defer system.StopP()
+	defer system.PoisonStopP()
 
 	counter := 100
 	limit := counter

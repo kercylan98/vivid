@@ -1,7 +1,10 @@
 package vivid
 
 import (
+	"fmt"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/kercylan98/vivid/src/persistence"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
@@ -105,10 +108,25 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
 
 		// 设置 Actor 门面代理的 Actor 方法
 		facade.Actor = actor.FN(func(ctx actor.Context) {
+			startTime := time.Now() // 记录消息处理开始时间
+
 			// 内部消息类型转换，处理系统消息和用户消息
 			switch msg := ctx.MessageContext().Message().(type) {
 			case *actor.OnLaunch:
 				waiter.Wait()
+
+				// 记录系统消息接收到监控系统
+				defer func() {
+					if monitoringCtx := facadeCtx.Monitoring(); monitoringCtx.IsEnabled() {
+						latency := time.Since(startTime)
+						// 使用系统消息记录方法
+						if m, ok := monitoringCtx.(*monitoringContext); ok && m.metrics != nil {
+							if im, ok := m.metrics.(internalMetrics); ok && im.IsRecording() {
+								im.recordSystemMessageReceived(m.actorRef, "OnLaunch", latency)
+							}
+						}
+					}
+				}()
 
 				// 智能持久化恢复
 				if facade.smartPersistentActor != nil && facade.smartPersistenceManager != nil {
@@ -132,8 +150,32 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
 					}
 				}
 
-				facade.actor.OnReceive(facadeCtx)
+				// 执行用户消息处理
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							// 记录错误到监控系统
+							if monitoringCtx := facadeCtx.Monitoring(); monitoringCtx.IsEnabled() {
+								monitoringCtx.RecordError(fmt.Errorf("actor panic: %v", r), "OnLaunch")
+							}
+							panic(r) // 重新抛出panic
+						}
+					}()
+
+					facade.actor.OnReceive(facadeCtx)
+				}()
+
 			case *actor.OnKill:
+				// 记录系统消息接收到监控系统
+				if monitoringCtx := facadeCtx.Monitoring(); monitoringCtx.IsEnabled() {
+					latency := time.Since(startTime)
+					if m, ok := monitoringCtx.(*monitoringContext); ok && m.metrics != nil {
+						if im, ok := m.metrics.(internalMetrics); ok && im.IsRecording() {
+							im.recordSystemMessageReceived(m.actorRef, "OnKill", latency)
+						}
+					}
+				}
+
 				// 在 Actor 被杀死前，保存持久化状态
 				if facade.smartPersistenceManager != nil {
 					// 智能持久化：强制创建最终快照
@@ -144,13 +186,60 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
 					// 传统持久化
 					facade.persistenceState.Persist()
 				}
+
+				// 注意：这里HandleWith会触发内部OnKill处理，但不是网络消息
+				// 内部消息处理不应该计入发送统计
+				// 这个HandleWith会重新调用OnReceive，但应该跳过监控
 				ctx.MessageContext().HandleWith(&OnKill{m: msg})
+
 			case *actor.OnKilled:
+				// OnKilled是内部生命周期消息，通过HandleWith注入，不是真正的消息传递
+				// 不记录到监控系统，避免接收计数不匹配
 				// 用户无需处理，屏蔽该消息
+
 			case *actor.OnDead:
+				// 记录系统消息接收到监控系统
+				if monitoringCtx := facadeCtx.Monitoring(); monitoringCtx.IsEnabled() {
+					latency := time.Since(startTime)
+					if m, ok := monitoringCtx.(*monitoringContext); ok && m.metrics != nil {
+						if im, ok := m.metrics.(internalMetrics); ok && im.IsRecording() {
+							im.recordSystemMessageReceived(m.actorRef, "OnDead", latency)
+						}
+					}
+				}
+
+				// 注意：这里HandleWith会触发内部OnDead处理
+				// 这个HandleWith会重新调用OnReceive，但应该跳过监控
 				ctx.MessageContext().HandleWith(&OnDead{m: msg})
 			default:
-				facade.actor.OnReceive(facadeCtx)
+				// 处理其他消息
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							// 记录错误到监控系统
+							if monitoringCtx := facadeCtx.Monitoring(); monitoringCtx.IsEnabled() {
+								monitoringCtx.RecordError(fmt.Errorf("actor panic: %v", r), "message_handling")
+							}
+							panic(r) // 重新抛出panic
+						}
+
+						// 记录用户消息接收到监控系统
+						if monitoringCtx := facadeCtx.Monitoring(); monitoringCtx.IsEnabled() {
+							latency := time.Since(startTime)
+							messageType := getMessageTypeName(msg)
+							if m, ok := monitoringCtx.(*monitoringContext); ok && m.metrics != nil {
+								if im, ok := m.metrics.(internalMetrics); ok && im.IsRecording() {
+									im.recordUserMessageReceived(m.actorRef, messageType, latency)
+								} else {
+									// 兼容旧方法
+									monitoringCtx.RecordMessageReceived(messageType, latency)
+								}
+							}
+						}
+					}()
+
+					facade.actor.OnReceive(facadeCtx)
+				}()
 
 				// 注意：不在这里自动保存持久化状态
 				// 持久化应该由用户在消息处理逻辑中主动调用
@@ -162,19 +251,173 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
 	// 创建上下文完毕后写入 waiter，通知 Actor 初始化完成（避免竞态问题）
 	internalCtx := parent.GenerateContext().GenerateActorContext(system, parent, facadeProvider, *config.config)
 
-	// 根据持久化类型创建上下文
+	// 将监控配置传递到内部配置
+	if config.monitoring != nil {
+		// 创建适配器，将外部监控接口适配为内部接口
+		if internalMetrics, ok := config.monitoring.(internalMetrics); ok {
+			internalCtx.MetadataContext().Config().Monitoring = &monitoringAdapter{
+				metrics: internalMetrics,
+			}
+		}
+	}
+
+	// 根据配置类型创建上下文
+	var monitoringCtx MonitoringContext
+	if config.monitoring != nil {
+		monitoringCtx = newMonitoringContext(config.monitoring, internalCtx.MetadataContext().Ref())
+	}
+
 	if smartPersistenceManager != nil {
 		smartCtx := newSmartPersistenceContext(smartPersistenceManager)
-		facadeCtx = newActorContextWithSmartPersistence(internalCtx, smartCtx)
+		if monitoringCtx != nil {
+			facadeCtx = newActorContextWithPersistenceAndMonitoring(internalCtx, smartCtx, monitoringCtx)
+		} else {
+			facadeCtx = newActorContextWithSmartPersistence(internalCtx, smartCtx)
+		}
 	} else if sharedPersistenceState != nil {
 		persistenceCtx := newPersistenceContext(sharedPersistenceState)
-		facadeCtx = newActorContextWithPersistence(internalCtx, persistenceCtx)
+		if monitoringCtx != nil {
+			facadeCtx = newActorContextWithPersistenceAndMonitoring(internalCtx, persistenceCtx, monitoringCtx)
+		} else {
+			facadeCtx = newActorContextWithPersistence(internalCtx, persistenceCtx)
+		}
 	} else {
-		facadeCtx = newActorContext(internalCtx)
+		if monitoringCtx != nil {
+			facadeCtx = newActorContextWithMonitoring(internalCtx, monitoringCtx)
+		} else {
+			facadeCtx = newActorContext(internalCtx)
+		}
 	}
 
 	waiter.Done()
 	return facadeCtx.Ref()
+}
+
+// getMessageTypeName 获取消息类型名称，用于监控记录
+func getMessageTypeName(message interface{}) string {
+	if message == nil {
+		return "nil"
+	}
+
+	// 处理指针类型
+	typeName := fmt.Sprintf("%T", message)
+	if strings.HasPrefix(typeName, "*") {
+		typeName = typeName[1:] // 移除前导的*
+	}
+
+	// 移除包名，只保留类型名
+	if lastDot := strings.LastIndex(typeName, "."); lastDot != -1 {
+		typeName = typeName[lastDot+1:]
+	}
+
+	return typeName
+}
+
+// monitoringAdapter 适配器，将外部监控接口适配为内部接口
+type monitoringAdapter struct {
+	metrics internalMetrics // 使用内部接口
+}
+
+func (m *monitoringAdapter) RecordMessageSent(from, to actor.Ref, messageType string) {
+	if m.metrics != nil && m.metrics.IsRecording() {
+		m.metrics.RecordMessageSent(from, to, messageType)
+	}
+}
+
+func (m *monitoringAdapter) RecordUserMessageSent(from, to actor.Ref, messageType string) {
+	if m.metrics != nil && m.metrics.IsRecording() {
+		m.metrics.recordUserMessageSent(from, to, messageType)
+	}
+}
+
+func (m *monitoringAdapter) RecordSystemMessageSent(from, to actor.Ref, messageType string) {
+	if m.metrics != nil && m.metrics.IsRecording() {
+		m.metrics.recordSystemMessageSent(from, to, messageType)
+	}
+}
+
+func (m *monitoringAdapter) RecordUserMessageReceived(actor actor.Ref, messageType string, latency int64) {
+	if m.metrics != nil && m.metrics.IsRecording() {
+		m.metrics.recordUserMessageReceived(actor, messageType, time.Duration(latency))
+	}
+}
+
+func (m *monitoringAdapter) RecordSystemMessageReceived(actor actor.Ref, messageType string, latency int64) {
+	if m.metrics != nil && m.metrics.IsRecording() {
+		m.metrics.recordSystemMessageReceived(actor, messageType, time.Duration(latency))
+	}
+}
+
+// globalMonitoringAdapter 全局监控适配器，用于系统级Actor的监控
+type globalMonitoringAdapter struct {
+	metrics Metrics
+}
+
+func (g *globalMonitoringAdapter) RecordMessageSent(from, to actor.Ref, messageType string) {
+	if g.metrics != nil {
+		// 尝试转换为内部接口以访问完整功能
+		if im, ok := g.metrics.(internalMetrics); ok && im.IsRecording() {
+			im.RecordMessageSent(from, to, messageType)
+		}
+	}
+}
+
+func (g *globalMonitoringAdapter) RecordUserMessageSent(from, to actor.Ref, messageType string) {
+	if g.metrics != nil {
+		if im, ok := g.metrics.(internalMetrics); ok && im.IsRecording() {
+			im.recordUserMessageSent(from, to, messageType)
+		}
+	}
+}
+
+func (g *globalMonitoringAdapter) RecordSystemMessageSent(from, to actor.Ref, messageType string) {
+	if g.metrics != nil {
+		if im, ok := g.metrics.(internalMetrics); ok && im.IsRecording() {
+			im.recordSystemMessageSent(from, to, messageType)
+		}
+	}
+}
+
+func (g *globalMonitoringAdapter) RecordUserMessageReceived(actor actor.Ref, messageType string, latency int64) {
+	if g.metrics != nil {
+		if im, ok := g.metrics.(internalMetrics); ok && im.IsRecording() {
+			im.recordUserMessageReceived(actor, messageType, time.Duration(latency))
+		}
+	}
+}
+
+func (g *globalMonitoringAdapter) RecordSystemMessageReceived(actor actor.Ref, messageType string, latency int64) {
+	if g.metrics != nil {
+		if im, ok := g.metrics.(internalMetrics); ok && im.IsRecording() {
+			im.recordSystemMessageReceived(actor, messageType, time.Duration(latency))
+		}
+	}
+}
+
+// 控制方法：安全地代理到内部接口
+func (g *globalMonitoringAdapter) StopRecording() {
+	if g.metrics != nil {
+		if im, ok := g.metrics.(internalMetrics); ok {
+			im.StopRecording()
+		}
+	}
+}
+
+func (g *globalMonitoringAdapter) ResumeRecording() {
+	if g.metrics != nil {
+		if im, ok := g.metrics.(internalMetrics); ok {
+			im.ResumeRecording()
+		}
+	}
+}
+
+func (g *globalMonitoringAdapter) IsRecording() bool {
+	if g.metrics != nil {
+		if im, ok := g.metrics.(internalMetrics); ok {
+			return im.IsRecording()
+		}
+	}
+	return false
 }
 
 // actorFacade 是 Actor 的门面代理，用于在 Actor 的生命周期中调用 Actor 的方法，

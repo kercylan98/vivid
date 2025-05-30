@@ -15,6 +15,8 @@ type System interface {
 
 	Stop() error
 
+	PoisonStop() error
+
 	Context() Context
 
 	Find(target Ref) wasteland.ProcessHandler
@@ -26,4 +28,10 @@ type System interface {
 	Registry() wasteland.ProcessRegistry
 
 	GetTimingWheel() timing.Wheel
+
+	// SetGlobalMonitoring 设置全局监控实例
+	SetGlobalMonitoring(monitoring interface{})
+
+	// GetGlobalMonitoring 获取全局监控实例
+	GetGlobalMonitoring() interface{}
 }

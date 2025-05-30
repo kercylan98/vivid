@@ -75,6 +75,67 @@ type context interface {
 	PoisonKill(ref ActorRef, reason ...string)
 }
 
+// MonitoringContext 监控上下文接口，提供Actor级别的监控功能
+type MonitoringContext interface {
+	// RecordMessageReceived 记录当前Actor接收到消息
+	RecordMessageReceived(messageType string, latency time.Duration)
+
+	// RecordError 记录当前Actor的错误
+	RecordError(err error, context string)
+
+	// GetMetrics 获取当前Actor的指标
+	GetMetrics() *ActorMetrics
+
+	// IsEnabled 检查监控是否启用
+	IsEnabled() bool
+}
+
+// monitoringContext 监控上下文的实现
+type monitoringContext struct {
+	metrics  Metrics
+	actorRef ActorRef
+	enabled  bool
+}
+
+func newMonitoringContext(metrics Metrics, actorRef ActorRef) MonitoringContext {
+	if metrics == nil {
+		return &monitoringContext{enabled: false}
+	}
+
+	return &monitoringContext{
+		metrics:  metrics,
+		actorRef: actorRef,
+		enabled:  true,
+	}
+}
+
+func (m *monitoringContext) RecordMessageReceived(messageType string, latency time.Duration) {
+	if m.enabled && m.metrics != nil {
+		// 尝试转换为内部接口以访问完整功能
+		if im, ok := m.metrics.(internalMetrics); ok {
+			im.RecordMessageReceived(m.actorRef, messageType, latency)
+		}
+		// 如果不是内部接口，则忽略此调用（保持用户接口的纯净性）
+	}
+}
+
+func (m *monitoringContext) RecordError(err error, context string) {
+	if m.enabled && m.metrics != nil {
+		m.metrics.RecordError(m.actorRef, err, context)
+	}
+}
+
+func (m *monitoringContext) GetMetrics() *ActorMetrics {
+	if m.enabled && m.metrics != nil {
+		return m.metrics.GetActorMetrics(m.actorRef)
+	}
+	return nil
+}
+
+func (m *monitoringContext) IsEnabled() bool {
+	return m.enabled
+}
+
 // ActorContext 是 Actor 与其环境交互的接口。
 //
 // 它扩展了基础上下文接口和定时上下文接口，提供了更多与当前 Actor 相关的功能，
@@ -114,6 +175,18 @@ type ActorContext interface {
 	// 只有实现了 PersistentActor 接口且配置了持久化仓库的 Actor 才能获取到有效的持久化上下文。
 	// 如果当前 Actor 不支持持久化，返回 nil。
 	Persistence() PersistenceContext
+
+	// Monitoring 获取当前 Actor 的监控上下文。
+	//
+	// 如果当前 Actor 配置了监控系统，返回有效的监控上下文；否则返回 nil。
+	Monitoring() MonitoringContext
+}
+
+// actorContext 是 ActorContext 接口的实现，提供 Actor 运行时上下文的完整功能
+type actorContext struct {
+	ctx            actor.Context
+	persistenceCtx PersistenceContext
+	monitoringCtx  MonitoringContext
 }
 
 // newActorContext 创建一个新的 ActorContext 实例。
@@ -127,31 +200,54 @@ type ActorContext interface {
 //   - 创建的 ActorContext 实例
 func newActorContext(ctx actor.Context) ActorContext {
 	return &actorContext{
-		ctx: ctx,
+		ctx:           ctx,
+		monitoringCtx: newMonitoringContext(nil, ctx.MetadataContext().Ref()),
 	}
 }
 
 // newActorContextWithPersistence 创建一个带有持久化支持的 ActorContext 实例。
+//
+// 该函数在基础的 ActorContext 上添加了持久化功能，
+// 使得 Actor 可以通过 Persistence() 方法访问持久化上下文
+//
+// 参数:
+//   - ctx: 内部的 actor.Context 实例
+//   - persistenceCtx: 持久化上下文实例
+//
+// 返回:
+//   - 带有持久化支持的 ActorContext 实例
 func newActorContextWithPersistence(ctx actor.Context, persistenceCtx PersistenceContext) ActorContext {
 	return &actorContext{
 		ctx:            ctx,
 		persistenceCtx: persistenceCtx,
+		monitoringCtx:  newMonitoringContext(nil, ctx.MetadataContext().Ref()),
 	}
 }
 
 // newActorContextWithSmartPersistence 创建一个带有智能持久化支持的 ActorContext 实例。
 func newActorContextWithSmartPersistence(ctx actor.Context, smartPersistenceCtx SmartPersistenceContext) ActorContext {
 	return &actorContext{
-		ctx:                 ctx,
-		persistenceCtx:      smartPersistenceCtx, // SmartPersistenceContext 实现了 PersistenceContext
-		smartPersistenceCtx: smartPersistenceCtx,
+		ctx:            ctx,
+		persistenceCtx: smartPersistenceCtx,
+		monitoringCtx:  newMonitoringContext(nil, ctx.MetadataContext().Ref()),
 	}
 }
 
-type actorContext struct {
-	ctx                 actor.Context           // 内部上下文实例
-	persistenceCtx      PersistenceContext      // 持久化上下文实例
-	smartPersistenceCtx SmartPersistenceContext // 智能持久化上下文实例
+// newActorContextWithMonitoring 创建一个带有监控支持的 ActorContext 实例。
+func newActorContextWithMonitoring(ctx actor.Context, monitoringCtx MonitoringContext) ActorContext {
+	return &actorContext{
+		ctx:           ctx,
+		monitoringCtx: monitoringCtx,
+	}
+}
+
+// newActorContextWithPersistenceAndMonitoring 创建一个同时支持持久化和监控的 ActorContext 实例。
+func newActorContextWithPersistenceAndMonitoring(ctx actor.Context, persistenceCtx PersistenceContext, monitoringCtx MonitoringContext) ActorContext {
+	return &actorContext{
+		ctx:            ctx,
+		persistenceCtx: persistenceCtx,
+		monitoringCtx:  monitoringCtx,
+	}
 }
 
 func (c *actorContext) After(name string, duration time.Duration, task timing.Task) {
@@ -263,4 +359,8 @@ func (c *actorContext) Ping(target ActorRef, timeout ...time.Duration) (*Pong, e
 
 func (c *actorContext) Persistence() PersistenceContext {
 	return c.persistenceCtx
+}
+
+func (c *actorContext) Monitoring() MonitoringContext {
+	return c.monitoringCtx
 }

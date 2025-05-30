@@ -2,12 +2,13 @@ package system
 
 import (
 	"context"
+	"time"
+
 	"github.com/kercylan98/chrono/timing"
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/vivid/internal/actx"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 	"github.com/kercylan98/wasteland/src/wasteland"
-	"time"
 )
 
 var _ actor.System = (*System)(nil)
@@ -41,13 +42,14 @@ func New(config Config) *System {
 }
 
 type System struct {
-	config      *Config                   // 系统配置
-	locator     wasteland.ResourceLocator // ActorSystem 的资源定位符
-	guide       actor.Context             // 顶级守护 Actor
-	registry    wasteland.ProcessRegistry // 进程注册表
-	ctx         context.Context           // 系统上下文
-	cancel      context.CancelFunc        // 系统上下文取消函数
-	timingWheel timing.Wheel              // 系统时间轮
+	config           *Config                   // 系统配置
+	locator          wasteland.ResourceLocator // ActorSystem 的资源定位符
+	guide            actor.Context             // 顶级守护 Actor
+	registry         wasteland.ProcessRegistry // 进程注册表
+	ctx              context.Context           // 系统上下文
+	cancel           context.CancelFunc        // 系统上下文取消函数
+	timingWheel      timing.Wheel              // 系统时间轮
+	globalMonitoring interface{}               // 全局监控实例
 }
 
 func (s *System) Register(ctx actor.Context) {
@@ -80,9 +82,20 @@ func (s *System) ResourceLocator() wasteland.ResourceLocator {
 
 func (s *System) Run() error {
 	s.locator = wasteland.NewResourceLocator(s.config.Address, "/")
-	s.guide = (*actx.Generate)(nil).GenerateActorContext(s, nil, GuardProvider(s.cancel), actor.Config{
+
+	// 为Guard Actor创建配置，包含全局监控
+	guardConfig := actor.Config{
 		Supervisor: actx.GetDefaultSupervisor(s.config.GuardDefaultRestartLimit),
-	})
+	}
+
+	// 如果有全局监控，将其设置到Guard Actor配置中
+	if s.globalMonitoring != nil {
+		if adapter, ok := s.globalMonitoring.(actor.Metrics); ok {
+			guardConfig.Monitoring = adapter
+		}
+	}
+
+	s.guide = (*actx.Generate)(nil).GenerateActorContext(s, nil, GuardProvider(s.cancel), guardConfig)
 	s.registry = wasteland.NewProcessRegistry(wasteland.ProcessRegistryConfig{
 		Locator:           s.ResourceLocator(),
 		Daemon:            s.guide.ProcessContext(),
@@ -96,13 +109,72 @@ func (s *System) Run() error {
 }
 
 func (s *System) Stop() error {
-	s.guide.TransportContext().Tell(s.guide.MetadataContext().Ref(), actx.UserMessage, &actor.OnKill{
+	// 向守护Actor发送终止消息
+	s.guide.TransportContext().Tell(s.guide.MetadataContext().Ref(), actx.SystemMessage, &actor.OnKill{
 		Reason:   "actor system stop",
+		Operator: s.guide.MetadataContext().Ref(),
+		Poison:   false,
+	})
+
+	// 根据配置决定是否使用超时机制
+	if s.config.StopTimeout > 0 {
+		// 使用配置的超时时间
+		done := make(chan struct{}, 1)
+		go func() {
+			<-s.ctx.Done()
+			done <- struct{}{}
+		}()
+
+		select {
+		case <-done:
+			// 正常停止
+		case <-time.After(s.config.StopTimeout):
+			// 超时强制取消
+			s.cancel()
+		}
+	} else {
+		// 无超时，等待系统正常停止
+		<-s.ctx.Done()
+	}
+
+	// 停止进程注册表
+	s.registry.Stop()
+
+	return nil
+}
+
+func (s *System) PoisonStop() error {
+	// 向守护Actor发送优雅终止消息
+	s.guide.TransportContext().Tell(s.guide.MetadataContext().Ref(), actx.UserMessage, &actor.OnKill{
+		Reason:   "actor system stop with poison",
 		Operator: s.guide.MetadataContext().Ref(),
 		Poison:   true,
 	})
-	<-s.ctx.Done()
+
+	// 根据配置决定是否使用超时机制
+	if s.config.PoisonStopTimeout > 0 {
+		// 使用配置的超时时间
+		done := make(chan struct{}, 1)
+		go func() {
+			<-s.ctx.Done()
+			done <- struct{}{}
+		}()
+
+		select {
+		case <-done:
+			// 正常停止
+		case <-time.After(s.config.PoisonStopTimeout):
+			// 超时强制取消
+			s.cancel()
+		}
+	} else {
+		// 无超时，等待系统正常停止
+		<-s.ctx.Done()
+	}
+
+	// 停止进程注册表
 	s.registry.Stop()
+
 	return nil
 }
 
@@ -112,4 +184,14 @@ func (s *System) Context() actor.Context {
 
 func (s *System) GetTimingWheel() timing.Wheel {
 	return s.timingWheel
+}
+
+// SetGlobalMonitoring 设置全局监控实例
+func (s *System) SetGlobalMonitoring(monitoring interface{}) {
+	s.globalMonitoring = monitoring
+}
+
+// GetGlobalMonitoring 获取全局监控实例
+func (s *System) GetGlobalMonitoring() interface{} {
+	return s.globalMonitoring
 }

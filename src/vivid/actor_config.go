@@ -16,6 +16,7 @@ type ActorConfig struct {
 	snapshotPolicy  *AutoSnapshotPolicy    // 快照策略
 	serializer      Serializer             // 序列化器
 	enableSmartMode bool                   // 是否启用智能模式
+	monitoring      Metrics                // 监控指标收集器
 }
 
 // WithDispatcher 函数将使用指定的调度器来创建 Actor
@@ -114,5 +115,35 @@ func (c *ActorConfig) WithSnapshotPolicy(policy *AutoSnapshotPolicy) *ActorConfi
 // WithSerializer 函数设置序列化器（仅在智能模式下有效）
 func (c *ActorConfig) WithSerializer(serializer Serializer) *ActorConfig {
 	c.serializer = serializer
+	return c
+}
+
+// WithDevelopmentMonitoring 配置开发环境推荐的监控（详细调试）
+func (c *ActorConfig) WithDevelopmentMonitoring() *ActorConfig {
+	c.monitoring = NewDevelopmentMetrics()
+	return c
+}
+
+// WithMonitoring 配置Actor监控（实例方法）
+func (c *ActorConfig) WithMonitoring(metrics Metrics) *ActorConfig {
+	c.monitoring = metrics
+	return c
+}
+
+// WithDefaultMonitoring 配置默认监控（实例方法）
+func (c *ActorConfig) WithDefaultMonitoring() *ActorConfig {
+	c.monitoring = NewMetricsCollector(DefaultMonitoringConfig())
+	return c
+}
+
+// WithSimpleMonitoring 配置简单监控（实例方法）
+func (c *ActorConfig) WithSimpleMonitoring() *ActorConfig {
+	c.monitoring = NewSimpleMetrics()
+	return c
+}
+
+// WithProductionMonitoring 配置生产环境推荐的监控（实例方法）
+func (c *ActorConfig) WithProductionMonitoring() *ActorConfig {
+	c.monitoring = NewProductionMetrics()
 	return c
 }

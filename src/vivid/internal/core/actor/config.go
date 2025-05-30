@@ -6,6 +6,15 @@ import (
 	"github.com/kercylan98/vivid/src/vivid/internal/core/mailbox"
 )
 
+// Metrics 内部监控接口，简化版本，避免暴露系统细节
+type Metrics interface {
+	RecordMessageSent(from, to Ref, messageType string)
+	RecordUserMessageSent(from, to Ref, messageType string)
+	RecordSystemMessageSent(from, to Ref, messageType string)
+	RecordUserMessageReceived(actor Ref, messageType string, latency int64)
+	RecordSystemMessageReceived(actor Ref, messageType string, latency int64)
+}
+
 // Config 中描述了可被外部配置的 Actor 的配置项，它会在 Actor 创建时被传入，并在整个 Actor 的生命周期中被使用。
 type Config struct {
 	// Name 表示了一个 Actor 的名称，它将生成特定的资源标识符，同时也代表了一个 Actor 在其父级下的唯一性。
@@ -35,4 +44,7 @@ type Config struct {
 
 	// TimingWheel 是 Actor 的定时器轮，它将在 Actor 中用于处理定时器事件。
 	TimingWheel timing.Wheel
+
+	// Monitoring 监控接口，用于在消息发送时记录监控指标
+	Monitoring Metrics
 }
