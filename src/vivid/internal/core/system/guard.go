@@ -89,8 +89,8 @@ func (g *Guard) gracefulShutdown(ctx actor.Context) {
 	if len(children) > 0 {
 		logger.Debug("Sending OnKill to all child actors", "count", len(children))
 		for _, child := range children {
-			// 发送poison kill给每个子Actor
-			ctx.TransportContext().Tell(child, actx.SystemMessage, &actor.OnKill{
+			// 发送poison kill给每个子Actor - 使用 UserMessage 确保优雅关闭
+			ctx.TransportContext().Tell(child, actx.UserMessage, &actor.OnKill{
 				Reason:   "system graceful shutdown",
 				Operator: ctx.MetadataContext().Ref(),
 				Poison:   true,
