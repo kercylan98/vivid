@@ -1,12 +1,13 @@
 package vivid
 
 import (
+	"strings"
+	"time"
+
 	"github.com/kercylan98/chrono/timing"
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/vivid/internal/actx"
 	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
-	"strings"
-	"time"
 )
 
 var _ ActorContext = (*actorContext)(nil)
@@ -107,6 +108,12 @@ type ActorContext interface {
 
 	// Unwatch 取消之前通过 Watch 方法设置的监视
 	Unwatch(ref ActorRef)
+
+	// Persistence 获取当前 Actor 的持久化上下文。
+	//
+	// 只有实现了 PersistentActor 接口且配置了持久化仓库的 Actor 才能获取到有效的持久化上下文。
+	// 如果当前 Actor 不支持持久化，返回 nil。
+	Persistence() PersistenceContext
 }
 
 // newActorContext 创建一个新的 ActorContext 实例。
@@ -124,8 +131,27 @@ func newActorContext(ctx actor.Context) ActorContext {
 	}
 }
 
+// newActorContextWithPersistence 创建一个带有持久化支持的 ActorContext 实例。
+func newActorContextWithPersistence(ctx actor.Context, persistenceCtx PersistenceContext) ActorContext {
+	return &actorContext{
+		ctx:            ctx,
+		persistenceCtx: persistenceCtx,
+	}
+}
+
+// newActorContextWithSmartPersistence 创建一个带有智能持久化支持的 ActorContext 实例。
+func newActorContextWithSmartPersistence(ctx actor.Context, smartPersistenceCtx SmartPersistenceContext) ActorContext {
+	return &actorContext{
+		ctx:                 ctx,
+		persistenceCtx:      smartPersistenceCtx, // SmartPersistenceContext 实现了 PersistenceContext
+		smartPersistenceCtx: smartPersistenceCtx,
+	}
+}
+
 type actorContext struct {
-	ctx actor.Context // 内部上下文实例
+	ctx                 actor.Context           // 内部上下文实例
+	persistenceCtx      PersistenceContext      // 持久化上下文实例
+	smartPersistenceCtx SmartPersistenceContext // 智能持久化上下文实例
 }
 
 func (c *actorContext) After(name string, duration time.Duration, task timing.Task) {
@@ -233,4 +259,8 @@ func (c *actorContext) Ref() ActorRef {
 
 func (c *actorContext) Ping(target ActorRef, timeout ...time.Duration) (*Pong, error) {
 	return c.ctx.TransportContext().Ping(target.(actor.Ref), timeout...)
+}
+
+func (c *actorContext) Persistence() PersistenceContext {
+	return c.persistenceCtx
 }

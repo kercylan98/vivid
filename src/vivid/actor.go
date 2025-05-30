@@ -1,8 +1,10 @@
 package vivid
 
 import (
-	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 	"sync"
+
+	"github.com/kercylan98/vivid/src/persistence"
+	"github.com/kercylan98/vivid/src/vivid/internal/core/actor"
 )
 
 var _ actor.Actor = (*actorFacade)(nil)
@@ -61,22 +63,87 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
 	for _, c := range configuration {
 		c.Configure(config)
 	}
+
+	// 预先检查是否为持久化 Actor，并准备共享的持久化状态
+	actorInstance := provider.Provide()
+	var sharedPersistenceState *persistence.State
+	var smartPersistenceManager *SmartPersistenceManager
+
+	// 检查智能持久化Actor
+	if smartActor, ok := actorInstance.(SmartPersistentActor); ok && config.repository != nil && config.enableSmartMode {
+		persistenceId := smartActor.GetPersistenceId()
+		if persistenceId != "" {
+			sharedPersistenceState = persistence.NewState(persistenceId, config.repository)
+			smartPersistenceManager = NewSmartPersistenceManager(sharedPersistenceState, config.snapshotPolicy)
+		}
+	} else if persistentActor, ok := actorInstance.(PersistentActor); ok && config.repository != nil {
+		// 传统持久化Actor
+		persistenceId := persistentActor.GetPersistenceId()
+		if persistenceId != "" {
+			sharedPersistenceState = persistence.NewState(persistenceId, config.repository)
+		}
+	}
+
 	// 创建 Actor 门面代理的提供器，确保每次生成均能够获得全新的 Actor 实例
 	var facadeCtx ActorContext
 	// 由于是异步，所以需要等待 facadeCtx 的创建
 	var waiter sync.WaitGroup
 	waiter.Add(1)
 	facadeProvider := actor.ProviderFN(func() actor.Actor {
-		// 创建 Actor 门面代理
-		facade := &actorFacade{actor: provider.Provide()}
+		// 创建 Actor 门面代理，重用同一个Actor实例
+		facade := &actorFacade{actor: actorInstance}
+
+		// 如果支持智能持久化
+		if smartActor, ok := actorInstance.(SmartPersistentActor); ok && smartPersistenceManager != nil {
+			facade.smartPersistentActor = smartActor
+			facade.smartPersistenceManager = smartPersistenceManager
+		} else if persistentActor, ok := actorInstance.(PersistentActor); ok && sharedPersistenceState != nil {
+			// 传统持久化
+			facade.persistenceState = sharedPersistenceState
+			facade.persistentActor = persistentActor
+		}
+
 		// 设置 Actor 门面代理的 Actor 方法
 		facade.Actor = actor.FN(func(ctx actor.Context) {
 			// 内部消息类型转换，处理系统消息和用户消息
 			switch msg := ctx.MessageContext().Message().(type) {
 			case *actor.OnLaunch:
 				waiter.Wait()
+
+				// 智能持久化恢复
+				if facade.smartPersistentActor != nil && facade.smartPersistenceManager != nil {
+					// 加载持久化数据
+					if err := facade.smartPersistenceManager.state.Load(); err == nil {
+						smartCtx := newSmartPersistenceContext(facade.smartPersistenceManager)
+
+						// 只有在有可恢复数据时才调用OnRecover
+						if smartCtx.CanRecover() {
+							facade.smartPersistentActor.OnRecover(smartCtx)
+						}
+					}
+				} else if facade.persistentActor != nil && facade.persistenceState != nil {
+					// 传统持久化恢复
+					if err := facade.persistenceState.Load(); err == nil {
+						persistenceCtx := newPersistenceContext(facade.persistenceState)
+						// 只有在有可恢复数据时才调用OnRecover
+						if persistenceCtx.CanRecover() {
+							facade.persistentActor.OnRecover(persistenceCtx)
+						}
+					}
+				}
+
 				facade.actor.OnReceive(facadeCtx)
 			case *actor.OnKill:
+				// 在 Actor 被杀死前，保存持久化状态
+				if facade.smartPersistenceManager != nil {
+					// 智能持久化：强制创建最终快照
+					if facade.smartPersistentActor != nil {
+						facade.smartPersistenceManager.ForceSnapshot(facade.smartPersistentActor.GetCurrentState())
+					}
+				} else if facade.persistenceState != nil {
+					// 传统持久化
+					facade.persistenceState.Persist()
+				}
 				ctx.MessageContext().HandleWith(&OnKill{m: msg})
 			case *actor.OnKilled:
 				// 用户无需处理，屏蔽该消息
@@ -84,13 +151,28 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
 				ctx.MessageContext().HandleWith(&OnDead{m: msg})
 			default:
 				facade.actor.OnReceive(facadeCtx)
+
+				// 注意：不在这里自动保存持久化状态
+				// 持久化应该由用户在消息处理逻辑中主动调用
 			}
 		})
 		return facade
 	})
 
 	// 创建上下文完毕后写入 waiter，通知 Actor 初始化完成（避免竞态问题）
-	facadeCtx = newActorContext(parent.GenerateContext().GenerateActorContext(system, parent, facadeProvider, *config.config))
+	internalCtx := parent.GenerateContext().GenerateActorContext(system, parent, facadeProvider, *config.config)
+
+	// 根据持久化类型创建上下文
+	if smartPersistenceManager != nil {
+		smartCtx := newSmartPersistenceContext(smartPersistenceManager)
+		facadeCtx = newActorContextWithSmartPersistence(internalCtx, smartCtx)
+	} else if sharedPersistenceState != nil {
+		persistenceCtx := newPersistenceContext(sharedPersistenceState)
+		facadeCtx = newActorContextWithPersistence(internalCtx, persistenceCtx)
+	} else {
+		facadeCtx = newActorContext(internalCtx)
+	}
+
 	waiter.Done()
 	return facadeCtx.Ref()
 }
@@ -99,6 +181,10 @@ func newActorFacade(system actor.System, parent actor.Context, provider ActorPro
 // 它包含两个 Actor 实例：一个是内部的 Actor 实例，一个是对外暴露的 Actor 接口实例，
 // 这种设计模式使得内部实现和外部接口可以分离，提高了系统的灵活性和可维护性。
 type actorFacade struct {
-	actor.Actor       // 内部 Actor 实例，用于与系统核心交互
-	actor       Actor // 对外暴露的 Actor 接口实例，用于处理用户定义的消息逻辑
+	actor.Actor                                      // 内部 Actor 实例，用于与系统核心交互
+	actor                   Actor                    // 对外暴露的 Actor 接口实例，用于处理用户定义的消息逻辑
+	persistentActor         PersistentActor          // 持久化 Actor 实例（如果支持传统持久化）
+	persistenceState        *persistence.State       // 持久化状态（如果配置了传统持久化）
+	smartPersistentActor    SmartPersistentActor     // 智能持久化 Actor 实例（如果支持智能持久化）
+	smartPersistenceManager *SmartPersistenceManager // 智能持久化管理器（如果配置了智能持久化）
 }
