@@ -20,8 +20,6 @@ github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnr
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
 github.com/kercylan98/chrono v0.1.1 h1:YDH7fgCtXkoSWPtrIs0zD+iNZropSUs0YgZOvQynvtI=
 github.com/kercylan98/chrono v0.1.1/go.mod h1:QbmrOio44lPWrz4YldC/69c9l1+1MuwyLYV3DDCYC8A=
-github.com/kercylan98/go-log v1.0.1 h1:eggOLdwbMJd0T0OQq71Kh2qBwED9AS/7oe9faKnQ01w=
-github.com/kercylan98/go-log v1.0.1/go.mod h1:0EYmffyCPuzk11ZN4E/3pWC+tsjzR6wkvWbKPV/pinI=
 github.com/kercylan98/go-log v1.0.2 h1:GEZQW4VcUQJB2Iy5nzEDf9q7Q6zwWFlcVCG7sdiE1JM=
 github.com/kercylan98/go-log v1.0.2/go.mod h1:0EYmffyCPuzk11ZN4E/3pWC+tsjzR6wkvWbKPV/pinI=
 github.com/kercylan98/options v0.0.1 h1:6fU6gXICujx3SjUTyRDyICl4onec5JWVLq3prta3nqc=
