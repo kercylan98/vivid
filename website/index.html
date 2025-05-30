@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <meta content="Vivid - 高性能 Actor 系统框架，为分布式系统提供强大的并发计算能力" name="description">
+    <meta content="Actor系统,Go,并发,分布式,高性能,消息传递" name="keywords">
+    <title>Vivid - 强大的 Actor 系统框架</title>
+
+    <!-- 预加载关键资源 -->
+    <link as="style" href="css/main.css" rel="preload">
+    <link as="style" href="css/animations.css" rel="preload">
+
+    <!-- 样式文件 -->
+    <link href="css/main.css" rel="stylesheet">
+    <link href="css/animations.css" rel="stylesheet">
+    <link href="css/components.css" rel="stylesheet">
+
+    <!-- 网站图标 -->
+    <link href="img/favicon.svg" rel="icon" type="image/svg+xml">
+
+    <!-- Open Graph -->
+    <meta content="Vivid - 强大的 Actor 系统框架" property="og:title">
+    <meta content="为分布式系统设计的高性能 Actor 模型实现" property="og:description">
+    <meta content="website" property="og:type">
+    <meta content="img/og-image.svg" property="og:image">
+</head>
+<body>
+<!-- 背景动效 -->
+<div class="background-effects">
+    <div class="neural-network"></div>
+    <div class="particles"></div>
+    <div class="gradient-orbs"></div>
+</div>
+
+<!-- 导航栏 -->
+<nav class="navbar">
+    <div class="nav-container">
+        <div class="nav-brand">
+            <div class="logo-container" id="logo-home">
+                <svg class="logo" viewBox="0 0 120 40" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="logoGradient" x1="0%" x2="100%" y1="0%" y2="100%">
+                            <stop offset="0%" style="stop-color:#00d4ff"/>
+                            <stop offset="50%" style="stop-color:#6c5ce7"/>
+                            <stop offset="100%" style="stop-color:#a29bfe"/>
+                        </linearGradient>
+                    </defs>
+                    <text fill="url(#logoGradient)" font-family="'SF Pro Display', -apple-system, sans-serif" font-size="24"
+                          font-weight="700" x="0" y="28">Vivid
+                    </text>
+                </svg>
+            </div>
+            <div class="brand-info">
+                <span class="tagline">Actor Framework</span>
+                <span class="dev-status">积极开发中</span>
+            </div>
+        </div>
+
+        <ul class="nav-menu">
+            <li><a class="nav-link" href="#features">特性</a></li>
+            <li><a class="nav-link" href="#architecture">架构</a></li>
+            <li><a class="nav-link external" href="https://pkg.go.dev/github.com/kercylan98/vivid" rel="noopener noreferrer"
+                   target="_blank">文档</a></li>
+            <li><a class="nav-link" href="#examples">示例</a></li>
+            <li><a class="nav-link external" href="https://github.com/kercylan98/vivid" rel="noopener noreferrer"
+                   target="_blank">GitHub</a></li>
+        </ul>
+
+        <button aria-label="打开菜单" class="mobile-menu-toggle">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+    </div>
+</nav>
+
+<!-- 主要内容 -->
+<main>
+    <!-- 英雄区域 -->
+    <section class="hero">
+        <div class="hero-container">
+            <div class="hero-content">
+                <h1 class="hero-title">
+                    <span class="title-line">构建</span>
+                    <span class="title-line highlight">Actor 系统</span>
+                    <span class="title-line">的 Go 框架</span>
+                </h1>
+
+                <p class="hero-description">
+                    Vivid 是基于 Actor 模型的 Go 框架，提供简洁的并发编程方式、
+                    内置的容错机制和完善的监控功能，让您专注于业务逻辑的实现。
+                </p>
+
+                <div class="hero-actions">
+                    <a class="btn btn-primary" href="#quick-start">
+                        <span>快速开始</span>
+                        <svg class="btn-icon" viewBox="0 0 24 24">
+                            <path d="M13 7l5 5-5 5M6 7l5 5-5 5"/>
+                        </svg>
+                    </a>
+                    <a class="btn btn-secondary" href="#examples">
+                        <span>查看示例</span>
+                    </a>
+                </div>
+
+                <div class="hero-stats">
+                    <div class="stat">
+                        <span class="stat-number" data-count="100000">0</span>
+                        <span class="stat-label">消息/秒</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-number" data-count="50">0</span>
+                        <span class="stat-label">μs 延迟</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-number" data-count="99.9">0</span>
+                        <span class="stat-label">% 可用性</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="hero-visual">
+                <div class="code-showcase">
+                    <div class="terminal-window">
+                        <div class="terminal-header">
+                            <div class="terminal-controls">
+                                <span class="control close"></span>
+                                <span class="control minimize"></span>
+                                <span class="control maximize"></span>
+                            </div>
+                            <span class="terminal-title">main.go</span>
+                        </div>
+                        <div class="terminal-content">
+                            <pre class="code-block"><code id="hero-code"></code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 特性区域 -->
+    <section class="features" id="features">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">核心特性</h2>
+                <p class="section-subtitle">为现代分布式系统量身定制的强大功能</p>
+            </div>
+
+            <div class="features-grid" id="features-grid">
+                <!-- 特性卡片将由 JavaScript 动态生成 -->
+            </div>
+        </div>
+    </section>
+
+    <!-- 架构区域 -->
+    <section class="architecture" id="architecture">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">系统架构</h2>
+                <p class="section-subtitle">清晰分层的架构设计，确保高性能和可扩展性</p>
+            </div>
+
+            <div class="architecture-diagram">
+                <div class="diagram-container">
+                    <!-- 架构图将由 JavaScript 生成 SVG -->
+                    <svg id="architecture-svg" viewBox="0 0 800 600"></svg>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 快速开始 -->
+    <section class="quick-start" id="quick-start">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">快速开始</h2>
+                <p class="section-subtitle">几分钟内上手 Vivid Actor 系统</p>
+            </div>
+
+            <div class="quick-start-content">
+                <div class="steps-container">
+                    <!-- 步骤内容将由 JavaScript 生成 -->
+                    <div id="installation-steps"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 示例展示 -->
+    <section class="examples" id="examples">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">应用场景</h2>
+                <p class="section-subtitle">Vivid 可以应用于多种并发场景，这些示例正在开发中</p>
+            </div>
+
+            <div class="examples-showcase" id="examples-showcase">
+                <!-- 示例将由 JavaScript 生成 -->
+            </div>
+        </div>
+    </section>
+</main>
+
+<!-- 页脚 -->
+<footer class="footer">
+    <div class="container">
+        <div class="footer-content">
+            <div class="footer-brand">
+                <div class="logo-container">
+                    <svg class="logo" viewBox="0 0 120 40" xmlns="http://www.w3.org/2000/svg">
+                        <text fill="url(#logoGradient)" font-family="'SF Pro Display', -apple-system, sans-serif" font-size="24"
+                              font-weight="700" x="0" y="28">Vivid
+                        </text>
+                    </svg>
+                </div>
+                <p class="footer-description">
+                    基于 Actor 模型的 Go 并发编程框架
+                </p>
+            </div>
+
+            <div class="footer-links">
+                <div class="link-group">
+                    <h4>产品</h4>
+                    <ul>
+                        <li><a href="#features">特性</a></li>
+                        <li><a href="#architecture">架构</a></li>
+                        <li><a href="https://pkg.go.dev/github.com/kercylan98/vivid" target="_blank">文档</a></li>
+                        <li><a href="#examples">示例</a></li>
+                    </ul>
+                </div>
+                <div class="link-group">
+                    <h4>开发者</h4>
+                    <ul>
+                        <li><a href="https://github.com/kercylan98/vivid" target="_blank">GitHub</a></li>
+                        <li><a href="https://pkg.go.dev/github.com/kercylan98/vivid" target="_blank">API 参考</a></li>
+                        <li><a href="https://github.com/kercylan98/vivid/tree/main/examples"
+                               target="_blank">代码示例</a></li>
+                        <li><a href="https://github.com/kercylan98/vivid/blob/main/BENCHMARK.md"
+                               target="_blank">性能测试</a></li>
+                    </ul>
+                </div>
+                <div class="link-group">
+                    <h4>社区</h4>
+                    <ul>
+                        <li><a href="https://github.com/kercylan98/vivid/discussions" target="_blank">讨论</a></li>
+                        <li><a href="https://github.com/kercylan98/vivid/issues" target="_blank">问题报告</a></li>
+                        <li><a href="https://github.com/kercylan98/vivid/blob/main/CONTRIBUTING.md"
+                               target="_blank">贡献指南</a></li>
+                        <li><a href="https://github.com/kercylan98/vivid/releases" target="_blank">更新日志</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer-bottom">
+            <p>&copy; 2025 Vivid. MIT License.</p>
+            <!-- <p>Built with ❤️ for the Go community</p> -->
+        </div>
+    </div>
+</footer>
+
+<!-- JavaScript 文件 -->
+<script src="js/utils.js"></script>
+<script src="js/animations.js"></script>
+<script src="js/components.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html> 

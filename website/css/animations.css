@@ -1,0 +1,580 @@
+/* 关键帧动画定义 */
+
+/* 基础进入动画 */
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideLeft {
+    from {
+        opacity: 0;
+        transform: translateX(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideRight {
+    from {
+        opacity: 0;
+        transform: translateX(-30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes scaleIn {
+    from {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* 背景动效动画 */
+@keyframes drift {
+    0% {
+        transform: translateX(0) translateY(0);
+    }
+    25% {
+        transform: translateX(50px) translateY(-30px);
+    }
+    50% {
+        transform: translateX(-20px) translateY(-50px);
+    }
+    75% {
+        transform: translateX(30px) translateY(-20px);
+    }
+    100% {
+        transform: translateX(0) translateY(0);
+    }
+}
+
+@keyframes float {
+    0%, 100% {
+        transform: translateY(0) rotate(0deg);
+    }
+    25% {
+        transform: translateY(-20px) rotate(1deg);
+    }
+    50% {
+        transform: translateY(-10px) rotate(-1deg);
+    }
+    75% {
+        transform: translateY(-15px) rotate(0.5deg);
+    }
+}
+
+/* 发光效果动画 */
+@keyframes glow {
+    0%, 100% {
+        filter: drop-shadow(0 0 10px rgba(0, 212, 255, 0.3));
+    }
+    50% {
+        filter: drop-shadow(0 0 20px rgba(0, 212, 255, 0.6));
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.05);
+        opacity: 0.8;
+    }
+}
+
+@keyframes pulseGlow {
+    0%, 100% {
+        box-shadow: 0 0 30px rgba(0, 212, 255, 0.2);
+    }
+    50% {
+        box-shadow: 0 0 50px rgba(0, 212, 255, 0.4);
+    }
+}
+
+/* 旋转动画 */
+@keyframes rotate {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes rotateReverse {
+    from {
+        transform: rotate(360deg);
+    }
+    to {
+        transform: rotate(0deg);
+    }
+}
+
+/* 摆动动画 */
+@keyframes swing {
+    0%, 100% {
+        transform: rotate(0deg);
+    }
+    25% {
+        transform: rotate(2deg);
+    }
+    75% {
+        transform: rotate(-2deg);
+    }
+}
+
+/* 数字计数动画 */
+@keyframes countUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* 闪烁动画 */
+@keyframes flicker {
+    0%, 100% {
+        opacity: 1;
+    }
+    25% {
+        opacity: 0.8;
+    }
+    50% {
+        opacity: 0.9;
+    }
+    75% {
+        opacity: 0.7;
+    }
+}
+
+/* 波动效果 */
+@keyframes wave {
+    0%, 100% {
+        transform: translateY(0);
+    }
+    25% {
+        transform: translateY(-5px);
+    }
+    50% {
+        transform: translateY(0);
+    }
+    75% {
+        transform: translateY(3px);
+    }
+}
+
+/* 背景移动动画 */
+@keyframes backgroundShift {
+    0% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
+/* 文本打字机效果 */
+@keyframes typing {
+    from {
+        width: 0;
+    }
+    to {
+        width: 100%;
+    }
+}
+
+@keyframes blink {
+    0%, 50% {
+        border-color: transparent;
+    }
+    51%, 100% {
+        border-color: var(--accent-blue);
+    }
+}
+
+/* 粒子动画 */
+@keyframes particleFloat {
+    0% {
+        transform: translateY(100vh) translateX(0) rotate(0deg);
+        opacity: 0;
+    }
+    10% {
+        opacity: 1;
+    }
+    90% {
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(-100vh) translateX(100px) rotate(360deg);
+        opacity: 0;
+    }
+}
+
+/* 神经网络连接动画 */
+@keyframes networkPulse {
+    0%, 100% {
+        stroke-dasharray: 0, 100;
+        stroke: rgba(0, 212, 255, 0.8);
+    }
+    50% {
+        stroke-dasharray: 50, 100;
+        stroke: rgba(108, 92, 231, 0.8);
+    }
+}
+
+/* 磁场效果 */
+@keyframes magneticField {
+    0% {
+        transform: scale(1) rotate(0deg);
+        opacity: 0.3;
+    }
+    50% {
+        transform: scale(1.2) rotate(180deg);
+        opacity: 0.6;
+    }
+    100% {
+        transform: scale(1) rotate(360deg);
+        opacity: 0.3;
+    }
+}
+
+/* 光线追踪动画 */
+@keyframes lightTrace {
+    0% {
+        transform: translateX(-100%) skewX(-45deg);
+        opacity: 0;
+    }
+    50% {
+        opacity: 1;
+    }
+    100% {
+        transform: translateX(100%) skewX(-45deg);
+        opacity: 0;
+    }
+}
+
+/* 悬浮效果 */
+@keyframes levitate {
+    0%, 100% {
+        transform: translateY(0) rotateY(0deg);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    }
+    25% {
+        transform: translateY(-10px) rotateY(1deg);
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.3);
+    }
+    50% {
+        transform: translateY(-5px) rotateY(0deg);
+        box-shadow: 0 25px 70px rgba(0, 0, 0, 0.35);
+    }
+    75% {
+        transform: translateY(-8px) rotateY(-1deg);
+        box-shadow: 0 28px 75px rgba(0, 0, 0, 0.32);
+    }
+}
+
+/* 全息效果 */
+@keyframes hologram {
+    0%, 100% {
+        opacity: 1;
+        filter: hue-rotate(0deg) brightness(1);
+    }
+    25% {
+        opacity: 0.8;
+        filter: hue-rotate(90deg) brightness(1.2);
+    }
+    50% {
+        opacity: 0.9;
+        filter: hue-rotate(180deg) brightness(0.9);
+    }
+    75% {
+        opacity: 0.85;
+        filter: hue-rotate(270deg) brightness(1.1);
+    }
+}
+
+/* 深度模糊动画 */
+@keyframes depthBlur {
+    0%, 100% {
+        filter: blur(0px) brightness(1);
+        transform: translateZ(0);
+    }
+    50% {
+        filter: blur(2px) brightness(1.2);
+        transform: translateZ(50px);
+    }
+}
+
+/* 能量场动画 */
+@keyframes energyField {
+    0% {
+        background: radial-gradient(circle, rgba(0, 212, 255, 0.1) 0%, transparent 70%);
+        transform: scale(1);
+    }
+    25% {
+        background: radial-gradient(circle, rgba(108, 92, 231, 0.15) 0%, transparent 70%);
+        transform: scale(1.1);
+    }
+    50% {
+        background: radial-gradient(circle, rgba(162, 155, 254, 0.2) 0%, transparent 70%);
+        transform: scale(1.05);
+    }
+    75% {
+        background: radial-gradient(circle, rgba(253, 121, 168, 0.1) 0%, transparent 70%);
+        transform: scale(1.15);
+    }
+    100% {
+        background: radial-gradient(circle, rgba(0, 212, 255, 0.1) 0%, transparent 70%);
+        transform: scale(1);
+    }
+}
+
+/* 动画工具类 */
+.animate-slideUp {
+    animation: slideUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-slideDown {
+    animation: slideDown 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-slideLeft {
+    animation: slideLeft 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-slideRight {
+    animation: slideRight 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-fadeIn {
+    animation: fadeIn 1s ease-out forwards;
+}
+
+.animate-scaleIn {
+    animation: scaleIn 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-glow {
+    animation: glow 2s ease-in-out infinite;
+}
+
+.animate-pulse {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.animate-float {
+    animation: float 6s ease-in-out infinite;
+}
+
+.animate-swing {
+    animation: swing 2s ease-in-out infinite;
+}
+
+.animate-levitate {
+    animation: levitate 4s ease-in-out infinite;
+}
+
+.animate-hologram {
+    animation: hologram 3s linear infinite;
+}
+
+/* 延迟动画类 */
+.delay-100 {
+    animation-delay: 0.1s;
+}
+
+.delay-200 {
+    animation-delay: 0.2s;
+}
+
+.delay-300 {
+    animation-delay: 0.3s;
+}
+
+.delay-400 {
+    animation-delay: 0.4s;
+}
+
+.delay-500 {
+    animation-delay: 0.5s;
+}
+
+.delay-600 {
+    animation-delay: 0.6s;
+}
+
+.delay-700 {
+    animation-delay: 0.7s;
+}
+
+.delay-800 {
+    animation-delay: 0.8s;
+}
+
+.delay-900 {
+    animation-delay: 0.9s;
+}
+
+.delay-1000 {
+    animation-delay: 1s;
+}
+
+/* 交互动画 */
+.hover-lift {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hover-lift:hover {
+    transform: translateY(-5px);
+}
+
+.hover-glow {
+    transition: box-shadow 0.3s ease, filter 0.3s ease;
+}
+
+.hover-glow:hover {
+    box-shadow: 0 0 40px rgba(0, 212, 255, 0.4);
+    filter: brightness(1.1);
+}
+
+.hover-scale {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hover-scale:hover {
+    transform: scale(1.05);
+}
+
+/* 性能优化的动画 */
+.gpu-accelerated {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    perspective: 1000px;
+}
+
+/* 减少动画的选项 */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* 高对比度模式支持 */
+@media (prefers-contrast: high) {
+    .animate-glow,
+    .animate-pulse,
+    .animate-hologram {
+        animation: none;
+    }
+}
+
+/* 自定义滚动条动画 */
+@keyframes scrollbarGlow {
+    0%, 100% {
+        background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+    }
+    50% {
+        background: linear-gradient(90deg, var(--accent-purple), var(--accent-violet));
+    }
+}
+
+/* 代码打字机效果 */
+.typewriter {
+    overflow: hidden;
+    border-right: 2px solid var(--accent-blue);
+    white-space: nowrap;
+    margin: 0 auto;
+    letter-spacing: 0.1em;
+    animation: typing 3.5s steps(40, end), blink 1s step-end infinite;
+}
+
+/* 加载动画 */
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(0, 212, 255, 0.3);
+    border-top: 3px solid var(--accent-blue);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+/* 粒子系统 */
+.particle {
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    background: var(--accent-blue);
+    border-radius: 50%;
+    pointer-events: none;
+    animation: particleFloat 10s linear infinite;
+}
+
+.particle:nth-child(odd) {
+    background: var(--accent-purple);
+    animation-duration: 12s;
+    animation-delay: -2s;
+}
+
+.particle:nth-child(3n) {
+    background: var(--accent-violet);
+    animation-duration: 8s;
+    animation-delay: -4s;
+} 
