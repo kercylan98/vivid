@@ -11,12 +11,10 @@ func newActorConfig() *ActorConfig {
 }
 
 type ActorConfig struct {
-	config          *actor.Config
-	repository      persistence.Repository // 持久化仓库
-	snapshotPolicy  *AutoSnapshotPolicy    // 快照策略
-	serializer      Serializer             // 序列化器
-	enableSmartMode bool                   // 是否启用智能模式
-	monitoring      Metrics                // 监控指标收集器
+	config         *actor.Config
+	repository     persistence.Repository // 持久化仓库
+	snapshotPolicy *AutoSnapshotPolicy    // 快照策略
+	monitoring     Metrics                // 监控指标收集器
 }
 
 // WithDispatcher 函数将使用指定的调度器来创建 Actor
@@ -60,61 +58,36 @@ func (c *ActorConfig) WithSupervisor(supervisor Supervisor) *ActorConfig {
 	return c
 }
 
-// WithPersistence 函数将为 Actor 配置持久化仓库（传统模式）
+// WithPersistence 函数将为 Actor 配置持久化功能
 //
-// 持久化仓库用于保存和加载 Actor 的状态快照和事件，
-// 只有配置了持久化仓库的 Actor 才能使用持久化功能。
-//
-// 注意：只有实现了 PersistentActor 接口的 Actor 才能真正使用持久化功能。
-func (c *ActorConfig) WithPersistence(repository persistence.Repository) *ActorConfig {
-	c.repository = repository
-	c.enableSmartMode = false
-	return c
-}
-
-// WithSmartPersistence 函数将为 Actor 配置智能持久化
-//
-// 智能持久化提供自动快照管理、深拷贝和更好的用户体验
+// 持久化功能提供自动快照管理和状态恢复
 //
 // 参数:
 //   - repository: 持久化仓库
 //   - policy: 快照策略，如果为 nil 则使用默认策略
-//   - serializer: 序列化器，如果为 nil 则使用默认的 JSON 序列化器
 //
-// 注意：只有实现了 SmartPersistentActor 接口的 Actor 才能使用智能持久化功能
-func (c *ActorConfig) WithSmartPersistence(repository persistence.Repository, policy *AutoSnapshotPolicy, serializer Serializer) *ActorConfig {
+// 注意：只有实现了 PersistentActor 接口的 Actor 才能使用持久化功能
+func (c *ActorConfig) WithPersistence(repository persistence.Repository, policy *AutoSnapshotPolicy) *ActorConfig {
 	c.repository = repository
 	c.snapshotPolicy = policy
-	c.serializer = serializer
-	c.enableSmartMode = true
 
 	if c.snapshotPolicy == nil {
 		c.snapshotPolicy = DefaultSnapshotPolicy()
 	}
 
-	if c.serializer == nil {
-		c.serializer = &JSONSerializer{}
-	}
-
 	return c
 }
 
-// WithDefaultSmartPersistence 函数将为 Actor 配置默认的智能持久化
+// WithDefaultPersistence 函数将为 Actor 配置默认的持久化功能
 //
-// 使用默认的快照策略和 JSON 序列化器
-func (c *ActorConfig) WithDefaultSmartPersistence(repository persistence.Repository) *ActorConfig {
-	return c.WithSmartPersistence(repository, nil, nil)
+// 使用默认的快照策略
+func (c *ActorConfig) WithDefaultPersistence(repository persistence.Repository) *ActorConfig {
+	return c.WithPersistence(repository, nil)
 }
 
-// WithSnapshotPolicy 函数设置快照策略（仅在智能模式下有效）
+// WithSnapshotPolicy 函数设置快照策略
 func (c *ActorConfig) WithSnapshotPolicy(policy *AutoSnapshotPolicy) *ActorConfig {
 	c.snapshotPolicy = policy
-	return c
-}
-
-// WithSerializer 函数设置序列化器（仅在智能模式下有效）
-func (c *ActorConfig) WithSerializer(serializer Serializer) *ActorConfig {
-	c.serializer = serializer
 	return c
 }
 

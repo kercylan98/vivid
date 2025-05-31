@@ -6,248 +6,144 @@ import (
 	"github.com/kercylan98/vivid/src/persistence"
 )
 
-// SmartPersistentActor 是增强版的持久化 Actor 接口
+// PersistentActor 持久化Actor接口
 //
-// 相比 PersistentActor，它提供了更智能的持久化功能和更好的用户体验
-type SmartPersistentActor interface {
-	Actor
-
-	// OnRecover 当 Actor 从持久化存储中恢复时被调用
-	OnRecover(ctx SmartPersistenceContext)
-
-	// GetPersistenceId 返回此 Actor 的持久化标识符
-	GetPersistenceId() string
-
-	// GetCurrentState 获取当前状态，用于智能快照
-	//
-	// 返回的状态将被自动深拷贝用于快照保存
-	GetCurrentState() any
-
-	// ApplyEvent 应用事件到当前状态
-	//
-	// 这个方法用于在事件重放时更新状态
-	ApplyEvent(event persistence.Event)
-}
-
-// PersistentActor 是支持持久化的 Actor 接口（保持向后兼容）
+// 系统会自动处理快照、恢复和事件重放等复杂逻辑
 type PersistentActor interface {
 	Actor
 
-	// OnRecover 当 Actor 从持久化存储中恢复时被调用
-	OnRecover(ctx PersistenceContext)
-
-	// GetPersistenceId 返回此 Actor 的持久化标识符
+	// GetPersistenceId 返回此Actor的持久化标识符
 	GetPersistenceId() string
+
+	// GetCurrentState 获取当前状态，用于自动快照
+	//
+	// 返回的状态将被系统保存为快照
+	// 注意：repository实现需要处理状态的序列化
+	GetCurrentState() any
+
+	// RestoreState 恢复状态到指定的状态
+	//
+	// 系统会在Actor启动时自动调用此方法来恢复状态
+	// 用户只需要将传入的状态设置到Actor的字段中即可
+	RestoreState(state any)
 }
 
-// SmartPersistenceContext 是增强版的持久化上下文接口
-type SmartPersistenceContext interface {
-	PersistenceContext
-
-	// PersistWithState 持久化事件并自动管理快照
+// PersistenceContext 持久化操作的上下文接口
+//
+// 提供持久化操作的能力，系统会自动处理快照策略
+type PersistenceContext interface {
+	// Persist 持久化一个事件
 	//
-	// 该方法会根据配置的策略自动决定是否创建快照
-	PersistWithState(event persistence.Event, currentState any) error
+	// 系统会根据配置的策略自动决定是否创建快照
+	Persist(event persistence.Event) error
 
 	// ForceSnapshot 强制创建快照
-	ForceSnapshot(state any) error
-
-	// GetSnapshotPolicy 获取当前的快照策略
-	GetSnapshotPolicy() *AutoSnapshotPolicy
-
-	// SetSnapshotPolicy 设置快照策略
-	SetSnapshotPolicy(policy *AutoSnapshotPolicy)
-
-	// GetEventCount 获取自上次快照以来的事件数量
-	GetEventCount() int
-
-	// GetLastSnapshotTime 获取上次快照时间
-	GetLastSnapshotTime() time.Time
+	//
+	// 一般不需要手动调用，系统会根据策略自动创建快照
+	ForceSnapshot() error
 }
 
-// PersistenceContext 是持久化操作的上下文接口（保持向后兼容）
-type PersistenceContext interface {
-	// GetSnapshot 获取当前的快照数据
-	GetSnapshot() persistence.Snapshot
-
-	// GetEvents 获取自最后一次快照以来的所有事件
-	GetEvents() []persistence.Event
-
-	// Persist 持久化一个事件
-	Persist(event persistence.Event)
-
-	// SaveSnapshot 保存当前状态的快照
-	SaveSnapshot(snapshot persistence.Snapshot)
-
-	// CanRecover 检查是否有可恢复的数据
-	CanRecover() bool
+// AutoSnapshotPolicy 自动快照策略配置
+type AutoSnapshotPolicy struct {
+	// EventThreshold 事件数量阈值，超过此数量自动创建快照
+	EventThreshold int
+	// TimeThreshold 时间阈值，超过此时间自动创建快照
+	TimeThreshold time.Duration
+	// StateChangeThreshold 状态变化阈值，状态变化超过此比例时创建快照
+	StateChangeThreshold float64
+	// ForceSnapshotOnShutdown 在Actor关闭时强制创建快照
+	ForceSnapshotOnShutdown bool
 }
 
-// smartPersistenceContext 是增强版持久化上下文的实现
-type smartPersistenceContext struct {
-	manager *SmartPersistenceManager
-}
-
-// newSmartPersistenceContext 创建增强版持久化上下文
-func newSmartPersistenceContext(manager *SmartPersistenceManager) SmartPersistenceContext {
-	return &smartPersistenceContext{
-		manager: manager,
+// DefaultSnapshotPolicy 返回默认的快照策略
+func DefaultSnapshotPolicy() *AutoSnapshotPolicy {
+	return &AutoSnapshotPolicy{
+		EventThreshold:          10,              // 每10个事件创建一次快照
+		TimeThreshold:           5 * time.Minute, // 每5分钟创建一次快照
+		StateChangeThreshold:    0.3,             // 状态变化30%时创建快照
+		ForceSnapshotOnShutdown: true,
 	}
 }
 
-func (p *smartPersistenceContext) GetSnapshot() persistence.Snapshot {
-	return p.manager.state.GetSnapshot()
+// ShouldCreateSnapshot 判断是否应该创建快照
+func (p *AutoSnapshotPolicy) ShouldCreateSnapshot(eventCount int, lastSnapshot time.Time) bool {
+	// 基于事件数量判断
+	if eventCount >= p.EventThreshold {
+		return true
+	}
+
+	// 基于时间判断
+	if time.Since(lastSnapshot) >= p.TimeThreshold {
+		return true
+	}
+
+	return false
 }
 
-func (p *smartPersistenceContext) GetEvents() []persistence.Event {
-	return p.manager.state.GetEvents()
-}
-
-func (p *smartPersistenceContext) Persist(event persistence.Event) {
-	p.manager.state.Update(event)
-	p.manager.state.Persist()
-}
-
-func (p *smartPersistenceContext) SaveSnapshot(snapshot persistence.Snapshot) {
-	p.manager.state.SaveSnapshot(snapshot)
-	p.manager.state.Persist()
-}
-
-func (p *smartPersistenceContext) CanRecover() bool {
-	return p.manager.state.GetSnapshot() != nil || len(p.manager.state.GetEvents()) > 0
-}
-
-func (p *smartPersistenceContext) PersistWithState(event persistence.Event, currentState any) error {
-	return p.manager.PersistEvent(event, currentState)
-}
-
-func (p *smartPersistenceContext) ForceSnapshot(state any) error {
-	return p.manager.ForceSnapshot(state)
-}
-
-func (p *smartPersistenceContext) GetSnapshotPolicy() *AutoSnapshotPolicy {
-	return p.manager.policy
-}
-
-func (p *smartPersistenceContext) SetSnapshotPolicy(policy *AutoSnapshotPolicy) {
-	p.manager.policy = policy
-}
-
-func (p *smartPersistenceContext) GetEventCount() int {
-	return p.manager.eventCount
-}
-
-func (p *smartPersistenceContext) GetLastSnapshotTime() time.Time {
-	return p.manager.lastSnapshot
-}
-
-// persistenceContext 是原始持久化上下文的实现（保持向后兼容）
+// persistenceContext 持久化上下文的简化实现
 type persistenceContext struct {
-	state *persistence.State
+	state        *persistence.State
+	policy       *AutoSnapshotPolicy
+	actor        PersistentActor
+	eventCount   int
+	lastSnapshot time.Time
 }
 
 // newPersistenceContext 创建持久化上下文
-func newPersistenceContext(state *persistence.State) PersistenceContext {
+func newPersistenceContext(state *persistence.State, policy *AutoSnapshotPolicy, actor PersistentActor) PersistenceContext {
+	if policy == nil {
+		policy = DefaultSnapshotPolicy()
+	}
+
 	return &persistenceContext{
-		state: state,
+		state:        state,
+		policy:       policy,
+		actor:        actor,
+		lastSnapshot: time.Now(),
 	}
 }
 
-func (p *persistenceContext) GetSnapshot() persistence.Snapshot {
-	return p.state.GetSnapshot()
-}
-
-func (p *persistenceContext) GetEvents() []persistence.Event {
-	return p.state.GetEvents()
-}
-
-func (p *persistenceContext) Persist(event persistence.Event) {
+func (p *persistenceContext) Persist(event persistence.Event) error {
+	// 持久化事件
 	p.state.Update(event)
-	// 立即保存到仓库
-	p.state.Persist()
-}
+	p.eventCount++
 
-func (p *persistenceContext) SaveSnapshot(snapshot persistence.Snapshot) {
-	p.state.SaveSnapshot(snapshot)
-	// 立即保存到仓库
-	p.state.Persist()
-}
-
-func (p *persistenceContext) CanRecover() bool {
-	return p.state.GetSnapshot() != nil || len(p.state.GetEvents()) > 0
-}
-
-// PersistentActorFN 是一个函数类型，实现了 PersistentActor 接口（保持向后兼容）
-type PersistentActorFN struct {
-	OnReceiveFN     func(ctx ActorContext)
-	OnRecoverFN     func(ctx PersistenceContext)
-	PersistenceIdFN func() string
-}
-
-// OnReceive 实现 Actor 接口的 OnReceive 方法
-func (fn PersistentActorFN) OnReceive(ctx ActorContext) {
-	if fn.OnReceiveFN != nil {
-		fn.OnReceiveFN(ctx)
+	// 检查是否需要自动创建快照
+	if p.policy.ShouldCreateSnapshot(p.eventCount, p.lastSnapshot) {
+		if err := p.ForceSnapshot(); err != nil {
+			return err
+		}
 	}
+
+	// 保存到仓库
+	return p.state.Persist()
 }
 
-// OnRecover 实现 PersistentActor 接口的 OnRecover 方法
-func (fn PersistentActorFN) OnRecover(ctx PersistenceContext) {
-	if fn.OnRecoverFN != nil {
-		fn.OnRecoverFN(ctx)
+func (p *persistenceContext) ForceSnapshot() error {
+	// 获取当前状态
+	currentState := p.actor.GetCurrentState()
+
+	// 直接保存状态，不进行深拷贝
+	// 深拷贝的责任应该在repository层根据具体的序列化需求处理
+	p.state.SaveSnapshot(currentState)
+	p.eventCount = 0 // 重置事件计数
+	p.lastSnapshot = time.Now()
+
+	return p.state.Persist()
+}
+
+// autoRecover 自动恢复Actor状态
+func autoRecover(state *persistence.State, actor PersistentActor) error {
+	if err := state.Load(); err != nil {
+		return err
 	}
-}
 
-// GetPersistenceId 实现 PersistentActor 接口的 GetPersistenceId 方法
-func (fn PersistentActorFN) GetPersistenceId() string {
-	if fn.PersistenceIdFN != nil {
-		return fn.PersistenceIdFN()
+	// 从快照恢复状态
+	if snapshot := state.GetSnapshot(); snapshot != nil {
+		actor.RestoreState(snapshot)
 	}
-	return ""
-}
 
-// SmartPersistentActorFN 是增强版的函数类型，实现了 SmartPersistentActor 接口
-type SmartPersistentActorFN struct {
-	OnReceiveFN     func(ctx ActorContext)
-	OnRecoverFN     func(ctx SmartPersistenceContext)
-	PersistenceIdFN func() string
-	GetStateFN      func() any
-	ApplyEventFN    func(event persistence.Event)
-}
-
-// OnReceive 实现 Actor 接口的 OnReceive 方法
-func (fn SmartPersistentActorFN) OnReceive(ctx ActorContext) {
-	if fn.OnReceiveFN != nil {
-		fn.OnReceiveFN(ctx)
-	}
-}
-
-// OnRecover 实现 SmartPersistentActor 接口的 OnRecover 方法
-func (fn SmartPersistentActorFN) OnRecover(ctx SmartPersistenceContext) {
-	if fn.OnRecoverFN != nil {
-		fn.OnRecoverFN(ctx)
-	}
-}
-
-// GetPersistenceId 实现 SmartPersistentActor 接口的 GetPersistenceId 方法
-func (fn SmartPersistentActorFN) GetPersistenceId() string {
-	if fn.PersistenceIdFN != nil {
-		return fn.PersistenceIdFN()
-	}
-	return ""
-}
-
-// GetCurrentState 实现 SmartPersistentActor 接口的 GetCurrentState 方法
-func (fn SmartPersistentActorFN) GetCurrentState() any {
-	if fn.GetStateFN != nil {
-		return fn.GetStateFN()
-	}
+	// 注意：事件重放在这个简化版本中暂不实现
+	// 因为需要复杂的消息重发机制
 	return nil
-}
-
-// ApplyEvent 实现 SmartPersistentActor 接口的 ApplyEvent 方法
-func (fn SmartPersistentActorFN) ApplyEvent(event persistence.Event) {
-	if fn.ApplyEventFN != nil {
-		fn.ApplyEventFN(event)
-	}
 }

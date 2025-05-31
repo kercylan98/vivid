@@ -224,15 +224,6 @@ func newActorContextWithPersistence(ctx actor.Context, persistenceCtx Persistenc
 	}
 }
 
-// newActorContextWithSmartPersistence 创建一个带有智能持久化支持的 ActorContext 实例。
-func newActorContextWithSmartPersistence(ctx actor.Context, smartPersistenceCtx SmartPersistenceContext) ActorContext {
-	return &actorContext{
-		ctx:            ctx,
-		persistenceCtx: smartPersistenceCtx,
-		monitoringCtx:  newMonitoringContext(nil, ctx.MetadataContext().Ref()),
-	}
-}
-
 // newActorContextWithMonitoring 创建一个带有监控支持的 ActorContext 实例。
 func newActorContextWithMonitoring(ctx actor.Context, monitoringCtx MonitoringContext) ActorContext {
 	return &actorContext{

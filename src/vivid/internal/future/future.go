@@ -73,7 +73,12 @@ func (f *Future) Result() (any, error) {
 	return m, f.err
 }
 
-func (f *Future) HandleMessage(sender wasteland.ResourceLocator, priority wasteland.MessagePriority, message wasteland.Message) {
+func (f *Future) Wait() error {
+	<-f.done
+	return f.err
+}
+
+func (f *Future) HandleMessage(_ wasteland.ResourceLocator, _ wasteland.MessagePriority, message wasteland.Message) {
 	if f.closed.Load() {
 		return
 	}
