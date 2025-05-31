@@ -12,10 +12,9 @@ type MetricsSnapshot struct {
 	Timestamp time.Time `json:"timestamp"`
 
 	// 消息指标
-	MessagesSent       int64   `json:"messages_sent"`
-	MessagesReceived   int64   `json:"messages_received"`
-	MessagesDeadLetter int64   `json:"messages_dead_letter"`
-	MessageThroughput  float64 `json:"message_throughput"` // 每秒消息数
+	MessagesSent      int64   `json:"messages_sent"`
+	MessagesReceived  int64   `json:"messages_received"`
+	MessageThroughput float64 `json:"message_throughput"` // 每秒消息数
 
 	// 分类消息指标
 	UserMessagesSent       int64 `json:"user_messages_sent"`       // 用户消息发送数
@@ -119,10 +118,9 @@ type SystemMetricsSnapshot struct {
 	Timestamp time.Time `json:"timestamp"`
 
 	// 系统消息指标（只读）
-	MessagesSent       int64   `json:"messages_sent"`
-	MessagesReceived   int64   `json:"messages_received"`
-	MessagesDeadLetter int64   `json:"messages_dead_letter"`
-	MessageThroughput  float64 `json:"message_throughput"`
+	MessagesSent      int64   `json:"messages_sent"`
+	MessagesReceived  int64   `json:"messages_received"`
+	MessageThroughput float64 `json:"message_throughput"`
 
 	// 延迟指标
 	AverageLatency time.Duration `json:"average_latency"`
@@ -172,63 +170,27 @@ type TimingData struct {
 	P99    time.Duration `json:"p99"`
 }
 
-// DeadLetterMessage 表示一个死信消息的结构。
-type DeadLetterMessage struct {
-	From      ActorRef  `json:"from"`
-	To        ActorRef  `json:"to"`
-	Message   Message   `json:"message"`
-	Reason    string    `json:"reason"`
-	Timestamp time.Time `json:"timestamp"`
-	Attempts  int       `json:"attempts"` // 重试次数
-}
-
-// DeadLetterHandler 定义了死信处理器的接口。
-type DeadLetterHandler interface {
-	// HandleDeadLetter 处理单个死信消息
-	HandleDeadLetter(deadLetter DeadLetterMessage)
-
-	// GetDeadLetters 获取所有死信消息的列表
-	GetDeadLetters() []DeadLetterMessage
-
-	// GetDeadLetterCount 获取死信消息的总数量
-	GetDeadLetterCount() int64
-
-	// ClearDeadLetters 清空所有死信消息
-	ClearDeadLetters()
-}
-
 // MonitoringConfig 包含监控系统的配置选项。
 type MonitoringConfig struct {
 	// EnableMetrics 指示是否启用指标收集
 	EnableMetrics bool
 
-	// EnableDeadLetterHandling 指示是否启用死信处理
-	EnableDeadLetterHandling bool
-
 	// MetricsInterval 指定指标收集的时间间隔
 	MetricsInterval time.Duration
-
-	// DeadLetterQueueSize 指定死信队列的最大大小
-	DeadLetterQueueSize int
 
 	// MaxActorMetrics 指定最大 Actor 指标数量
 	MaxActorMetrics int
 
 	// CustomMetricsExporter 用于导出自定义指标的回调函数
 	CustomMetricsExporter func(system SystemMetricsSnapshot, custom CustomMetricsSnapshot)
-
-	// CustomDeadLetterHandler 自定义的死信处理器
-	CustomDeadLetterHandler DeadLetterHandler
 }
 
 // DefaultMonitoringConfig 返回具有默认值的监控配置。
 func DefaultMonitoringConfig() *MonitoringConfig {
 	return &MonitoringConfig{
-		EnableMetrics:            true,
-		EnableDeadLetterHandling: true,
-		MetricsInterval:          time.Second * 10,
-		DeadLetterQueueSize:      1000,
-		MaxActorMetrics:          10000,
+		EnableMetrics:   true,
+		MetricsInterval: time.Second * 10,
+		MaxActorMetrics: 10000,
 	}
 }
 
@@ -238,21 +200,9 @@ func (c *MonitoringConfig) WithEnableMetrics(enable bool) *MonitoringConfig {
 	return c
 }
 
-// WithEnableDeadLetterHandling 设置是否启用死信处理并返回配置实例。
-func (c *MonitoringConfig) WithEnableDeadLetterHandling(enable bool) *MonitoringConfig {
-	c.EnableDeadLetterHandling = enable
-	return c
-}
-
 // WithMetricsInterval 设置指标收集间隔并返回配置实例。
 func (c *MonitoringConfig) WithMetricsInterval(interval time.Duration) *MonitoringConfig {
 	c.MetricsInterval = interval
-	return c
-}
-
-// WithDeadLetterQueueSize 设置死信队列大小并返回配置实例。
-func (c *MonitoringConfig) WithDeadLetterQueueSize(size int) *MonitoringConfig {
-	c.DeadLetterQueueSize = size
 	return c
 }
 
@@ -268,18 +218,11 @@ func (c *MonitoringConfig) WithCustomMetricsExporter(exporter func(system System
 	return c
 }
 
-// WithCustomDeadLetterHandler 设置自定义死信处理器并返回配置实例。
-func (c *MonitoringConfig) WithCustomDeadLetterHandler(handler DeadLetterHandler) *MonitoringConfig {
-	c.CustomDeadLetterHandler = handler
-	return c
-}
-
 // metricsCollector 是指标收集器的默认实现。
 type metricsCollector struct {
 	// 系统指标（内部使用）
 	messagesSent     int64
 	messagesReceived int64
-	deadLetterCount  int64
 	activeActors     int64
 	createdActors    int64
 	terminatedActors int64
@@ -343,9 +286,7 @@ func NewMetricsCollector(config *MonitoringConfig) Metrics {
 // NewSimpleMetrics 创建一个简单的监控实例（仅启用基本指标收集）
 func NewSimpleMetrics() Metrics {
 	config := DefaultMonitoringConfig().
-		WithEnableMetrics(true).
-		WithEnableDeadLetterHandling(false).
-		WithMetricsInterval(5 * time.Second)
+		WithEnableMetrics(true)
 	return NewMetricsCollector(config)
 }
 
@@ -353,9 +294,7 @@ func NewSimpleMetrics() Metrics {
 func NewProductionMetrics() Metrics {
 	config := DefaultMonitoringConfig().
 		WithEnableMetrics(true).
-		WithEnableDeadLetterHandling(true).
 		WithMetricsInterval(10 * time.Second).
-		WithDeadLetterQueueSize(10000).
 		WithMaxActorMetrics(1000)
 	return NewMetricsCollector(config)
 }
@@ -364,9 +303,7 @@ func NewProductionMetrics() Metrics {
 func NewDevelopmentMetrics() Metrics {
 	config := DefaultMonitoringConfig().
 		WithEnableMetrics(true).
-		WithEnableDeadLetterHandling(true).
 		WithMetricsInterval(1 * time.Second).
-		WithDeadLetterQueueSize(1000).
 		WithMaxActorMetrics(100)
 	return NewMetricsCollector(config)
 }
@@ -538,19 +475,18 @@ func (m *metricsCollector) getSystemSnapshot() SystemMetricsSnapshot {
 	}
 
 	return SystemMetricsSnapshot{
-		Timestamp:          now,
-		MessagesSent:       messagesSent,
-		MessagesReceived:   messagesReceived,
-		MessagesDeadLetter: atomic.LoadInt64(&m.deadLetterCount),
-		MessageThroughput:  throughput,
-		AverageLatency:     avgLatency,
-		MaxLatency:         time.Duration(atomic.LoadInt64(&m.maxLatency)),
-		MinLatency:         time.Duration(atomic.LoadInt64(&m.minLatency)),
-		ActiveActors:       atomic.LoadInt64(&m.activeActors),
-		CreatedActors:      atomic.LoadInt64(&m.createdActors),
-		TerminatedActors:   atomic.LoadInt64(&m.terminatedActors),
-		RestartedActors:    atomic.LoadInt64(&m.restartedActors),
-		UptimeDuration:     uptime,
+		Timestamp:         now,
+		MessagesSent:      messagesSent,
+		MessagesReceived:  messagesReceived,
+		MessageThroughput: throughput,
+		AverageLatency:    avgLatency,
+		MaxLatency:        time.Duration(atomic.LoadInt64(&m.maxLatency)),
+		MinLatency:        time.Duration(atomic.LoadInt64(&m.minLatency)),
+		ActiveActors:      atomic.LoadInt64(&m.activeActors),
+		CreatedActors:     atomic.LoadInt64(&m.createdActors),
+		TerminatedActors:  atomic.LoadInt64(&m.terminatedActors),
+		RestartedActors:   atomic.LoadInt64(&m.restartedActors),
+		UptimeDuration:    uptime,
 	}
 }
 
@@ -592,11 +528,6 @@ func (m *metricsCollector) recordSystemMessageReceived(actor ActorRef, messageTy
 	atomic.AddInt64(&m.systemMessagesReceived, 1)
 	m.updateLatencyStats(latency)
 	m.updateActorMetrics(actor, messageType, latency, false)
-}
-
-// recordMessageDeadLetter 内部方法：记录死信消息
-func (m *metricsCollector) recordMessageDeadLetter(from, to ActorRef, message Message, reason string) {
-	atomic.AddInt64(&m.deadLetterCount, 1)
 }
 
 // recordActorCreated 内部方法：记录Actor创建
@@ -723,7 +654,6 @@ func (m *metricsCollector) GetAllActorMetrics() []ActorMetrics {
 func (m *metricsCollector) Reset() {
 	atomic.StoreInt64(&m.messagesSent, 0)
 	atomic.StoreInt64(&m.messagesReceived, 0)
-	atomic.StoreInt64(&m.deadLetterCount, 0)
 	atomic.StoreInt64(&m.createdActors, 0)
 	atomic.StoreInt64(&m.terminatedActors, 0)
 	atomic.StoreInt64(&m.restartedActors, 0)
@@ -796,7 +726,6 @@ type internalMetrics interface {
 	recordUserMessageReceived(actor ActorRef, messageType string, latency time.Duration)
 	recordSystemMessageSent(from, to ActorRef, messageType string)
 	recordSystemMessageReceived(actor ActorRef, messageType string, latency time.Duration)
-	recordMessageDeadLetter(from, to ActorRef, message Message, reason string)
 	recordActorCreated(actor ActorRef, actorType string)
 	recordActorTerminated(actor ActorRef, reason string)
 	recordActorRestarted(actor ActorRef, reason string)
