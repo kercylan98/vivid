@@ -1,9 +1,9 @@
 package processor
 
 import (
-    "github.com/kercylan98/go-log/log"
-    "github.com/kercylan98/vivid/src/configurator"
-    "github.com/kercylan98/vivid/src/serializer"
+	"github.com/kercylan98/go-log/log"
+	"github.com/kercylan98/vivid/src/configurator"
+	"github.com/kercylan98/vivid/src/serializer"
 )
 
 // NewRPCUnitConfiguration 创建新的RPCUnit配置实例
@@ -16,76 +16,76 @@ import (
 // 返回:
 //   - *RPCUnitConfiguration: 配置实例
 func NewRPCUnitConfiguration(options ...RPCUnitOption) *RPCUnitConfiguration {
-    c := &RPCUnitConfiguration{
-        Logger:    log.GetDefault(),
-        BatchSize: 1000,
-        FailRetry: 10,
-    }
-    for _, option := range options {
-        option(c)
-    }
-    return c
+	c := &RPCUnitConfiguration{
+		Logger:    log.GetDefault(),
+		BatchSize: 1000,
+		FailRetry: 10,
+	}
+	for _, option := range options {
+		option(c)
+	}
+	return c
 }
 
 type (
-    // RPCUnitConfigurator 配置器接口
-    RPCUnitConfigurator = configurator.Configurator[*RPCUnitConfiguration]
+	// RPCUnitConfigurator 配置器接口
+	RPCUnitConfigurator = configurator.Configurator[*RPCUnitConfiguration]
 
-    // RPCUnitConfiguratorFN 配置器函数类型
-    RPCUnitConfiguratorFN = configurator.FN[*RPCUnitConfiguration]
+	// RPCUnitConfiguratorFN 配置器函数类型
+	RPCUnitConfiguratorFN = configurator.FN[*RPCUnitConfiguration]
 
-    // RPCUnitOption 配置选项函数类型
-    RPCUnitOption = configurator.Option[*RPCUnitConfiguration]
+	// RPCUnitOption 配置选项函数类型
+	RPCUnitOption = configurator.Option[*RPCUnitConfiguration]
 
-    // RPCUnitConfiguration RPCUnit配置结构体
-    RPCUnitConfiguration struct {
-        Logger     log.Logger                // 日志记录器
-        Serializer serializer.NameSerializer // 名称序列化器
-        BatchSize  int                       // 批量处理大小
-        FailRetry  int                       // 失败重试次数
-    }
+	// RPCUnitConfiguration RPCUnit配置结构体
+	RPCUnitConfiguration struct {
+		Logger     log.Logger                // 日志记录器
+		Serializer serializer.NameSerializer // 名称序列化器
+		BatchSize  int                       // 批量处理大小
+		FailRetry  int                       // 失败重试次数
+	}
 )
 
 func (c *RPCUnitConfiguration) WithLogger(logger log.Logger) *RPCUnitConfiguration {
-    c.Logger = logger
-    return c
+	c.Logger = logger
+	return c
 }
 
 func WithRPCUnitLogger(logger log.Logger) RPCUnitOption {
-    return func(configuration *RPCUnitConfiguration) {
-        configuration.WithLogger(logger)
-    }
+	return func(configuration *RPCUnitConfiguration) {
+		configuration.WithLogger(logger)
+	}
 }
 
 func (c *RPCUnitConfiguration) WithSerializer(serializer serializer.NameSerializer) *RPCUnitConfiguration {
-    c.Serializer = serializer
-    return c
+	c.Serializer = serializer
+	return c
 }
 
 func WithRPCUnitSerializer(serializer serializer.NameSerializer) RPCUnitOption {
-    return func(configuration *RPCUnitConfiguration) {
-        configuration.WithSerializer(serializer)
-    }
+	return func(configuration *RPCUnitConfiguration) {
+		configuration.WithSerializer(serializer)
+	}
 }
 
 func (c *RPCUnitConfiguration) WithBatchSize(batchSize int) *RPCUnitConfiguration {
-    c.BatchSize = batchSize
-    return c
+	c.BatchSize = batchSize
+	return c
 }
 
 func WithRPCUnitBatchSize(batchSize int) RPCUnitOption {
-    return func(configuration *RPCUnitConfiguration) {
-        configuration.WithBatchSize(batchSize)
-    }
+	return func(configuration *RPCUnitConfiguration) {
+		configuration.WithBatchSize(batchSize)
+	}
 }
 
 func (c *RPCUnitConfiguration) WithFailRetry(failRetry int) *RPCUnitConfiguration {
-    c.FailRetry = failRetry
-    return c
+	c.FailRetry = failRetry
+	return c
 }
 
 func WithRPCUnitFailRetry(failRetry int) RPCUnitOption {
-    return func(configuration *RPCUnitConfiguration) {
-        configuration.WithFailRetry(failRetry)
-    }
+	return func(configuration *RPCUnitConfiguration) {
+		configuration.WithFailRetry(failRetry)
+	}
 }

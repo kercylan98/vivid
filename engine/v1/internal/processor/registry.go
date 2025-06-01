@@ -2,10 +2,13 @@
 package processor
 
 import (
+	"context"
 	"fmt"
-	"github.com/kercylan98/vivid/engine/v1/processor"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/kercylan98/vivid/engine/v1/processor"
 
 	"github.com/kercylan98/go-log/log"
 	"github.com/puzpuzpuz/xsync/v3"
@@ -36,11 +39,23 @@ func newRegistry(config RegistryConfiguration) *registry {
 	if config.Logger == nil {
 		config.Logger = log.GetDefault()
 	}
-	return &registry{
-		config:  config,
-		units:   xsync.NewMapOf[string, Unit](),
-		rpcLock: xsync.NewMapOf[string, *sync.Mutex](),
+
+	r := &registry{
+		config:    config,
+		units:     xsync.NewMapOf[string, Unit](),
+		rpcServer: config.RPCServer,
 	}
+
+	// 如果配置了 RPC 服务器，设置上下文
+	if r.rpcServer != nil {
+		r.rootUnitIdentifier = newUnitIdentifier(r.rpcServer.config.AdvertisedAddress, "/")
+		r.rpcLock = xsync.NewMapOf[string, *sync.Mutex]()
+		r.ctx, r.cancel = context.WithCancel(context.Background())
+	} else {
+		r.rootUnitIdentifier = newUnitIdentifier(onlyLocalAddress, "/")
+	}
+
+	return r
 }
 
 // Registry 定义了处理单元注册表的接口。
@@ -64,8 +79,13 @@ type Registry interface {
 	// UnregisterUnit 从注册表注销处理单元，如果单元实现了 UnitCloser 接口，会自动调用关闭方法。
 	UnregisterUnit(operator, target UnitIdentifier)
 
+	// StartRPCServer 启动 RPC 服务器
+	// 如果配置了 RPC 服务器，则启动服务器监听远程连接
+	// 此方法是幂等的，多次调用不会产生副作用
+	StartRPCServer() error
+
 	// Shutdown 关闭注册表
-	// 会依次关闭所有注册的处理单元
+	// 会依次关闭所有注册的处理单元和 RPC 服务器
 	Shutdown(operator UnitIdentifier) error
 
 	// IsShutdown 检查注册表是否已关闭
@@ -77,12 +97,16 @@ type Registry interface {
 
 // registry 注册表的具体实现。
 // 使用并发安全的数据结构来支持高并发访问。
+// 支持 RPC 服务器的自动生命周期管理。
 type registry struct {
-	config    RegistryConfiguration             // 注册表配置
-	units     *xsync.MapOf[string, Unit]        // 处理单元映射表，key为路径，value为处理单元
-	shutdown  atomic.Bool                       // 关闭状态标志
-	rpcServer *RPCServer                        // RPC 服务器
-	rpcLock   *xsync.MapOf[string, *sync.Mutex] // RPC 服务器锁
+	config             RegistryConfiguration             // 注册表配置
+	rootUnitIdentifier UnitIdentifier                    // 根单元标识符
+	units              *xsync.MapOf[string, Unit]        // 处理单元映射表，key为路径，value为处理单元
+	shutdown           atomic.Bool                       // 关闭状态标志
+	rpcServer          *RPCServer                        // RPC 服务器实例
+	rpcLock            *xsync.MapOf[string, *sync.Mutex] // RPC 服务器锁，防止并发访问冲突
+	ctx                context.Context                   // RPC 服务器上下文
+	cancel             context.CancelFunc                // RPC 服务器取消函数
 }
 
 // Logger 实现 Registry 接口，返回日志记录器。
@@ -92,7 +116,7 @@ func (r *registry) Logger() log.Logger {
 
 // GetUnitIdentifier 实现 Registry 接口，返回根单元标识符。
 func (r *registry) GetUnitIdentifier() UnitIdentifier {
-	return r.config.RootUnitIdentifier
+	return r.rootUnitIdentifier
 }
 
 // getDaemon 实现 Registry 接口，获取守护单元。
@@ -143,7 +167,7 @@ func (r *registry) GetUnit(id CacheUnitIdentifier) (unit Unit, err error) {
 	path := id.GetPath()
 
 	// 远程单元解析
-	if id.GetAddress() != r.config.RootUnitIdentifier.GetAddress() {
+	if id.GetAddress() != r.rootUnitIdentifier.GetAddress() {
 		return r.fromRPC(id)
 	}
 
@@ -215,8 +239,101 @@ func (r *registry) UnregisterUnit(operator, target UnitIdentifier) {
 	}
 }
 
+// StartRPCServer 实现 Registry 接口，启动 RPC 服务器。
+// 此方法是幂等的，多次调用不会产生副作用。
+// 如果未配置 RPC 服务器，此方法将返回 nil。
+func (r *registry) StartRPCServer() error {
+	if r.IsShutdown() {
+		return ErrRegistryShutdown
+	}
+
+	if r.rpcServer == nil {
+		r.Logger().Debug("no RPC server configured, skipping startup")
+		return nil
+	}
+
+	r.Logger().Info("starting RPC server")
+
+	// 设置 RPC 服务器的上下文
+	if r.ctx != nil {
+		r.rpcServer.SetContext(r.ctx)
+	}
+
+	// 在独立的 goroutine 中启动 RPC 服务器
+	go func() {
+		if err := r.rpcServer.Run(); err != nil {
+			r.Logger().Error("RPC server error", log.Err(err))
+		}
+	}()
+
+	r.Logger().Info("RPC server started successfully")
+	return nil
+}
+
+// fromRPC 处理远程 RPC 连接的获取逻辑。
+// 增加了超时机制和更完善的错误处理。
+func (r *registry) fromRPC(id CacheUnitIdentifier) (unit Unit, err error) {
+	// 使用锁确保同一 ID 的 RPC 连接只被一个协程使用，防止并发访问
+	key := id.GetAddress() + id.GetPath()
+	lock, _ := r.rpcLock.LoadOrStore(key, &sync.Mutex{})
+
+	// 增加超时机制防止死锁
+	done := make(chan struct{})
+	go func() {
+		lock.Lock()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		defer func() {
+			r.rpcLock.Delete(key)
+			lock.Unlock()
+		}()
+	case <-time.After(5 * time.Second): // 5秒超时
+		return nil, fmt.Errorf("RPC lock timeout for %s", key)
+	}
+
+	// 建立远程单元客户端
+	var conn processor.RPCConn
+	if r.config.RPCClientProvider != nil {
+		if conn, err = r.config.RPCClientProvider.Provide(id.GetAddress()); err != nil {
+			return nil, fmt.Errorf("RPC client provider error: %w", err)
+		} else {
+			handshake := processor.NewRPCHandshakeWithAddress(r.rootUnitIdentifier.GetAddress())
+			handshakeBuf, err := handshake.Marshal()
+			if err != nil {
+				return nil, fmt.Errorf("RPC handshake marshal error: %w", err)
+			}
+			if err = conn.Send(handshakeBuf); err != nil {
+				return nil, fmt.Errorf("RPC handshake error: %w", err)
+			}
+			go r.rpcServer.onConnected(conn)
+		}
+	} else if r.rpcServer != nil {
+		// 尝试查找已有连接，增加空指针检查
+		conn = r.rpcServer.GetConn(id.GetAddress())
+	}
+
+	if conn == nil {
+		if daemon, exists := r.getDaemon(); exists {
+			return daemon, nil
+		}
+		return nil, ErrDaemonUnitNotSet
+	}
+
+	rpcUnitConfig := NewRPCUnitConfiguration(WithRPCUnitLogger(r.Logger()))
+	if r.config.RPCUnitConfigurator != nil {
+		r.config.RPCUnitConfigurator.Configure(rpcUnitConfig)
+	}
+	unit = NewRPCUnit(id, conn, rpcUnitConfig)
+
+	id.StoreCache(unit)
+	return unit, nil
+}
+
 // Shutdown 实现 Registry 接口，关闭注册表。
-// 会依次关闭所有注册的处理单元，并设置关闭状态。
+// 会依次关闭所有注册的处理单元，并关闭 RPC 服务器。
 func (r *registry) Shutdown(operator UnitIdentifier) error {
 	// 设置关闭状态
 	if !r.shutdown.CompareAndSwap(false, true) {
@@ -237,44 +354,14 @@ func (r *registry) Shutdown(operator UnitIdentifier) error {
 	// 清空注册表
 	r.units.Clear()
 
+	// 关闭 RPC 服务器
+	if r.rpcServer != nil && r.cancel != nil {
+		r.Logger().Info("shutting down RPC server")
+		r.rpcServer.Stop()
+		r.cancel()
+		r.Logger().Info("RPC server shutdown completed")
+	}
+
 	r.Logger().Info("registry shutdown completed")
 	return nil
-}
-
-func (r *registry) fromRPC(id CacheUnitIdentifier) (unit Unit, err error) {
-	// 使用锁确保同一 ID 的 RPC 连接只被一个协程使用，防止并发访问
-	key := id.GetAddress() + id.GetPath()
-	lock, _ := r.rpcLock.LoadOrStore(key, &sync.Mutex{})
-	lock.Lock()
-	defer func() {
-		r.rpcLock.Delete(key)
-		lock.Unlock()
-	}()
-
-	// 建立远程单元客户端
-	var conn processor.RPCConn
-	if r.config.RPCClientProvider != nil {
-		if conn, err = r.config.RPCClientProvider.Provide(id.GetAddress()); err != nil {
-			return nil, err
-		}
-	} else {
-		// 尝试查找已有连接
-		conn = r.rpcServer.GetConn(id.GetAddress())
-	}
-
-	if conn == nil {
-		if daemon, exists := r.getDaemon(); exists {
-			return daemon, nil
-		}
-		return nil, ErrDaemonUnitNotSet
-	}
-
-	rpcUnitConfig := NewRPCUnitConfiguration(WithRPCUnitLogger(r.Logger()))
-	if r.config.RPCUnitConfigurator != nil {
-		r.config.RPCUnitConfigurator.Configure(rpcUnitConfig)
-	}
-	unit = NewRPCUnit(id, conn, rpcUnitConfig)
-
-	id.StoreCache(unit)
-	return unit, nil
 }

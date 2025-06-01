@@ -79,37 +79,12 @@ func TestRegistry_Logger(t *testing.T) {
     }
 }
 
-// TestRegistry_SetAndGetDaemon 测试守护单元设置和获取
-func TestRegistry_SetAndGetDaemon(t *testing.T) {
-    registry := processor.NewRegistryFromConfig(processor.NewRegistryConfiguration())
-
-    // 初始状态应该没有守护单元
-    if daemon, exists := registry.GetDaemon(); exists {
-        t.Errorf("expected no daemon, got %v", daemon)
-    }
-
-    // 设置守护单元
-    testUnit := &TestUnit{}
-    registry.SetDaemon(testUnit)
-
-    // 验证守护单元设置成功
-    if daemon, exists := registry.GetDaemon(); !exists || daemon != testUnit {
-        t.Error("daemon unit not set correctly")
-    }
-}
-
 // TestRegistry_GetUnit 测试处理单元获取功能
 func TestRegistry_GetUnit(t *testing.T) {
-    registry := processor.NewRegistryFromConfig(processor.NewRegistryConfiguration())
-
-    // 测试 nil 标识符，应该返回 ErrDaemonUnitNotSet
-    if _, err := registry.GetUnit(nil); !errors.Is(err, processor.ErrDaemonUnitNotSet) {
-        t.Errorf("expected ErrDaemonUnitNotSet, got %v", err)
-    }
+    daemonUnit := new(TestUnit)
+    registry := processor.NewRegistryFromConfig(processor.NewRegistryConfiguration().WithDaemon(daemonUnit))
 
     // 设置守护单元后，nil 标识符应该返回守护单元
-    daemonUnit := &TestUnit{}
-    registry.SetDaemon(daemonUnit)
     if unit, err := registry.GetUnit(nil); err != nil || unit != daemonUnit {
         t.Errorf("expected daemon unit, got unit=%v, err=%v", unit, err)
     }
@@ -201,7 +176,8 @@ func TestRegistry_UnregisterUnit(t *testing.T) {
 
 // TestRegistry_Shutdown 测试注册表关闭功能
 func TestRegistry_Shutdown(t *testing.T) {
-    registry := processor.NewRegistryFromConfig(processor.NewRegistryConfiguration())
+    daemonUnit := &TestUnit{}
+    registry := processor.NewRegistryFromConfig(processor.NewRegistryConfiguration().WithDaemon(daemonUnit))
 
     // 注册一些测试单元
     testUnits := []*TestUnit{
@@ -213,10 +189,6 @@ func TestRegistry_Shutdown(t *testing.T) {
             t.Fatalf("failed to register unit %d: %v", i, err)
         }
     }
-
-    // 设置守护单元
-    daemonUnit := &TestUnit{}
-    registry.SetDaemon(daemonUnit)
 
     // 验证注册表状态
     if registry.IsShutdown() {
@@ -246,14 +218,9 @@ func TestRegistry_Shutdown(t *testing.T) {
         }
     }
 
-    // 验证守护单元被清除
-    if _, exists := registry.GetDaemon(); exists {
-        t.Error("expected daemon unit to be cleared after shutdown")
-    }
-
     // 验证关闭后的操作会返回错误
     testUnit := &TestUnit{}
-    id := registry.GetUnitIdentifier().Branch("aftershutdown")
+    id := registry.GetUnitIdentifier().Branch("after-shutdown")
     if err := registry.RegisterUnit(id, testUnit); !errors.Is(err, processor.ErrRegistryShutdown) {
         t.Errorf("expected ErrRegistryShutdown, got %v", err)
     }
