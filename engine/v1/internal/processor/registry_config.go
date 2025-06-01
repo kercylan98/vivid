@@ -3,6 +3,7 @@ package processor
 
 import (
     "github.com/kercylan98/go-log/log"
+    "github.com/kercylan98/vivid/engine/v1/processor"
     "github.com/kercylan98/vivid/src/configurator"
 )
 
@@ -38,8 +39,12 @@ type (
     // RegistryConfiguration 定义了注册表的配置结构。
     // 包含注册表运行所需的所有配置参数。
     RegistryConfiguration struct {
-        RootUnitIdentifier UnitIdentifier // 顶级单元标识符，用作注册表的根节点
-        Logger             log.Logger     // 日志记录器，用于记录注册表运行日志
+        RootUnitIdentifier  UnitIdentifier            // 顶级单元标识符，用作注册表的根节点
+        Logger              log.Logger                // 日志记录器，用于记录注册表运行日志
+        Daemon              Unit                      // 守护单元
+        RPCServer           *RPCServer                // RPC 服务
+        RPCClientProvider   processor.RPCConnProvider // RPC 客户端提供器
+        RPCUnitConfigurator RPCUnitConfigurator       // RPC 单元配置器
     }
 )
 
@@ -74,5 +79,49 @@ func (c *RegistryConfiguration) WithLogger(logger log.Logger) *RegistryConfigura
 func WithLogger(logger log.Logger) RegistryOption {
     return func(configuration *RegistryConfiguration) {
         configuration.WithLogger(logger)
+    }
+}
+
+// WithDaemon 设置守护单元。
+// 该方法返回配置实例本身，支持链式调用。
+// daemon 参数指定要使用的守护单元。
+func (c *RegistryConfiguration) WithDaemon(daemon Unit) *RegistryConfiguration {
+    c.Daemon = daemon
+    return c
+}
+
+// WithDaemon 创建设置守护单元的配置选项。
+// 返回一个可用于 NewRegistryConfiguration 的配置选项函数。
+// daemon 参数指定要设置的守护单元。
+func WithDaemon(daemon Unit) RegistryOption {
+    return func(configuration *RegistryConfiguration) {
+        configuration.WithDaemon(daemon)
+    }
+}
+
+// WithRPCServer 设置 RPC 服务配置。
+func (c *RegistryConfiguration) WithRPCServer(rpcServer *RPCServer) *RegistryConfiguration {
+    c.RPCServer = rpcServer
+    return c
+}
+
+// WithRPCClientProvider 设置 RPC 客户端提供器。
+func (c *RegistryConfiguration) WithRPCClientProvider(rpcClientProvider processor.RPCConnProvider) *RegistryConfiguration {
+    c.RPCClientProvider = rpcClientProvider
+    return c
+}
+
+// WithRPCUnitConfigurator 设置 RPC 单元配置器。
+func (c *RegistryConfiguration) WithRPCUnitConfigurator(rpcUnitConfigurator RPCUnitConfigurator) *RegistryConfiguration {
+    c.RPCUnitConfigurator = rpcUnitConfigurator
+    return c
+}
+
+// WithRPCUnitConfigurator 创建设置 RPC 单元配置器的配置选项。
+// 返回一个可用于 NewRegistryConfiguration 的配置选项函数。
+// rpcUnitConfigurator 参数指定要设置的 RPC 单元配置器。
+func WithRPCUnitConfigurator(rpcUnitConfigurator RPCUnitConfigurator) RegistryOption {
+    return func(configuration *RegistryConfiguration) {
+        configuration.WithRPCUnitConfigurator(rpcUnitConfigurator)
     }
 }
