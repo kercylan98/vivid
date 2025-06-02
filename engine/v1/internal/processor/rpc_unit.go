@@ -58,7 +58,7 @@ func (r *rpcUnit) Logger() log.Logger {
     return r.config.Logger
 }
 
-func (r *rpcUnit) Handle(sender UnitIdentifier, message any) {
+func (r *rpcUnit) HandleUserMessage(sender UnitIdentifier, message any) {
     typ, data, err := r.config.Serializer.Serialize(message)
     if err != nil {
         r.Logger().Error("serialize", log.Err(err))
@@ -76,6 +76,10 @@ func (r *rpcUnit) Handle(sender UnitIdentifier, message any) {
     if atomic.CompareAndSwapUint32(&r.status, rpcUnitIdle, rpcUnitRunning) {
         go r.flush()
     }
+}
+
+func (r *rpcUnit) HandleSystemMessage(sender UnitIdentifier, message any) {
+    r.HandleUserMessage(sender, message)
 }
 
 func (r *rpcUnit) flush() {

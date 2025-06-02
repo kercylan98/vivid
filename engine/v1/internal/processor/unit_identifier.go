@@ -52,6 +52,9 @@ type UnitIdentifier interface {
     // Branch 基于当前标识符生成子单元标识符
     // path 参数将作为子路径追加到当前路径后
     Branch(path string) UnitIdentifier
+
+    // IsRoot 实现 UnitIdentifier 接口，判断标识符是否为根标识符
+    IsRoot() bool
 }
 
 // CacheUnitIdentifier 定义了带缓存功能的单元标识符接口。
@@ -96,6 +99,11 @@ func (u *unitIdentifier) GetPath() string {
 // 子路径会被追加到当前路径后，形成新的标识符。
 func (u *unitIdentifier) Branch(path string) UnitIdentifier {
     return newUnitIdentifier(u.Address, u.Path+"/"+path)
+}
+
+// IsRoot 实现 UnitIdentifier 接口，判断标识符是否为根标识符。
+func (u *unitIdentifier) IsRoot() bool {
+    return u.Path == "/"
 }
 
 // GetUnitIdentifier 实现 CacheUnitIdentifier 接口，返回自身作为基础标识符。

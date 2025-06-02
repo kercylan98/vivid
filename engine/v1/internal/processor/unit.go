@@ -5,11 +5,16 @@ package processor
 // 处理器单元是系统中用于处理消息的基本组件，所有的业务逻辑都通过处理单元来实现。
 // 每个处理单元都有唯一的标识符，并能够处理来自其他单元发送的消息。
 type Unit interface {
-    // Handle 处理来自指定发送者的消息。
+    // HandleUserMessage 处理来自指定发送者的消息。
     // sender 参数标识消息的发送者，如果为 nil 则表示系统消息。
     // message 参数是要处理的消息内容，可以是任意类型。
     // 实现者应该根据消息类型进行相应的处理逻辑。
-    Handle(sender UnitIdentifier, message any)
+    HandleUserMessage(sender UnitIdentifier, message any)
+
+    // HandleSystemMessage 处理来自系统自身的消息。
+    // message 参数是要处理的消息内容，可以是任意类型。
+    // 实现者应该根据消息类型进行相应的处理逻辑。
+    HandleSystemMessage(sender UnitIdentifier, message any)
 }
 
 // UnitInitializer 定义了具有初始化能力的处理单元接口。
