@@ -1,0 +1,659 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Engine V1 开发规范
+
+## 1. 代码组织规范
+
+### 1.1 包结构规范
+```
+engine/v1/
+├── *.go              // 公共 API 接口
+├── internal/         // 内部实现，外部不可访问
+│   └── processor/    // 具体功能模块
+└── processor/        // 公共接口定义
+```
+
+**强制规则**：
+- 公共 API 必须在包根目录定义
+- 具体实现必须放在 `internal` 包中
+- 每个功能模块独立子包
+- 使用 `internal` 包隐藏实现细节
+
+### 1.2 文件命名规范
+```
+unit.go              // 核心接口定义
+registry.go          // 注册表实现
+*_config.go          // 配置相关
+*_test.go           // 单元测试
+rpc_*.go            // RPC 功能模块
+errors.go           // 错误定义
+README.md           // 模块文档
+```
+
+**强制规则**：
+- 接口定义文件使用单数名词
+- 配置文件必须以 `_config.go` 结尾
+- RPC 相关文件必须以 `rpc_` 开头
+- 错误定义统一放在 `errors.go` 中
+
+## 2. 接口设计规范
+
+### 2.1 接口定义规范
+```go
+// 正确：职责单一的基础接口
+type Unit interface {
+    Handle(sender UnitIdentifier, message any)
+}
+
+// 正确：功能扩展接口
+type UnitInitializer interface {
+    Unit
+    Init()
+}
+
+// 错误：接口过于庞大
+type BadUnit interface {
+    Handle(sender UnitIdentifier, message any)
+    Init()
+    Close()
+    GetStatus() string
+    Configure(config Config)
+}
+```
+
+**强制规则**：
+- 接口必须职责单一，遵循单一职责原则
+- 扩展功能通过接口组合实现，不修改基础接口
+- 接口方法数量不超过 3 个（特殊情况除外）
+- 使用类型断言检查接口实现：`as*()`函数模式
+
+### 2.2 接口命名规范
+```go
+// 正确：描述能力的接口名
+type UnitInitializer interface { Init() }
+type UnitCloser interface { Close() }
+
+// 正确：通用接口使用 -er 后缀
+type Handler interface { Handle() }
+type Provider interface { Provide() }
+
+// 错误：过于抽象的命名
+type Manager interface {}
+type Helper interface {}
+```
+
+**强制规则**：
+- 接口名必须明确表达能力或职责
+- 单方法接口使用 `-er` 后缀
+- 避免 `Manager`、`Helper` 等模糊命名
+- 功能扩展接口使用 `{基础接口名}{功能名}` 格式
+
+## 3. 配置管理规范
+
+### 3.1 配置器模式规范
+```go
+// 强制：同时提供链式和函数式配置
+type Configuration struct {
+    Logger log.Logger
+    // ...
+}
+
+// 链式配置方法
+func (c *Configuration) WithLogger(logger log.Logger) *Configuration {
+    c.Logger = logger
+    return c
+}
+
+// 函数式配置选项
+func WithLogger(logger log.Logger) Option {
+    return func(c *Configuration) {
+        c.WithLogger(logger)
+    }
+}
+```
+
+**强制规则**：
+- 必须同时提供链式和函数式两种配置方式
+- 配置方法必须返回配置对象本身，支持链式调用
+- 使用 `With` 前缀命名配置方法
+- 配置选项使用 `Option` 类型别名
+
+### 3.2 构造函数规范
+```go
+// 强制：提供多种构造方式
+func NewComponentWithOptions(options ...Option) Component
+func NewComponentWithConfigurators(configurators ...Configurator) Component  
+func NewComponentFromConfig(config *Configuration) Component
+
+// 私有构造函数统一处理
+func newComponent(config Configuration) *component {
+    // 设置默认值
+    if config.Logger == nil {
+        config.Logger = log.GetDefault()
+    }
+    return &component{config: config}
+}
+```
+
+**强制规则**：
+- 必须提供选项模式、配置器模式、配置对象三种构造方式
+- 使用私有构造函数 `new*()` 统一处理配置
+- 在构造函数中设置默认值和验证配置
+- 公共构造函数只做参数转换，不处理业务逻辑
+
+## 4. 并发安全规范
+
+### 4.1 状态管理规范
+```go
+// 强制：状态常量定义
+const (
+    stateIdle uint32 = iota
+    stateRunning
+    stateShutdown
+)
+
+type component struct {
+    state   atomic.Uint32
+    counter atomic.Int64
+    // ...
+}
+
+// 强制：使用 CAS 操作进行状态切换
+func (c *component) start() bool {
+    return c.state.CompareAndSwap(stateIdle, stateRunning)
+}
+```
+
+**强制规则**：
+- 状态值必须使用常量定义
+- 状态字段必须使用 `atomic` 包类型
+- 状态切换必须使用 `CompareAndSwap` 操作
+- 避免直接使用 `Store/Load`，除非是只读操作
+
+### 4.2 并发数据结构规范
+```go
+// 强制：使用无锁数据结构
+type registry struct {
+    units    *xsync.MapOf[string, Unit]  // 并发安全的映射
+    rpcLock  *xsync.MapOf[string, *sync.Mutex]  // 细粒度锁
+    shutdown atomic.Bool  // 原子布尔值
+}
+
+// 禁止：使用全局锁
+type badRegistry struct {
+    mu    sync.RWMutex  // 避免使用全局锁
+    units map[string]Unit
+}
+```
+
+**强制规则**：
+- 优先使用 `xsync.MapOf` 替代 `sync.Map`
+- 避免使用全局读写锁，使用细粒度锁
+- 计数器使用 `atomic.Int64` 等原子类型
+- 布尔标志使用 `atomic.Bool`
+
+## 5. 错误处理规范
+
+### 5.1 错误定义规范
+```go
+// 强制：包级别错误变量
+var (
+    ErrRegistryShutdown      = errors.New("registry is shutdown")
+    ErrUnitNotFound         = errors.New("unit not found") 
+    ErrUnitIdentifierInvalid = errors.New("unit identifier is invalid")
+)
+
+// 强制：错误名称规范
+var (
+    Err{组件名}{错误类型} = errors.New("描述信息")
+)
+```
+
+**强制规则**：
+- 包级别错误必须以 `Err` 开头
+- 错误名格式：`Err{组件名}{错误类型}`
+- 错误信息使用小写，简洁明确
+- 统一在 `errors.go` 文件中定义
+
+### 5.2 错误处理规范
+```go
+// 强制：层级错误处理
+func (r *registry) GetUnit(id CacheUnitIdentifier) (Unit, error) {
+    if r.IsShutdown() {
+        return nil, ErrRegistryShutdown
+    }
+    
+    // 尝试获取单元
+    if unit, err := r.getUnitFromCache(id); err == nil {
+        return unit, nil
+    }
+    
+    // 回退到守护单元
+    if daemon, exists := r.getDaemon(); exists {
+        return daemon, nil
+    }
+    
+    return nil, ErrUnitNotFound
+}
+```
+
+**强制规则**：
+- 优先返回具体错误，而非通用错误
+- 实现回退机制，避免直接失败
+- 错误信息要包含足够的上下文
+- 使用 `errors.Is()` 进行错误类型判断
+
+## 6. 生命周期管理规范
+
+### 6.1 初始化规范
+```go
+// 强制：自动初始化检查
+func (r *registry) RegisterUnit(id UnitIdentifier, unit Unit) error {
+    // 参数验证
+    if id == nil {
+        return ErrUnitIdentifierInvalid
+    }
+    if unit == nil {
+        return ErrUnitInvalid
+    }
+    
+    // 自动初始化
+    if initializer := asUnitInitializer(unit); initializer != nil {
+        initializer.Init()
+    }
+    
+    // 存储单元
+    r.units.Store(id.GetPath(), unit)
+    return nil
+}
+
+// 强制：类型断言辅助函数
+func asUnitInitializer(unit Unit) UnitInitializer {
+    if initializer, ok := unit.(UnitInitializer); ok {
+        return initializer
+    }
+    return nil
+}
+```
+
+**强制规则**：
+- 注册时自动检查并调用初始化接口
+- 使用 `as*()` 函数进行类型断言
+- 初始化失败不影响注册流程
+- 参数验证在业务逻辑之前
+
+### 6.2 关闭规范
+```go
+// 强制：优雅关闭模式
+func (r *registry) Shutdown(operator UnitIdentifier) error {
+    // 防重复关闭
+    if !r.shutdown.CompareAndSwap(false, true) {
+        return ErrRegistryShutdown
+    }
+    
+    // 关闭所有单元
+    r.units.Range(func(path string, unit Unit) bool {
+        if closer := asUnitCloser(unit); closer != nil {
+            closer.Close(operator)
+        }
+        return true
+    })
+    
+    // 关闭 RPC 服务器
+    if r.rpcServer != nil {
+        return r.rpcServer.Shutdown()
+    }
+    
+    return nil
+}
+```
+
+**强制规则**：
+- 使用原子操作防止重复关闭
+- 自动检查并调用关闭接口
+- 按依赖顺序关闭组件
+- 提供操作者信息用于审计
+
+## 7. 网络通信规范
+
+### 7.1 接口抽象规范
+```go
+// 强制：网络层抽象
+type RPCConn interface {
+    Send(data []byte) error
+    Close() error
+}
+
+type RPCConnProvider interface {
+    GetConn(address string) (RPCConn, error)
+}
+
+// 强制：序列化抽象
+type Serializer interface {
+    Serialize(message any) (typ string, data []byte, err error)
+    Deserialize(typ string, data []byte) (message any, err error)
+}
+```
+
+**强制规则**：
+- 网络传输必须完全抽象化
+- 序列化协议必须可插拔
+- 连接管理与业务逻辑分离
+- 支持多种传输协议扩展
+
+### 7.2 批处理规范
+```go
+// 强制：异步批处理模式
+func (r *rpcUnit) Handle(sender UnitIdentifier, message any) {
+    // 序列化消息
+    typ, data, err := r.config.Serializer.Serialize(message)
+    if err != nil {
+        r.Logger().Error("serialize", log.Err(err))
+        return
+    }
+    
+    // 入队列
+    r.queue.Push(&rpcUnitMessage{...})
+    
+    // 原子计数
+    atomic.AddInt32(&r.num, 1)
+    
+    // 启动批处理
+    if atomic.CompareAndSwapUint32(&r.status, rpcUnitIdle, rpcUnitRunning) {
+        go r.flush()
+    }
+}
+```
+
+**强制规则**：
+- 消息处理必须异步化
+- 使用无锁队列缓存消息
+- 批量发送提高网络效率
+- 失败重试使用指数退避算法
+
+## 8. 测试编写规范
+
+### 8.1 测试文件规范
+```go
+// 文件名：*_test.go
+func TestRegistryRegisterUnit(t *testing.T) {
+    // Arrange
+    registry := NewRegistryWithOptions(
+        WithLogger(log.GetDefault()),
+    )
+    unit := &mockUnit{}
+    id := NewUnitIdentifier("localhost", "/test")
+    
+    // Act
+    err := registry.RegisterUnit(id, unit)
+    
+    // Assert
+    assert.NoError(t, err)
+    assert.Equal(t, 1, registry.UnitCount())
+}
+```
+
+**强制规则**：
+- 测试方法名格式：`Test{组件名}{方法名}`
+- 使用 AAA 模式：Arrange、Act、Assert
+- 每个测试只验证一个场景
+- 使用 mock 对象隔离依赖
+
+### 8.2 示例代码规范
+```go
+func ExampleRegistry_RegisterUnit() {
+    registry := NewRegistryWithOptions(
+        WithLogger(log.GetDefault()),
+    )
+    
+    unit := &MyUnit{}
+    id := NewUnitIdentifier("localhost", "/service")
+    
+    err := registry.RegisterUnit(id, unit)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Printf("Unit count: %d\n", registry.UnitCount())
+    // Output: Unit count: 1
+}
+```
+
+**强制规则**：
+- 示例函数名格式：`Example{类型}_{方法}`
+- 必须包含完整的使用流程
+- 必须包含 `// Output:` 注释
+- 代码要具有实际运行价值
+
+## 9. 文档编写规范
+
+### 9.1 Go Doc 规范
+```go
+// Package processor 提供了处理单元的注册、管理和路由功能。
+// 该包是 Vivid 引擎的核心组件之一，负责处理单元的生命周期管理。
+package processor
+
+// Registry 定义了处理单元注册表的接口。
+// 注册表负责管理所有处理单元的生命周期，包括注册、查找、注销等操作。
+// 支持本地和远程处理单元的统一管理。
+type Registry interface {
+    // RegisterUnit 注册处理单元到注册表。
+    // 如果单元实现了 UnitInitializer 接口，会自动调用初始化方法。
+    // 
+    // 参数：
+    //   id - 单元标识符，不能为 nil
+    //   unit - 处理单元实例，不能为 nil
+    // 
+    // 返回：
+    //   如果注册成功返回 nil，否则返回具体错误
+    RegisterUnit(id UnitIdentifier, unit Unit) error
+}
+```
+
+**强制规则**：
+- 包注释说明包的用途和核心功能
+- 接口注释说明职责和使用场景
+- 方法注释包含参数说明和返回值说明
+- 使用专业术语，保持风格一致
+
+### 9.2 README 规范
+```markdown
+# 组件名
+
+简要描述组件功能和用途。
+
+## 特性
+
+- 🚀 **高性能**：具体性能特点
+- 🔒 **并发安全**：并发安全保证
+- 🎯 **灵活配置**：配置能力说明
+
+## 快速开始
+
+### 基础用法
+
+```go
+// 完整的使用示例
+```
+
+## API 文档
+
+### 主要接口
+
+| 方法 | 描述 |
+|------|------|
+| `Method()` | 方法说明 |
+```
+
+**强制规则**：
+- 必须包含功能特性说明
+- 必须包含完整的使用示例
+- 必须包含 API 文档表格
+- 代码示例必须可直接运行
+
+## 10. 版本兼容性规范
+
+### 10.1 API 演进规范
+```go
+// 正确：通过接口扩展增加功能
+type UnitV2 interface {
+    Unit
+    GetMetrics() Metrics
+}
+
+// 错误：修改现有接口
+type Unit interface {
+    Handle(sender UnitIdentifier, message any)
+    GetMetrics() Metrics  // 破坏兼容性
+}
+```
+
+**强制规则**：
+- 不修改现有接口定义
+- 通过接口组合扩展功能
+- 新增配置选项必须可选
+- 废弃功能使用 `// Deprecated:` 标记
+
+### 10.2 配置兼容性规范
+```go
+// 正确：新增可选配置
+type Configuration struct {
+    Logger    log.Logger     // 现有配置
+    NewOption *NewFeature    // 新增配置，使用指针表示可选
+}
+```
+
+**强制规则**：
+- 新增配置字段必须是可选的
+- 使用指针或接口表示可选配置
+- 保持默认行为不变
+- 提供迁移指南和示例
+
+## 11. 性能优化规范
+
+### 11.1 缓存策略规范
+```go
+// 强制：多级缓存查找顺序
+func (r *registry) GetUnit(id CacheUnitIdentifier) (Unit, error) {
+    // 1. 标识符缓存
+    if unit := id.LoadCache(); unit != nil {
+        return unit, nil
+    }
+    
+    // 2. 本地注册表
+    if unit, loaded := r.units.Load(id.GetPath()); loaded {
+        id.StoreCache(unit)  // 回填缓存
+        return unit, nil
+    }
+    
+    // 3. 远程解析
+    if unit, err := r.fromRPC(id); err == nil {
+        return unit, nil
+    }
+    
+    // 4. 守护单元回退
+    return r.getDaemon()
+}
+```
+
+**强制规则**：
+- 实现多级缓存策略提升性能
+- 缓存失效时自动回填缓存
+- 使用原子操作保证缓存线程安全
+- 提供缓存清理机制
+
+### 11.2 批处理优化规范
+```go
+// 强制：动态批处理大小控制
+func (r *rpcUnit) batchPack() bool {
+    var batch = processor.NewRPCBatchMessage()
+    
+    for batch.Len() < r.config.BatchSize {
+        if message, ok := r.queue.Pop().(*rpcUnitMessage); ok {
+            batch.Add(message...)
+        } else {
+            break  // 队列为空，立即发送
+        }
+    }
+    
+    if batch.Len() > 0 {
+        r.publish(batch)
+        return true
+    }
+    return false
+}
+```
+
+**强制规则**：
+- 动态调整批处理大小
+- 队列为空时立即发送避免延迟
+- 批处理失败时实现重试机制
+- 监控批处理效率指标
+
+## 12. 日志和监控规范
+
+### 12.1 日志记录规范
+```go
+// 强制：结构化日志记录
+func (r *registry) RegisterUnit(id UnitIdentifier, unit Unit) error {
+    logger := r.Logger().With(
+        "operation", "register_unit",
+        "path", id.GetPath(),
+        "address", id.GetAddress(),
+    )
+    
+    logger.Info("registering unit")
+    
+    if err := r.doRegister(id, unit); err != nil {
+        logger.Error("failed to register unit", log.Err(err))
+        return err
+    }
+    
+    logger.Info("unit registered successfully")
+    return nil
+}
+```
+
+**强制规则**：
+- 使用结构化日志记录关键操作
+- 包含足够的上下文信息用于调试
+- 区分不同日志级别：Debug、Info、Warn、Error
+- 避免在热路径中记录过多日志
+
+### 12.2 指标收集规范
+```go
+// 强制：关键指标监控
+type registryMetrics struct {
+    unitCount     atomic.Int64
+    registerCount atomic.Int64
+    errorCount    atomic.Int64
+}
+
+func (r *registry) RegisterUnit(id UnitIdentifier, unit Unit) error {
+    defer func() {
+        r.metrics.registerCount.Add(1)
+        if r := recover(); r != nil {
+            r.metrics.errorCount.Add(1)
+            panic(r)
+        }
+    }()
+    
+    // 注册逻辑...
+    r.metrics.unitCount.Add(1)
+    return nil
+}
+```
+
+**强制规则**：
+- 监控关键业务指标和性能指标
+- 使用原子操作保证指标准确性
+- 提供指标导出接口供监控系统使用
+- 记录错误率、延迟等 SLA 指标
+
+---
+
+
+这套开发规范确保了代码的一致性、可维护性和可扩展性，是 Engine V1 项目的核心开发准则。所有开发者都应严格遵循这些规范，以保证项目的高质量和长期可维护性。 

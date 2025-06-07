@@ -1,7 +1,7 @@
 package mailbox
 
 type Executor interface {
-    OnSystemMessage(message any)
+	OnSystemMessage(message any)
 
-    OnUserMessage(message any)
+	OnUserMessage(message any)
 }

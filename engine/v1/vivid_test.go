@@ -1,0 +1,85 @@
+package vivid_test
+
+import (
+	"github.com/kercylan98/go-log/log"
+	vivid "github.com/kercylan98/vivid/engine/v1"
+	"sync"
+	"testing"
+)
+
+type TestActorSystem struct {
+	vivid.ActorSystem
+	t  *testing.T
+	wg sync.WaitGroup
+}
+
+func NewTestActorSystem(t *testing.T) *TestActorSystem {
+	return &TestActorSystem{
+		t: t,
+		ActorSystem: vivid.NewActorSystemWithOptions(vivid.WithActorSystemLogger(
+			log.GetBuilder().FromConfigurators(log.LoggerConfiguratorFn(func(config log.LoggerConfiguration) {
+				config.
+					WithLeveler(log.LevelDebug).
+					WithEnableColor(true).
+					WithErrTrackLevel(log.LevelError).
+					WithTrackBeautify(true).
+					WithMessageFormatter(func(message string) string {
+						return message
+					})
+			})),
+		)),
+	}
+}
+
+func (t *TestActorSystem) WaitAdd(n int) *TestActorSystem {
+	t.wg.Add(n)
+	return t
+}
+
+func (t *TestActorSystem) WaitDone() *TestActorSystem {
+	t.wg.Done()
+	return t
+}
+
+func (t *TestActorSystem) Wait() {
+	t.wg.Wait()
+}
+
+func (t *TestActorSystem) WaitFN(f func(system *TestActorSystem)) *TestActorSystem {
+	f(t)
+	t.Wait()
+	return t
+}
+
+func (t *TestActorSystem) FN(f func(system *TestActorSystem)) *TestActorSystem {
+	f(t)
+	return t
+}
+
+func (t *TestActorSystem) AssertError(err error) {
+	if err != nil {
+		t.t.Error(err)
+	}
+}
+
+func (t *TestActorSystem) AssertNil(value interface{}) {
+	if value != nil {
+		t.t.Errorf("expected nil, got %v", value)
+	}
+}
+
+func (t *TestActorSystem) AssertNotNil(value interface{}) {
+	if value == nil {
+		t.t.Error("expected not nil")
+	}
+}
+
+func (t *TestActorSystem) AssertEqual(n any, name string) {
+	if n != name {
+		t.t.Errorf("expected %v, got %v", name, n)
+	}
+}
+
+func (t *TestActorSystem) Shutdown(poison bool, reason ...string) {
+	t.AssertError(t.ActorSystem.Shutdown(poison, reason...))
+}

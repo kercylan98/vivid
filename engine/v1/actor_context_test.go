@@ -1,0 +1,133 @@
+package vivid_test
+
+import (
+	vivid "github.com/kercylan98/vivid/engine/v1"
+	"sync/atomic"
+	"testing"
+)
+
+func TestActorContext_Tell(t *testing.T) {
+	NewTestActorSystem(t).
+		WaitAdd(2).
+		WaitFN(func(system *TestActorSystem) {
+			ref := system.SpawnOf(func() vivid.Actor {
+				return vivid.ActorFN(func(context vivid.ActorContext) {
+					switch context.Message().(type) {
+					case *vivid.OnLaunch:
+						system.WaitDone()
+					case string:
+						system.AssertNil(context.Sender())
+						system.WaitDone()
+					}
+				})
+			})
+
+			system.Tell(ref, t.Name())
+		}).
+		Shutdown(true)
+}
+
+func TestActorContext_Probe(t *testing.T) {
+	NewTestActorSystem(t).
+		WaitAdd(2).
+		WaitFN(func(system *TestActorSystem) {
+			ref := system.SpawnOf(func() vivid.Actor {
+				return vivid.ActorFN(func(context vivid.ActorContext) {
+					switch context.Message().(type) {
+					case *vivid.OnLaunch:
+						system.WaitDone()
+					case string:
+						system.AssertNotNil(context.Sender())
+						system.WaitDone()
+					}
+				})
+			})
+
+			system.Probe(ref, t.Name())
+		}).
+		Shutdown(true)
+}
+
+func TestActorContext_Ask(t *testing.T) {
+	NewTestActorSystem(t).
+		WaitAdd(2).
+		WaitFN(func(system *TestActorSystem) {
+			ref := system.SpawnOf(func() vivid.Actor {
+				return vivid.ActorFN(func(context vivid.ActorContext) {
+					switch context.Message().(type) {
+					case *vivid.OnLaunch:
+						system.WaitDone()
+					case string:
+						context.Reply(t.Name())
+						system.WaitDone()
+					}
+				})
+			})
+
+			future := system.Ask(ref, t.Name())
+			n, err := future.Result()
+			system.AssertError(err)
+			system.AssertEqual(n, t.Name())
+		}).
+		Shutdown(true)
+}
+
+func TestActorContext_Kill(t *testing.T) {
+	var counter atomic.Int64
+
+	NewTestActorSystem(t).
+		WaitAdd(1).
+		WaitFN(func(system *TestActorSystem) {
+			ref := system.SpawnOf(func() vivid.Actor {
+				return vivid.ActorFN(func(context vivid.ActorContext) {
+					switch context.Message().(type) {
+					case string:
+						counter.Add(1)
+					case *vivid.OnKill:
+						system.WaitDone()
+					}
+				})
+			})
+
+			for i := 0; i < 10; i++ {
+				system.Tell(ref, t.Name())
+			}
+
+			system.Kill(ref)
+		}).
+		Shutdown(true)
+
+	if counter.Load() == 10 {
+		// Kill 情况下无法将所有用户消息完整处理
+		t.Error("kill failed, counter: ", counter.Load())
+	} else {
+		t.Log("kill success, counter: ", counter.Load())
+	}
+}
+
+func TestActorContext_PoisonKill(t *testing.T) {
+	NewTestActorSystem(t).
+		WaitAdd(2).
+		WaitFN(func(system *TestActorSystem) {
+			ref := system.SpawnOf(func() vivid.Actor {
+				return vivid.ActorFN(func(context vivid.ActorContext) {
+					switch context.Message().(type) {
+					case *vivid.OnLaunch:
+						system.WaitDone()
+						const childNum = 10
+						for i := 0; i < childNum; i++ {
+							system.WaitAdd(1)
+							context.SpawnOf(func() vivid.Actor {
+								return vivid.ActorFN(func(context vivid.ActorContext) {})
+							})
+						}
+					case *vivid.OnKill, *vivid.OnKilled:
+						system.WaitDone()
+					}
+				})
+			})
+
+			system.PoisonKill(ref)
+		}).
+		Shutdown(true)
+}
