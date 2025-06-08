@@ -3,8 +3,8 @@ package metrics
 // Tag 指标标签类型。
 // 用于为指标添加多维度的元数据，便于分类和查询。
 type Tag struct {
-	Key   string
-	Value string
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // WithTag 创建新的标签

@@ -10,14 +10,15 @@ type Manager interface {
     Gauge(name string, tags ...Tag) Gauge
     Histogram(name string, provider BucketProvider, tags ...Tag) Histogram
     Reset()
+    GetMetrics() Snapshot
 }
 
 func NewManagerFromConfig(config *ManagerConfiguration) Manager {
     mgr := &manager{
         config:     *config,
-        counters:   make(map[string]Counter),
-        gauges:     make(map[string]Gauge),
-        histograms: make(map[string]Histogram),
+        counters:   make(map[string]*counter),
+        gauges:     make(map[string]*gauge),
+        histograms: make(map[string]*histogram),
     }
     return mgr
 }
@@ -38,10 +39,14 @@ func NewManagerWithConfigurators(configurators ...ManagerConfigurator) Manager {
 // manager 指标管理器
 type manager struct {
     config     ManagerConfiguration
-    counters   map[string]Counter
-    gauges     map[string]Gauge
-    histograms map[string]Histogram
+    counters   map[string]*counter
+    gauges     map[string]*gauge
+    histograms map[string]*histogram
     mu         sync.RWMutex
+}
+
+func (p *manager) GetMetrics() Snapshot {
+    return newSnapshot(p)
 }
 
 func (p *manager) Counter(name string, tags ...Tag) Counter {
@@ -53,8 +58,8 @@ func (p *manager) Counter(name string, tags ...Tag) Counter {
     metric, exist := p.counters[key]
     if !exist {
         metric = &counter{
-            Name: name,
-            Tags: tags,
+            name: name,
+            tags: tags,
         }
         p.counters[key] = metric
     }
@@ -71,8 +76,8 @@ func (p *manager) Gauge(name string, tags ...Tag) Gauge {
     metric, exist := p.gauges[key]
     if !exist {
         metric = &gauge{
-            Name: name,
-            Tags: tags,
+            name: name,
+            tags: tags,
         }
         p.gauges[key] = metric
     }
@@ -88,9 +93,9 @@ func (p *manager) Histogram(name string, provider BucketProvider, tags ...Tag) H
     metric, exist := p.histograms[key]
     if !exist {
         metric = &histogram{
-            Name:    name,
-            Buckets: provider.Provide(),
-            Tags:    tags,
+            name:    name,
+            buckets: provider.Provide(),
+            tags:    tags,
         }
         p.histograms[key] = metric
     }
@@ -101,9 +106,9 @@ func (p *manager) Reset() {
     p.mu.Lock()
     defer p.mu.Unlock()
 
-    p.gauges = make(map[string]Gauge)
-    p.counters = make(map[string]Counter)
-    p.histograms = make(map[string]Histogram)
+    p.counters = make(map[string]*counter)
+    p.gauges = make(map[string]*gauge)
+    p.histograms = make(map[string]*histogram)
 }
 
 func (p *manager) makeKey(name string, tags []Tag) string {
