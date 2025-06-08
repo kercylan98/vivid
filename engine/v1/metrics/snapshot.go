@@ -1,6 +1,8 @@
 package metrics
 
-import "time"
+import (
+	"time"
+)
 
 func newSnapshot(manager *manager) Snapshot {
 	manager.mu.RLock()

@@ -123,6 +123,7 @@ type actorContext struct {
 
 func (ctx *actorContext) OnSystemMessage(message any) {
 	ctx.sender, ctx.message = unwrapMessage(message)
+
 	switch msg := ctx.message.(type) {
 	case *OnLaunch:
 		ctx.onReceiveWithRecover()
@@ -152,10 +153,16 @@ func (ctx *actorContext) HandleUserMessage(sender processor.UnitIdentifier, mess
 			log.Any("state", ctx.state))
 		return
 	}
+
+	ctx.system.hooks.trigger(actorMailboxPushUserMessageBeforeHookType, ctx.ref, message)
+
 	ctx.mailbox.PushUserMessage(message)
+
 }
 
 func (ctx *actorContext) HandleSystemMessage(sender processor.UnitIdentifier, message any) {
+	ctx.system.hooks.trigger(actorMailboxPushSystemMessageBeforeHookType, ctx.ref, message)
+
 	ctx.mailbox.PushSystemMessage(message)
 }
 

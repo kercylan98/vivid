@@ -9,11 +9,23 @@ var (
 	actorKillHookType = reflect.TypeOf((*ActorKillHook)(nil)).Elem()
 	// actorKilledHookType ActorKilledHook.OnActorKilled(message *OnKilled)
 	actorKilledHookType = reflect.TypeOf((*ActorKilledHook)(nil)).Elem()
+	// actorMailboxPushSystemMessageBeforeHookType ActorMailboxPushSystemMessageBeforeHook.OnActorMailboxPushSystemMessageBefore(ref ActorRef, message Message)
+	actorMailboxPushSystemMessageBeforeHookType = reflect.TypeOf((*ActorMailboxPushSystemMessageBeforeHook)(nil)).Elem()
+	// actorMailboxPushUserMessageBeforeHookType ActorMailboxPushUserMessageBeforeHook.OnActorMailboxPushUserMessageBefore(ref ActorRef, message Message)
+	actorMailboxPushUserMessageBeforeHookType = reflect.TypeOf((*ActorMailboxPushUserMessageBeforeHook)(nil)).Elem()
+	// actorHandleSystemMessageBeforeHookType ActorHandleSystemMessageBeforeHook.OnActorHandleSystemMessageBefore(sender, receiver ActorRef, message Message)
+	actorHandleSystemMessageBeforeHookType = reflect.TypeOf((*ActorHandleSystemMessageBeforeHook)(nil)).Elem()
+	// actorHandleUserMessageBeforeHookType ActorHandleUserMessageBeforeHook.OnActorHandleUserMessageBefore(sender, receiver ActorRef, message Message)
+	actorHandleUserMessageBeforeHookType = reflect.TypeOf((*ActorHandleUserMessageBeforeHook)(nil)).Elem()
 
 	hookTypes = map[hookType]string{
-		actorLaunchHookType: "OnActorLaunch",
-		actorKillHookType:   "OnActorKill",
-		actorKilledHookType: "OnActorKilled",
+		actorLaunchHookType:                         "OnActorLaunch",
+		actorKillHookType:                           "OnActorKill",
+		actorKilledHookType:                         "OnActorKilled",
+		actorMailboxPushSystemMessageBeforeHookType: "OnActorMailboxPushSystemMessageBefore",
+		actorMailboxPushUserMessageBeforeHookType:   "OnActorMailboxPushUserMessageBefore",
+		actorHandleSystemMessageBeforeHookType:      "OnActorHandleSystemMessageBefore",
+		actorHandleUserMessageBeforeHookType:        "OnActorHandleUserMessageBefore",
 	}
 )
 
@@ -89,4 +101,63 @@ func (fn ActorKilledHookFN) hook() {}
 
 func (fn ActorKilledHookFN) OnActorKilled(message *OnKilled) {
 	fn(message)
+}
+
+type (
+	// ActorMailboxPushSystemMessageBeforeHookFN 是 ActorMailboxPushSystemMessageBeforeHook 的函数类型。
+	ActorMailboxPushSystemMessageBeforeHookFN func(ref ActorRef, message Message)
+	// ActorMailboxPushSystemMessageBeforeHook 是一个 Actor 邮箱钩子接口，它允许在 Actor 邮箱中推送系统消息之前执行一些操作。
+	ActorMailboxPushSystemMessageBeforeHook interface {
+		OnActorMailboxPushSystemMessageBefore(ref ActorRef, message Message)
+	}
+)
+
+func (fn ActorMailboxPushSystemMessageBeforeHookFN) hook() {}
+
+func (fn ActorMailboxPushSystemMessageBeforeHookFN) OnActorMailboxPushSystemMessageBefore(ref ActorRef, message Message) {
+	fn(ref, message)
+}
+
+type (
+	// ActorMailboxPushUserMessageBeforeHookFN 是 ActorMailboxPushUserMessageBeforeHook 的函数类型。
+	ActorMailboxPushUserMessageBeforeHookFN func(ref ActorRef, message Message)
+	// ActorMailboxPushUserMessageBeforeHook 是一个 Actor 邮箱钩子接口，它允许在 Actor 邮箱中推送用户消息之前执行一些操作。
+	ActorMailboxPushUserMessageBeforeHook interface {
+		OnActorMailboxPushUserMessageBefore(ref ActorRef, message Message)
+	}
+)
+
+func (fn ActorMailboxPushUserMessageBeforeHookFN) hook() {}
+
+func (fn ActorMailboxPushUserMessageBeforeHookFN) OnActorMailboxPushUserMessageBefore(ref ActorRef, message Message) {
+	fn(ref, message)
+}
+
+type (
+	// ActorHandleSystemMessageBeforeHookFN 是 ActorHandleSystemMessageBeforeHook 的函数类型。
+	ActorHandleSystemMessageBeforeHookFN func(sender ActorRef, receiver ActorRef, message Message)
+	// ActorHandleSystemMessageBeforeHook 是一个 Actor 邮箱钩子接口，它允许在 Actor 处理系统消息之前执行一些操作。
+	ActorHandleSystemMessageBeforeHook interface {
+		OnActorHandleSystemMessageBefore(sender ActorRef, receiver ActorRef, message Message)
+	}
+)
+
+func (fn ActorHandleSystemMessageBeforeHookFN) hook() {}
+
+func (fn ActorHandleSystemMessageBeforeHookFN) OnActorHandleSystemMessageBefore(sender ActorRef, receiver ActorRef, message Message) {
+	fn(sender, receiver, message)
+}
+
+type (
+	ActorHandleUserMessageBeforeHookFN func(sender ActorRef, receiver ActorRef, message Message)
+	// ActorHandleUserMessageBeforeHook 是一个 Actor 邮箱钩子接口，它允许在 Actor 处理用户消息之前执行一些操作。
+	ActorHandleUserMessageBeforeHook interface {
+		OnActorHandleUserMessageBefore(sender ActorRef, receiver ActorRef, message Message)
+	}
+)
+
+func (fn ActorHandleUserMessageBeforeHookFN) hook() {}
+
+func (fn ActorHandleUserMessageBeforeHookFN) OnActorHandleUserMessageBefore(sender ActorRef, receiver ActorRef, message Message) {
+	fn(sender, receiver, message)
 }
