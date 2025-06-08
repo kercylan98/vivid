@@ -1,6 +1,9 @@
 package vivid
 
-import "reflect"
+import (
+	"reflect"
+	"time"
+)
 
 var (
 	// actorLaunchHookType ActorLaunchHook.OnActorLaunch(ctx ActorContext)
@@ -17,6 +20,10 @@ var (
 	actorHandleSystemMessageBeforeHookType = reflect.TypeOf((*ActorHandleSystemMessageBeforeHook)(nil)).Elem()
 	// actorHandleUserMessageBeforeHookType ActorHandleUserMessageBeforeHook.OnActorHandleUserMessageBefore(sender, receiver ActorRef, message Message)
 	actorHandleUserMessageBeforeHookType = reflect.TypeOf((*ActorHandleUserMessageBeforeHook)(nil)).Elem()
+	// actorHandleSystemMessageAfterHookType ActorHandleSystemMessageAfterHook.OnActorHandleSystemMessageAfter(sender, receiver ActorRef, message Message, duration time.Duration)
+	actorHandleSystemMessageAfterHookType = reflect.TypeOf((*ActorHandleSystemMessageAfterHook)(nil)).Elem()
+	// actorHandleUserMessageAfterHookType ActorHandleUserMessageAfterHook.OnActorHandleUserMessageAfter(sender, receiver ActorRef, message Message, duration time.Duration)
+	actorHandleUserMessageAfterHookType = reflect.TypeOf((*ActorHandleUserMessageAfterHook)(nil)).Elem()
 
 	hookTypes = map[hookType]string{
 		actorLaunchHookType:                         "OnActorLaunch",
@@ -26,6 +33,8 @@ var (
 		actorMailboxPushUserMessageBeforeHookType:   "OnActorMailboxPushUserMessageBefore",
 		actorHandleSystemMessageBeforeHookType:      "OnActorHandleSystemMessageBefore",
 		actorHandleUserMessageBeforeHookType:        "OnActorHandleUserMessageBefore",
+		actorHandleSystemMessageAfterHookType:       "OnActorHandleSystemMessageAfter",
+		actorHandleUserMessageAfterHookType:         "OnActorHandleUserMessageAfter",
 	}
 )
 
@@ -160,4 +169,34 @@ func (fn ActorHandleUserMessageBeforeHookFN) hook() {}
 
 func (fn ActorHandleUserMessageBeforeHookFN) OnActorHandleUserMessageBefore(sender ActorRef, receiver ActorRef, message Message) {
 	fn(sender, receiver, message)
+}
+
+type (
+	// ActorHandleSystemMessageAfterHookFN 是 ActorHandleSystemMessageAfterHook 的函数类型。
+	ActorHandleSystemMessageAfterHookFN func(sender ActorRef, receiver ActorRef, message Message, duration time.Duration)
+	// ActorHandleSystemMessageAfterHook 是一个 Actor 消息处理钩子接口，允许在 Actor 处理系统消息之后执行操作。
+	ActorHandleSystemMessageAfterHook interface {
+		OnActorHandleSystemMessageAfter(sender ActorRef, receiver ActorRef, message Message, duration time.Duration)
+	}
+)
+
+func (fn ActorHandleSystemMessageAfterHookFN) hook() {}
+
+func (fn ActorHandleSystemMessageAfterHookFN) OnActorHandleSystemMessageAfter(sender ActorRef, receiver ActorRef, message Message, duration time.Duration) {
+	fn(sender, receiver, message, duration)
+}
+
+type (
+	// ActorHandleUserMessageAfterHookFN 是 ActorHandleUserMessageAfterHook 的函数类型。
+	ActorHandleUserMessageAfterHookFN func(sender ActorRef, receiver ActorRef, message Message, duration time.Duration)
+	// ActorHandleUserMessageAfterHook 是一个 Actor 消息处理钩子接口，允许在 Actor 处理用户消息之后执行操作。
+	ActorHandleUserMessageAfterHook interface {
+		OnActorHandleUserMessageAfter(sender ActorRef, receiver ActorRef, message Message, duration time.Duration)
+	}
+)
+
+func (fn ActorHandleUserMessageAfterHookFN) hook() {}
+
+func (fn ActorHandleUserMessageAfterHookFN) OnActorHandleUserMessageAfter(sender ActorRef, receiver ActorRef, message Message, duration time.Duration) {
+	fn(sender, receiver, message, duration)
 }

@@ -122,7 +122,9 @@ type actorContext struct {
 }
 
 func (ctx *actorContext) OnSystemMessage(message any) {
+	startAt := time.Now()
 	ctx.sender, ctx.message = unwrapMessage(message)
+	ctx.system.hooks.trigger(actorHandleSystemMessageBeforeHookType, ctx.sender, ctx.ref, message)
 
 	switch msg := ctx.message.(type) {
 	case *OnLaunch:
@@ -132,10 +134,14 @@ func (ctx *actorContext) OnSystemMessage(message any) {
 	case *OnKilled:
 		ctx.onKilled(msg)
 	}
+
+	ctx.system.hooks.trigger(actorHandleSystemMessageAfterHookType, ctx.sender, ctx.ref, message, time.Since(startAt))
 }
 
 func (ctx *actorContext) OnUserMessage(message any) {
+	startAt := time.Now()
 	ctx.sender, ctx.message = unwrapMessage(message)
+	ctx.system.hooks.trigger(actorHandleUserMessageBeforeHookType, ctx.sender, ctx.ref, message)
 
 	switch msg := ctx.message.(type) {
 	case *OnKill:
@@ -143,6 +149,8 @@ func (ctx *actorContext) OnUserMessage(message any) {
 	default:
 		ctx.onReceiveWithRecover()
 	}
+
+	ctx.system.hooks.trigger(actorHandleUserMessageAfterHookType, ctx.sender, ctx.ref, message, time.Since(startAt))
 }
 
 func (ctx *actorContext) HandleUserMessage(sender processor.UnitIdentifier, message any) {
