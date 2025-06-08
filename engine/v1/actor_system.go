@@ -1,10 +1,12 @@
 package vivid
 
 import (
-	"github.com/kercylan98/go-log/log"
-	"github.com/kercylan98/vivid/engine/v1/internal/processor"
+	"github.com/kercylan98/vivid/engine/v1/metrics"
 	"sync"
 	"sync/atomic"
+
+	"github.com/kercylan98/go-log/log"
+	"github.com/kercylan98/vivid/engine/v1/internal/processor"
 )
 
 type ActorSystem interface {
@@ -24,6 +26,18 @@ func NewActorSystemFromConfig(config *ActorSystemConfiguration) ActorSystem {
 		registry: processor.NewRegistryWithConfigurators(processor.RegistryConfiguratorFN(func(c *processor.RegistryConfiguration) {
 			c.WithLogger(config.Logger.WithGroup("unit-registry"))
 		})),
+	}
+
+	if config.Metrics {
+		sys.metrics = newActorSystemMetrics(metrics.NewManagerWithConfigurators(metrics.ManagerConfiguratorFN(func(c *metrics.ManagerConfiguration) {
+			c.WithLogger(config.Logger.WithGroup("metrics"))
+		})))
+		config.Hooks = append(sys.metrics.hooks(), config.Hooks...)
+	}
+
+	if len(config.Hooks) > 0 {
+		sys.hooks = newHookRegister(config.Hooks)
+		sys.config.Hooks = nil
 	}
 
 	ctx := newActorContext(sys, sys.registry.GetUnitIdentifier(), nil, ActorProviderFN(func() Actor {
@@ -54,6 +68,8 @@ type actorSystem struct {
 	registry   processor.Registry
 	shutdownWG sync.WaitGroup
 	futureGuid atomic.Uint64
+	hooks      *hookRegister
+	metrics    *actorSystemMetrics
 }
 
 func (sys *actorSystem) Logger() log.Logger {

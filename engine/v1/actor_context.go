@@ -25,41 +25,51 @@ const (
 	actorStateStopped
 )
 
+// ActorContext 定义了 Actor 上下文接口，提供了 Actor 运行时的基本操作和控制能力
 type ActorContext interface {
+	// Logger 返回当前 Actor 关联的日志记录器
 	Logger() log.Logger
 
+	// Ref 返回当前 Actor 的引用
 	Ref() ActorRef
 
+	// Parent 返回当前 Actor 的父 Actor 引用，顶级 Actor 返回 nil
+	Parent() ActorRef
+
+	// ActorOf 创建一个 Actor 生成器，使用函数式 Provider
 	ActorOf(provider ActorProviderFN) ActorGenerator
 
+	// ActorOfP 创建一个 Actor 生成器，使用接口式 Provider
 	ActorOfP(provider ActorProvider) ActorGenerator
 
+	// SpawnOf 直接创建并启动一个子 Actor，使用函数式 Provider
 	SpawnOf(provider ActorProviderFN) ActorRef
 
+	// SpawnOfP 直接创建并启动一个子 Actor，使用接口式 Provider
 	SpawnOfP(provider ActorProvider) ActorRef
 
+	// Tell 向目标 Actor 发送一条单向消息（无需响应）
 	Tell(target ActorRef, message Message)
 
+	// Probe 向目标 Actor 发送一条探测消息（带发送者信息）
 	Probe(target ActorRef, message Message)
 
-	// Kill 立即终止指定的 Actor。
-	// 发送系统消息，立即开始终止流程。
+	// Kill 立即终止指定的 Actor
 	Kill(target ActorRef, reason ...string)
 
-	// PoisonKill 优雅终止指定的 Actor。
-	// 发送用户消息，在处理完当前队列后开始终止流程。
+	// PoisonKill 优雅终止指定的 Actor
 	PoisonKill(target ActorRef, reason ...string)
 
-	// Ask 向指定的 Actor 发送一条异步消息。
+	// Ask 向指定的 Actor 发送一条异步消息并返回一个 future.Future 对象
 	Ask(target ActorRef, message Message, timeout ...time.Duration) future.Future
 
-	// Reply 向当前 Actor 的发送者发送一条消息。
+	// Reply 向当前消息的发送者回复一条消息
 	Reply(message Message)
 
-	// Sender 获取当前正在处理的消息的发送者。
+	// Sender 获取当前正在处理的消息的发送者引用
 	Sender() ActorRef
 
-	// Message 获取当前正在处理的消息。
+	// Message 获取当前正在处理的消息内容
 	Message() Message
 }
 
@@ -278,7 +288,8 @@ func (ctx *actorContext) onKill(onKill *OnKill) {
 		}
 	}
 
-	// 终止所有子 Actor
+	ctx.system.hooks.trigger(actorKillHookType, ctx, onKill)
+
 	ctx.tryConvertStateToStopping()
 }
 
@@ -304,6 +315,9 @@ func (ctx *actorContext) tryConvertStateToStopping() {
 	// 取消处理单元注册
 	ctx.system.registry.UnregisterUnit(ctx.ref, ctx.ref)
 
+	// 触发钩子
+	ctx.system.hooks.trigger(actorKilledHookType, ctx.killedInfo)
+
 	// 通知父 Actor，如果不使用系统消息，会因为邮箱已经暂停而导致无法通知终止中的父 Actor
 	if ctx.parent != nil {
 		ctx.systemTell(ctx.parent, ctx.killedInfo)
@@ -314,6 +328,10 @@ func (ctx *actorContext) tryConvertStateToStopping() {
 
 func (ctx *actorContext) Ref() ActorRef {
 	return ctx.ref
+}
+
+func (ctx *actorContext) Parent() ActorRef {
+	return ctx.parent
 }
 
 func (ctx *actorContext) Sender() ActorRef {

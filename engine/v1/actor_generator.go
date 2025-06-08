@@ -17,12 +17,15 @@ func bindActorContext(system *actorSystem, parent, ctx *actorContext) {
 	if err := system.registry.RegisterUnit(ctx.ref, ctx); err != nil {
 		panic(err)
 	}
+	var sender = ctx
 	if parent != nil {
 		parent.bindChild(ctx.ref)
-		parent.systemTell(ctx.ref, onLaunchInstance)
-	} else {
-		ctx.systemTell(ctx.ref, onLaunchInstance)
+		sender = parent
 	}
+
+	system.hooks.trigger(actorLaunchHookType, ctx)
+
+	sender.systemTell(ctx.ref, onLaunchInstance)
 }
 
 type actorGenerator struct {

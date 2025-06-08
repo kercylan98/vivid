@@ -13,21 +13,24 @@ type TestActorSystem struct {
 	wg sync.WaitGroup
 }
 
-func NewTestActorSystem(t *testing.T) *TestActorSystem {
+func NewTestActorSystem(t *testing.T, configurators ...vivid.ActorSystemConfigurator) *TestActorSystem {
+	var defaultConfigurator = vivid.ActorSystemConfiguratorFN(func(c *vivid.ActorSystemConfiguration) {
+		c.WithLogger(log.GetBuilder().FromConfigurators(log.LoggerConfiguratorFn(func(config log.LoggerConfiguration) {
+			config.
+				WithLeveler(log.LevelDebug).
+				WithEnableColor(true).
+				WithErrTrackLevel(log.LevelError).
+				WithTrackBeautify(true).
+				WithMessageFormatter(func(message string) string {
+					return message
+				})
+		})))
+	})
+	configurators = append([]vivid.ActorSystemConfigurator{defaultConfigurator}, configurators...)
+
 	return &TestActorSystem{
-		t: t,
-		ActorSystem: vivid.NewActorSystemWithOptions(vivid.WithActorSystemLogger(
-			log.GetBuilder().FromConfigurators(log.LoggerConfiguratorFn(func(config log.LoggerConfiguration) {
-				config.
-					WithLeveler(log.LevelDebug).
-					WithEnableColor(true).
-					WithErrTrackLevel(log.LevelError).
-					WithTrackBeautify(true).
-					WithMessageFormatter(func(message string) string {
-						return message
-					})
-			})),
-		)),
+		t:           t,
+		ActorSystem: vivid.NewActorSystemWithConfigurators(configurators...),
 	}
 }
 

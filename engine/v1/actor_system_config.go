@@ -1,9 +1,10 @@
 package vivid
 
 import (
+	"time"
+
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/configurator"
-	"time"
 )
 
 // NewActorSystemConfiguration 创建新的ActorSystem配置实例
@@ -51,14 +52,15 @@ type (
 	ActorSystemConfiguration struct {
 		Logger               log.Logger
 		FutureDefaultTimeout time.Duration
+		Hooks                []Hook
+		Metrics              bool // 是否启用指标采集
 	}
 )
 
 // WithLogger 设置日志器
-func WithLogger(logger log.Logger) ActorSystemOption {
-	return func(c *ActorSystemConfiguration) {
-		c.Logger = logger
-	}
+func (c *ActorSystemConfiguration) WithLogger(logger log.Logger) *ActorSystemConfiguration {
+	c.Logger = logger
+	return c
 }
 
 // WithActorSystemLogger 设置 ActorSystem 日志器
@@ -69,10 +71,9 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 }
 
 // WithFutureDefaultTimeout 设置 Future 默认超时时间
-func WithFutureDefaultTimeout(timeout time.Duration) ActorSystemOption {
-	return func(c *ActorSystemConfiguration) {
-		c.FutureDefaultTimeout = timeout
-	}
+func (c *ActorSystemConfiguration) WithFutureDefaultTimeout(timeout time.Duration) *ActorSystemConfiguration {
+	c.FutureDefaultTimeout = timeout
+	return c
 }
 
 // WithActorSystemFutureDefaultTimeoutFn 设置 Future 默认超时时间
@@ -80,4 +81,38 @@ func WithActorSystemFutureDefaultTimeoutFn(timeout time.Duration) ActorSystemOpt
 	return func(c *ActorSystemConfiguration) {
 		c.FutureDefaultTimeout = timeout
 	}
+}
+
+// WithHooks 设置 ActorSystem 钩子
+func (c *ActorSystemConfiguration) WithHooks(hooks ...Hook) *ActorSystemConfiguration {
+	c.Hooks = append(c.Hooks, hooks...)
+	return c
+}
+
+// WithActorSystemHooks 设置 ActorSystem 钩子
+func WithActorSystemHooks(hooks ...Hook) ActorSystemOption {
+	return func(c *ActorSystemConfiguration) {
+		c.Hooks = append(c.Hooks, hooks...)
+	}
+}
+
+// WithHookProviders 设置 ActorSystem 钩子提供者
+func (c *ActorSystemConfiguration) WithHookProviders(hookProviders ...HookProvider) *ActorSystemConfiguration {
+	for _, hookProvider := range hookProviders {
+		c.Hooks = append(c.Hooks, hookProvider.hooks()...)
+	}
+	return c
+}
+
+// WithActorSystemHookProviders 设置 ActorSystem 钩子提供者
+func WithActorSystemHookProviders(hookProviders ...HookProvider) ActorSystemOption {
+	return func(c *ActorSystemConfiguration) {
+		c.WithHookProviders(hookProviders...)
+	}
+}
+
+// WithMetrics 设置 ActorSystem 是否启用指标采集
+func (c *ActorSystemConfiguration) WithMetrics(enable bool) *ActorSystemConfiguration {
+	c.Metrics = enable
+	return c
 }
