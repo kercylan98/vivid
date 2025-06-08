@@ -23,9 +23,9 @@ func (m *actorSystemMetrics) hooks() []Hook {
 }
 
 func (m *actorSystemMetrics) OnActorLaunch(ctx ActorContext) {
-	m.manager.GetMetricCollector().Counter("actor.alive", 1) // 当前存活的 Actor 数量
+	m.manager.Gauge("actor.alive").Inc() // 当前存活的 Actor 数量
 }
 
 func (m *actorSystemMetrics) OnActorKill(ctx ActorContext, message *OnKill) {
-	m.manager.GetMetricCollector().Counter("actor.alive", -1) // 当前存活的 Actor 数量
+	m.manager.Gauge("actor.alive").Dec() // 当前存活的 Actor 数量
 }
