@@ -2,23 +2,25 @@ package metrics
 
 import (
 	"math"
+	"sync"
+	"sync/atomic"
 )
 
 type Counter interface {
-	Inc()
-	Add(value uint64)
+	Inc() Counter
+	Add(value uint64) Counter
 }
 
 type Gauge interface {
-	Set(value float64)
-	Inc()
-	Dec()
-	Add(value float64)
-	Sub(value float64)
+	Set(value float64) Gauge
+	Inc() Gauge
+	Dec() Gauge
+	Add(value float64) Gauge
+	Sub(value float64) Gauge
 }
 
 type Histogram interface {
-	Observe(value float64)
+	Observe(value float64) Histogram
 }
 
 type BucketProvider interface {
@@ -33,42 +35,65 @@ func (f HistogramBucketProviderFN) Provide() []Bucket {
 
 type counter struct {
 	Name  string
-	Value uint64
+	Value atomic.Uint64
 	Tags  []Tag
 }
 
-func (c *counter) Inc() {
-	c.Value++
+func (c *counter) Inc() Counter {
+	c.Value.Add(1)
+	return c
 }
 
-func (c *counter) Add(value uint64) {
-	c.Value += value
+func (c *counter) Add(value uint64) Counter {
+	c.Value.Add(value)
+	return c
 }
 
 type gauge struct {
 	Name  string
 	Value float64
 	Tags  []Tag
+	rw    sync.RWMutex
 }
 
-func (g *gauge) Set(value float64) {
+func (g *gauge) Set(value float64) Gauge {
+	g.rw.Lock()
+	defer g.rw.Unlock()
+
 	g.Value = value
+	return g
 }
 
-func (g *gauge) Inc() {
+func (g *gauge) Inc() Gauge {
+	g.rw.Lock()
+	defer g.rw.Unlock()
+
 	g.Value += 1
+	return g
 }
 
-func (g *gauge) Dec() {
+func (g *gauge) Dec() Gauge {
+	g.rw.Lock()
+	defer g.rw.Unlock()
+
 	g.Value -= 1
+	return g
 }
 
-func (g *gauge) Add(value float64) {
+func (g *gauge) Add(value float64) Gauge {
+	g.rw.Lock()
+	defer g.rw.Unlock()
+
 	g.Value += value
+	return g
 }
 
-func (g *gauge) Sub(value float64) {
+func (g *gauge) Sub(value float64) Gauge {
+	g.rw.Lock()
+	defer g.rw.Unlock()
+
 	g.Value -= value
+	return g
 }
 
 type histogram struct {
@@ -77,23 +102,27 @@ type histogram struct {
 	Count   uint64   // 总观察次数
 	Sum     float64  // 所有观察值的总和
 	Tags    []Tag
+	rw      sync.RWMutex
 }
 
 type Bucket struct {
-	UpperBound float64 // 桶的上界
-	Count      uint64  // 该桶中的观察值数量
+	UpperBound float64       // 桶的上界
+	Count      atomic.Uint64 // 该桶中的观察值数量
 }
 
-func (h *histogram) Observe(value float64) {
+func (h *histogram) Observe(value float64) Histogram {
+	h.rw.Lock()
 	h.Count++
 	h.Sum += value
+	h.rw.Unlock()
 
 	// 将值分配到合适的桶中
 	for i := range h.Buckets {
 		if value <= h.Buckets[i].UpperBound {
-			h.Buckets[i].Count++
+			h.Buckets[i].Count.Add(1)
 		}
 	}
+	return h
 }
 
 // ExponentialBuckets 生成指数增长的桶边界
