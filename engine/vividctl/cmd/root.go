@@ -32,5 +32,4 @@ func Execute() {
 func init() {
 	// 添加子命令
 	rootCmd.AddCommand(configCmd)
-	rootCmd.AddCommand(guiCmd)
 }
