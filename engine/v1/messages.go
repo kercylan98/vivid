@@ -12,6 +12,8 @@ type (
 const (
 	onLaunchMessageId internalMessageId = iota + 1
 	onKillMessageId
+	onPreRestartMessageId
+	onRestartMessageId
 )
 
 var (
@@ -130,4 +132,24 @@ func (m *OnKilled) IsPoison() bool {
 
 func (m *OnKilled) Reason() []string {
 	return m.reason
+}
+
+type OnPreRestart struct {
+}
+
+func (m *OnPreRestart) marshal() (internalMessageId, []byte) {
+	return onPreRestartMessageId, nil
+}
+
+func (m *OnPreRestart) unmarshal(b []byte) {
+}
+
+type OnRestart struct {
+}
+
+func (m *OnRestart) marshal() (internalMessageId, []byte) {
+	return onRestartMessageId, nil
+}
+
+func (m *OnRestart) unmarshal(b []byte) {
 }

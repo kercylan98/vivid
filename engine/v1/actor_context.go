@@ -9,6 +9,7 @@ import (
 	"github.com/kercylan98/vivid/engine/v1/internal/processor"
 	"github.com/kercylan98/vivid/engine/v1/mailbox"
 	"github.com/kercylan98/vivid/src/queues"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 )
@@ -119,6 +120,8 @@ type actorContext struct {
 	message    Message             // 当前正在处理的消息。
 	state      uint32              // Actor 状态。
 	killedInfo *OnKilled           // 记录终止 Actor 的信息
+	fatal      *Fatal              // 当前致命错误信息
+	restarting bool                // Actor 是否正在重启中。
 }
 
 func (ctx *actorContext) OnSystemMessage(message any) {
@@ -133,6 +136,14 @@ func (ctx *actorContext) OnSystemMessage(message any) {
 		ctx.onKill(msg)
 	case *OnKilled:
 		ctx.onKilled(msg)
+	case *Fatal:
+		ctx.handleFatal(msg)
+	case SupervisorDirective:
+		ctx.executeSupervisorDirective(msg)
+	case *OnPreRestart:
+		ctx.onPreRestart()
+	case *OnRestart:
+		ctx.onRestart()
 	}
 
 	ctx.system.hooks.trigger(actorHandleSystemMessageAfterHookType, ctx.sender, ctx.ref, message, time.Since(startAt))
@@ -322,6 +333,11 @@ func (ctx *actorContext) tryConvertStateToStopping() {
 		return
 	}
 
+	// 重启状态中
+	if ctx.restarting {
+		ctx.tryRestart()
+	}
+
 	// 状态变更
 	if !atomic.CompareAndSwapUint32(&ctx.state, actorStateStopping, actorStateStopped) {
 		return
@@ -341,6 +357,84 @@ func (ctx *actorContext) tryConvertStateToStopping() {
 	}
 }
 
+func (ctx *actorContext) handleFatal(fatal *Fatal) {
+	// 暂停邮箱继续处理用户消息
+	if ctx.ref == fatal.Ref() {
+		ctx.mailbox.Suspend()
+	}
+
+	// 寻求监管策略
+	var directive SupervisorDirective
+	var escalate = ctx.config.SupervisionProvider.Provide() != nil
+	if !escalate {
+		supervision := ctx.config.SupervisionProvider.Provide()
+		directive = supervision.Strategy(fatal)
+		escalate = directive == DirectiveEscalate
+	}
+	if escalate {
+		ctx.systemTell(ctx.parent, fatal)
+	} else {
+		ctx.systemTell(fatal.Ref(), directive)
+	}
+}
+
+func (ctx *actorContext) executeSupervisorDirective(directive SupervisorDirective) {
+	switch directive {
+	case DirectiveKill:
+		ctx.Kill(ctx.ref, ctx.fatal.string())
+	case DirectivePoisonKill:
+		ctx.PoisonKill(ctx.ref, ctx.fatal.string())
+		ctx.mailbox.Resume()
+	case DirectiveResume:
+		ctx.mailbox.Resume()
+	case DirectiveRestart:
+		ctx.systemTell(ctx.ref, &OnPreRestart{})
+	case DirectiveEscalate:
+		ctx.systemTell(ctx.parent, ctx.fatal)
+	}
+}
+
+func (ctx *actorContext) onPreRestart() {
+	if ctx.onReceiveWithRecover() {
+		return // 重启前发生异常，视为全新的错误
+	}
+
+	// 关闭所有子 Actor
+	ctx.restarting = true
+	var killReason = ctx.fatal.string()
+	for _, ref := range ctx.children {
+		ctx.PoisonKill(ref, killReason)
+	}
+
+	ctx.tryRestart()
+}
+
+func (ctx *actorContext) tryRestart() {
+	if len(ctx.children) > 0 {
+		return // 子 Actor 尚未全部终止
+	}
+
+	// 刷新 Actor 状态
+	ctx.actor = ctx.provider.Provide()
+
+	// 投递 OnRestart 消息
+	ctx.restarting = false
+	ctx.systemTell(ctx.ref, &OnRestart{})
+}
+
+func (ctx *actorContext) onRestart() {
+	if ctx.onReceiveWithRecover() {
+		return // 重启前发生异常，视为全新的错误
+	}
+
+	// 处理初始化消息，不经过邮箱，避免中间出现其他消息导致初始化消息被丢弃
+	ctx.OnSystemMessage(onLaunchInstance)
+
+	// 致命状态恢复、邮箱恢复
+	ctx.fatal = nil
+	ctx.mailbox.Resume()
+}
+
 func (ctx *actorContext) Ref() ActorRef {
 	return ctx.ref
 }
@@ -357,11 +451,14 @@ func (ctx *actorContext) Message() Message {
 	return ctx.message
 }
 
-func (ctx *actorContext) onReceiveWithRecover() {
+func (ctx *actorContext) onReceiveWithRecover() (recovered bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			ctx.Logger().Error("ActorContext OnReceive panic", log.Any("panic", r))
+			recovered = true
+			ctx.fatal = newFatal(ctx, ctx.ref, ctx.message, r, debug.Stack())
+			ctx.handleFatal(ctx.fatal)
 		}
 	}()
 	ctx.actor.Receive(ctx)
+	return
 }

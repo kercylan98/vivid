@@ -43,6 +43,7 @@ func (m *Mailbox) Suspend() {
 
 func (m *Mailbox) Resume() {
 	atomic.StoreUint32(&m.suspend, 0)
+	m.dispatcher.Dispatch(m)
 }
 
 func (m *Mailbox) PushSystemMessage(message any) {
