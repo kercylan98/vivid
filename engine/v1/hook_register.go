@@ -35,7 +35,7 @@ type hookRegister struct {
 }
 
 func (r *hookRegister) trigger(hookType hookType, args ...any) {
-	if r.hooks == nil {
+	if r == nil {
 		return
 	}
 	for _, hook := range r.hooks[hookType] {

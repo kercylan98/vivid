@@ -2,6 +2,10 @@ package vivid
 
 import (
 	"fmt"
+	"runtime/debug"
+	"sync/atomic"
+	"time"
+
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/engine/v1/future"
 	"github.com/kercylan98/vivid/engine/v1/internal/builtinfuture"
@@ -9,9 +13,6 @@ import (
 	"github.com/kercylan98/vivid/engine/v1/internal/processor"
 	"github.com/kercylan98/vivid/engine/v1/mailbox"
 	"github.com/kercylan98/vivid/src/queues"
-	"runtime/debug"
-	"sync/atomic"
-	"time"
 )
 
 var _ ActorContext = (*actorContext)(nil)
@@ -88,7 +89,7 @@ func newActorContext(system *actorSystem, ref, parent ActorRef, provider ActorPr
 	}
 
 	if ctx.config.Logger == nil {
-		ctx.config.Logger = log.GetDefault()
+		ctx.config.Logger = system.Logger().WithGroup(fmt.Sprintf("[%s]", ctx.ref.GetPath()))
 	}
 
 	// 初始化邮箱
@@ -131,7 +132,7 @@ func (ctx *actorContext) OnSystemMessage(message any) {
 
 	switch msg := ctx.message.(type) {
 	case *OnLaunch:
-		ctx.onReceiveWithRecover()
+		ctx.onLaunch(msg)
 	case *OnKill:
 		ctx.onKill(msg)
 	case *OnKilled:
@@ -235,7 +236,7 @@ func (ctx *actorContext) Reply(message Message) {
 func (ctx *actorContext) systemTell(target ActorRef, message Message) {
 	unit, err := ctx.system.registry.GetUnit(target)
 	if err != nil {
-		ctx.Logger().Error("systemTell", log.Err(err))
+		ctx.Logger().Error("systemTell", log.Any("target", target), log.Err(err))
 		return
 	}
 	unit.HandleSystemMessage(ctx.ref, message)
@@ -361,21 +362,27 @@ func (ctx *actorContext) handleFatal(fatal *Fatal) {
 	// 暂停邮箱继续处理用户消息
 	if ctx.ref == fatal.Ref() {
 		ctx.mailbox.Suspend()
+		fatal.restartCount++
 	}
 
 	// 寻求监管策略
 	var directive SupervisorDirective
-	var escalate = ctx.config.SupervisionProvider.Provide() != nil
-	if !escalate {
-		supervision := ctx.config.SupervisionProvider.Provide()
-		directive = supervision.Strategy(fatal)
-		escalate = directive == DirectiveEscalate
-	}
-	if escalate {
-		ctx.systemTell(ctx.parent, fatal)
-	} else {
-		ctx.systemTell(fatal.Ref(), directive)
-	}
+
+	var escalate = ctx.config.SupervisionProvider == nil
+	go func() {
+		if !escalate {
+			supervision := ctx.config.SupervisionProvider.Provide()
+			directive = supervision.Strategy(fatal)
+			escalate = directive == DirectiveEscalate
+		}
+
+		if escalate {
+			ctx.systemTell(ctx.parent, fatal)
+		} else {
+			ctx.systemTell(fatal.Ref(), directive)
+		}
+	}()
+
 }
 
 func (ctx *actorContext) executeSupervisorDirective(directive SupervisorDirective) {
@@ -429,10 +436,6 @@ func (ctx *actorContext) onRestart() {
 
 	// 处理初始化消息，不经过邮箱，避免中间出现其他消息导致初始化消息被丢弃
 	ctx.OnSystemMessage(onLaunchInstance)
-
-	// 致命状态恢复、邮箱恢复
-	ctx.fatal = nil
-	ctx.mailbox.Resume()
 }
 
 func (ctx *actorContext) Ref() ActorRef {
@@ -455,10 +458,19 @@ func (ctx *actorContext) onReceiveWithRecover() (recovered bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			recovered = true
+			ctx.Logger().Error("panic", log.Any("reason", r))
 			ctx.fatal = newFatal(ctx, ctx.ref, ctx.message, r, debug.Stack())
 			ctx.handleFatal(ctx.fatal)
 		}
 	}()
 	ctx.actor.Receive(ctx)
 	return
+}
+
+func (ctx *actorContext) onLaunch(msg *OnLaunch) {
+	if !ctx.onReceiveWithRecover() {
+		// 致命状态恢复、邮箱恢复
+		ctx.fatal = nil
+		ctx.mailbox.Resume()
+	}
 }
