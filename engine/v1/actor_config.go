@@ -42,6 +42,7 @@ type (
 		MailboxProvider     mailbox.Provider           // Actor 邮箱提供器
 		DispatcherProvider  mailbox.DispatcherProvider // Actor 消息调度器提供器
 		SupervisionProvider SupervisorProvider         // Actor 监督者
+		PersistenceConfig   *PersistenceConfiguration  // 持久化配置，如果设置则启用持久化功能
 	}
 )
 
@@ -107,5 +108,24 @@ func (c *ActorConfiguration) WithSupervisionProvider(provider SupervisorProvider
 func WithActorSupervisionProvider(provider SupervisorProvider) ActorOption {
 	return func(c *ActorConfiguration) {
 		c.WithSupervisionProvider(provider)
+	}
+}
+
+// WithPersistenceConfig 设置 Actor 的持久化配置
+//
+// 当设置了持久化配置时，如果 Actor 实现了 PersistentActor 接口，
+// 系统会自动启用持久化功能。
+func (c *ActorConfiguration) WithPersistenceConfig(config *PersistenceConfiguration) *ActorConfiguration {
+	c.PersistenceConfig = config
+	return c
+}
+
+// WithActorPersistenceConfig 设置 Actor 的持久化配置
+//
+// 当设置了持久化配置时，如果 Actor 实现了 PersistentActor 接口，
+// 系统会自动启用持久化功能。
+func WithActorPersistenceConfig(config *PersistenceConfiguration) ActorOption {
+	return func(c *ActorConfiguration) {
+		c.WithPersistenceConfig(config)
 	}
 }

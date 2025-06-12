@@ -20,6 +20,7 @@ import (
 //   - 提供系统级别的配置和服务
 //   - 处理 Actor 之间的消息路由
 //   - 监控系统运行状态
+//   - 支持持久化 Actor 的创建和管理
 type ActorSystem interface {
 	ActorContext
 
