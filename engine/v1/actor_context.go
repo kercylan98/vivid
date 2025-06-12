@@ -457,10 +457,16 @@ func (ctx *actorContext) Message() Message {
 func (ctx *actorContext) onReceiveWithRecover() (recovered bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			recovered = true
 			ctx.Logger().Error("panic", log.Any("reason", r))
-			ctx.fatal = newFatal(ctx, ctx.ref, ctx.message, r, debug.Stack())
-			ctx.handleFatal(ctx.fatal)
+			switch ctx.message.(type) {
+			// 当发生此类消息如若作为致命错误会导致可能被监管策略反复重启从而引发不可预期的错误
+			case *OnKill:
+				return
+			default:
+				recovered = true
+				ctx.fatal = newFatal(ctx, ctx.ref, ctx.message, r, debug.Stack())
+				ctx.handleFatal(ctx.fatal)
+			}
 		}
 	}()
 	ctx.actor.Receive(ctx)
