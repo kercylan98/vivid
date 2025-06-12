@@ -4,15 +4,33 @@ import (
 	"sync"
 )
 
+// RingBuffer 实现了线程安全的环形缓冲区队列。
+//
+// RingBuffer 是一个高效的队列实现，使用环形缓冲区来存储数据。
+// 它支持动态扩容，当缓冲区满时会自动扩展容量。
+//
+// 特性：
+//   - 线程安全：使用互斥锁保护并发访问
+//   - 动态扩容：容量不足时自动扩展为原来的 2 倍
+//   - 内存优化：及时清理不再使用的引用
+//   - 高效访问：O(1) 时间复杂度的 Push 和 Pop 操作
 type RingBuffer struct {
-	buffer []any
-	lock   sync.Mutex
-	head   int64
-	tail   int64
-	size   int64
-	count  int64 // 当前元素数量
+	buffer []any      // 存储数据的缓冲区
+	lock   sync.Mutex // 保护并发访问的互斥锁
+	head   int64      // 队列头部索引
+	tail   int64      // 队列尾部索引
+	size   int64      // 缓冲区总容量
+	count  int64      // 当前元素数量
 }
 
+// NewRingBuffer 创建一个新的环形缓冲区。
+//
+// 参数 initialSize 指定初始容量，应该是一个正整数。
+// 返回一个初始化完成的 RingBuffer 实例。
+//
+// 示例：
+//
+//	buffer := NewRingBuffer(1024)
 func NewRingBuffer(initialSize int64) *RingBuffer {
 	return &RingBuffer{
 		buffer: make([]any, initialSize),
@@ -23,6 +41,10 @@ func NewRingBuffer(initialSize int64) *RingBuffer {
 	}
 }
 
+// Push 将元素添加到队列尾部。
+//
+// 如果缓冲区已满，会自动扩容为原来的 2 倍。
+// 此操作是线程安全的。
 func (r *RingBuffer) Push(item any) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
@@ -37,6 +59,10 @@ func (r *RingBuffer) Push(item any) {
 	r.count++
 }
 
+// Pop 从队列头部移除并返回元素。
+//
+// 如果队列为空，返回 nil。
+// 此操作是线程安全的，会自动清理不再使用的引用以避免内存泄漏。
 func (r *RingBuffer) Pop() any {
 	r.lock.Lock()
 	defer r.lock.Unlock()
@@ -53,7 +79,10 @@ func (r *RingBuffer) Pop() any {
 	return item
 }
 
-// resize 扩容方法
+// resize 扩容方法，将缓冲区容量扩展为原来的 2 倍。
+//
+// 此方法会创建新的缓冲区并复制现有数据，重新整理头尾指针。
+// 调用此方法时必须已经持有锁。
 func (r *RingBuffer) resize() {
 	newSize := r.size * 2
 	newBuffer := make([]any, newSize)
@@ -69,14 +98,18 @@ func (r *RingBuffer) resize() {
 	r.size = newSize
 }
 
-// Len 返回当前缓冲区中的元素数量
+// Len 返回当前缓冲区中的元素数量。
+//
+// 此操作是线程安全的。
 func (r *RingBuffer) Len() int64 {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	return r.count
 }
 
-// Cap 返回当前缓冲区的容量
+// Cap 返回当前缓冲区的容量。
+//
+// 此操作是线程安全的。
 func (r *RingBuffer) Cap() int64 {
 	r.lock.Lock()
 	defer r.lock.Unlock()

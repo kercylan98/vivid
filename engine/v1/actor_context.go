@@ -1,482 +1,565 @@
 package vivid
 
 import (
-	"fmt"
-	"runtime/debug"
-	"sync/atomic"
-	"time"
+    "fmt"
+    "runtime/debug"
+    "sync/atomic"
+    "time"
 
-	"github.com/kercylan98/go-log/log"
-	"github.com/kercylan98/vivid/engine/v1/future"
-	"github.com/kercylan98/vivid/engine/v1/internal/builtinfuture"
-	"github.com/kercylan98/vivid/engine/v1/internal/builtinmailbox"
-	"github.com/kercylan98/vivid/engine/v1/internal/processor"
-	"github.com/kercylan98/vivid/engine/v1/mailbox"
-	"github.com/kercylan98/vivid/src/queues"
+    "github.com/kercylan98/go-log/log"
+    "github.com/kercylan98/vivid/engine/v1/future"
+    "github.com/kercylan98/vivid/engine/v1/internal/builtinfuture"
+    "github.com/kercylan98/vivid/engine/v1/internal/builtinmailbox"
+    "github.com/kercylan98/vivid/engine/v1/internal/processor"
+    "github.com/kercylan98/vivid/engine/v1/mailbox"
+    "github.com/kercylan98/vivid/src/queues"
 )
 
 var _ ActorContext = (*actorContext)(nil)
 var _ processor.Unit = (*actorContext)(nil)
 
 const (
-	// actorStateRunning 表示 Actor 正在运行。
-	actorStateRunning = iota
-	// actorStateStopping 表示 Actor 正在终止。
-	actorStateStopping
-	// actorStateStopped 表示 Actor 已终止。
-	actorStateStopped
+    // actorStateRunning 表示 Actor 正在运行。
+    actorStateRunning = iota
+    // actorStateStopping 表示 Actor 正在终止。
+    actorStateStopping
+    // actorStateStopped 表示 Actor 已终止。
+    actorStateStopped
 )
 
-// ActorContext 定义了 Actor 上下文接口，提供了 Actor 运行时的基本操作和控制能力
+// ActorContext 定义了 Actor 运行时上下文的接口。
+//
+// ActorContext 是 Actor 与系统交互的主要接口，提供了 Actor 运行所需的所有功能。
+// 它包含了消息传递、Actor 管理、日志记录等核心能力。
+//
+// 主要功能分类：
+//   - 消息传递：Tell、Probe、Ask、Reply
+//   - Actor 管理：ActorOf、SpawnOf、Kill、PoisonKill
+//   - 上下文信息：Ref、Parent、Sender、Message
+//   - 系统服务：Logger
 type ActorContext interface {
-	// Logger 返回当前 Actor 关联的日志记录器
-	Logger() log.Logger
+    // Logger 返回当前 Actor 关联的日志记录器。
+    //
+    // 每个 Actor 都有自己的日志记录器，通常包含 Actor 的路径信息。
+    // 返回的日志记录器可以用于记录 Actor 的运行状态和调试信息。
+    Logger() log.Logger
 
-	// Ref 返回当前 Actor 的引用
-	Ref() ActorRef
+    // Ref 返回当前 Actor 的引用。
+    //
+    // Actor 引用是 Actor 的唯一标识，可以用于消息发送和 Actor 定位。
+    // 返回当前 Actor 的 ActorRef 实例。
+    Ref() ActorRef
 
-	// Parent 返回当前 Actor 的父 Actor 引用，顶级 Actor 返回 nil
-	Parent() ActorRef
+    // Parent 返回当前 Actor 的父 Actor 引用。
+    //
+    // 在 Actor 层次结构中，每个 Actor（除了根 Actor）都有一个父 Actor。
+    // 如果当前 Actor 是顶级 Actor，则返回 nil。
+    Parent() ActorRef
 
-	// ActorOf 创建一个 Actor 生成器，使用函数式 Provider
-	ActorOf(provider ActorProviderFN) ActorGenerator
+    // ActorOf 创建一个 Actor 生成器，使用函数式 Provider。
+    //
+    // 生成器模式允许灵活配置 Actor 的创建参数。
+    // 参数 provider 是创建 Actor 实例的函数式提供者。
+    // 返回一个 ActorGenerator，可以进一步配置并创建 Actor。
+    ActorOf(provider ActorProviderFN) ActorGenerator
 
-	// ActorOfP 创建一个 Actor 生成器，使用接口式 Provider
-	ActorOfP(provider ActorProvider) ActorGenerator
+    // ActorOfP 创建一个 Actor 生成器，使用接口式 Provider。
+    //
+    // 与 ActorOf 类似，但使用接口式的 Provider。
+    // 参数 provider 是创建 Actor 实例的接口式提供者。
+    // 返回一个 ActorGenerator，可以进一步配置并创建 Actor。
+    ActorOfP(provider ActorProvider) ActorGenerator
 
-	// SpawnOf 直接创建并启动一个子 Actor，使用函数式 Provider
-	SpawnOf(provider ActorProviderFN) ActorRef
+    // SpawnOf 直接创建并启动一个子 Actor，使用函数式 Provider。
+    //
+    // 这是创建 Actor 的快捷方式，使用默认配置。
+    // 参数 provider 是创建 Actor 实例的函数式提供者。
+    // 返回新创建的 Actor 引用。
+    SpawnOf(provider ActorProviderFN) ActorRef
 
-	// SpawnOfP 直接创建并启动一个子 Actor，使用接口式 Provider
-	SpawnOfP(provider ActorProvider) ActorRef
+    // SpawnOfP 直接创建并启动一个子 Actor，使用接口式 Provider。
+    //
+    // 与 SpawnOf 类似，但使用接口式的 Provider。
+    // 参数 provider 是创建 Actor 实例的接口式提供者。
+    // 返回新创建的 Actor 引用。
+    SpawnOfP(provider ActorProvider) ActorRef
 
-	// Tell 向目标 Actor 发送一条单向消息（无需响应）
-	Tell(target ActorRef, message Message)
+    // Tell 向目标 Actor 发送一条单向消息（无需响应）。
+    //
+    // Tell 是最基本的消息发送方式，采用"发送并忘记"的模式。
+    // 发送者不会等待响应，也不会知道消息是否被成功处理。
+    //
+    // 参数：
+    //   - target: 目标 Actor 的引用
+    //   - message: 要发送的消息，可以是任意类型
+    Tell(target ActorRef, message Message)
 
-	// Probe 向目标 Actor 发送一条探测消息（带发送者信息）
-	Probe(target ActorRef, message Message)
+    // Probe 向目标 Actor 发送一条探测消息（带发送者信息）。
+    //
+    // 与 Tell 类似，但会在消息中包含发送者信息。
+    // 接收者可以通过 Sender() 方法获取发送者引用并回复消息。
+    //
+    // 参数：
+    //   - target: 目标 Actor 的引用
+    //   - message: 要发送的消息，可以是任意类型
+    Probe(target ActorRef, message Message)
 
-	// Kill 立即终止指定的 Actor
-	Kill(target ActorRef, reason ...string)
+    // Kill 立即终止指定的 Actor。
+    //
+    // Kill 是强制终止方式，Actor 会立即停止，不等待当前消息处理完成。
+    // 这种方式可能导致数据丢失，应谨慎使用。
+    //
+    // 参数：
+    //   - target: 要终止的 Actor 引用
+    //   - reason: 终止原因，用于日志记录和调试
+    Kill(target ActorRef, reason ...string)
 
-	// PoisonKill 优雅终止指定的 Actor
-	PoisonKill(target ActorRef, reason ...string)
+    // PoisonKill 优雅终止指定的 Actor。
+    //
+    // PoisonKill 是优雅终止方式，Actor 会等待当前消息处理完成后停止。
+    // 这是推荐的 Actor 终止方式，可以确保数据一致性。
+    //
+    // 参数：
+    //   - target: 要终止的 Actor 引用
+    //   - reason: 终止原因，用于日志记录和调试
+    PoisonKill(target ActorRef, reason ...string)
 
-	// Ask 向指定的 Actor 发送一条异步消息并返回一个 future.Future 对象
-	Ask(target ActorRef, message Message, timeout ...time.Duration) future.Future
+    // Ask 向指定的 Actor 发送一条异步消息并返回一个 future.Future 对象。
+    //
+    // Ask 模式用于需要响应的消息发送，返回一个 Future 对象来获取响应。
+    // 发送者可以选择立即等待响应或稍后获取结果。
+    //
+    // 参数：
+    //   - target: 目标 Actor 的引用
+    //   - message: 要发送的消息，可以是任意类型
+    //   - timeout: 可选的超时时间，如果不指定则使用系统默认值
+    //
+    // 返回一个 Future 对象，可以用来获取响应结果。
+    Ask(target ActorRef, message Message, timeout ...time.Duration) future.Future
 
-	// Reply 向当前消息的发送者回复一条消息
-	Reply(message Message)
+    // Reply 向当前消息的发送者回复一条消息。
+    //
+    // 只有在处理通过 Probe 或 Ask 发送的消息时才能使用此方法。
+    // 如果当前消息没有发送者信息，此方法不会产生任何效果。
+    //
+    // 参数 message 是要回复的消息，可以是任意类型。
+    Reply(message Message)
 
-	// Sender 获取当前正在处理的消息的发送者引用
-	Sender() ActorRef
+    // Sender 获取当前正在处理的消息的发送者引用。
+    //
+    // 只有通过 Probe 或 Ask 发送的消息才会包含发送者信息。
+    // 如果当前消息是通过 Tell 发送的，则返回 nil。
+    Sender() ActorRef
 
-	// Message 获取当前正在处理的消息内容
-	Message() Message
+    // Message 获取当前正在处理的消息内容。
+    //
+    // 返回当前 Actor 正在处理的消息对象。
+    // 这通常在 Actor 的 Receive 方法中使用。
+    Message() Message
 }
 
 func newActorContext(system *actorSystem, ref, parent ActorRef, provider ActorProvider, config *ActorConfiguration) *actorContext {
-	if parent == nil {
-		system.shutdownWG.Add(1)
-	}
+    if parent == nil {
+        system.shutdownWG.Add(1)
+    }
 
-	ctx := &actorContext{
-		system:   system,
-		parent:   parent,
-		provider: provider,
-		config:   *config,
-		ref:      ref,
-	}
+    ctx := &actorContext{
+        system:   system,
+        parent:   parent,
+        provider: provider,
+        config:   *config,
+        ref:      ref,
+    }
 
-	if ctx.config.Logger == nil {
-		ctx.config.Logger = system.Logger().WithGroup(fmt.Sprintf("[%s]", ctx.ref.GetPath()))
-	}
+    if ctx.config.Logger == nil {
+        ctx.config.Logger = system.Logger().WithGroup(fmt.Sprintf("[%s]", ctx.ref.GetPath()))
+    }
 
-	// 初始化邮箱
-	if ctx.config.MailboxProvider != nil {
-		ctx.mailbox = ctx.config.MailboxProvider.Provide()
-	} else {
-		ctx.mailbox = builtinmailbox.NewMailbox(
-			queues.NewRingBuffer(32),
-			queues.NewRingBuffer(32),
-			builtinmailbox.NewDispatcher(ctx),
-		)
-	}
+    // 初始化邮箱
+    if ctx.config.MailboxProvider != nil {
+        ctx.mailbox = ctx.config.MailboxProvider.Provide()
+    } else {
+        ctx.mailbox = builtinmailbox.NewMailbox(
+            queues.NewRingBuffer(32),
+            queues.NewRingBuffer(32),
+            builtinmailbox.NewDispatcher(ctx),
+        )
+    }
 
-	ctx.actor = provider.Provide()
-	return ctx
+    ctx.actor = provider.Provide()
+    return ctx
 }
 
 type actorContext struct {
-	system     *actorSystem        // ActorContext 所属的 ActorSystem。
-	config     ActorConfiguration  // ActorContext 的配置。
-	provider   ActorProvider       // ActorContext 的 ActorProvider。
-	parent     ActorRef            // ActorContext 的父 Actor 引用，顶级 Actor 为 nil。
-	ref        ActorRef            // ActorContext 自身的引用。
-	mailbox    mailbox.Mailbox     // ActorContext 的邮箱。
-	childGuid  int64               // ActorContext 的子 Actor GUID，用于生成子 Actor 引用。
-	children   map[string]ActorRef // ActorContext 的子 Actor 引用映射。
-	actor      Actor               // Actor 实例。
-	sender     ActorRef            // 当前正在处理的消息的发送者。
-	message    Message             // 当前正在处理的消息。
-	state      uint32              // Actor 状态。
-	killedInfo *OnKilled           // 记录终止 Actor 的信息
-	fatal      *Fatal              // 当前致命错误信息
-	restarting bool                // Actor 是否正在重启中。
+    system     *actorSystem        // ActorContext 所属的 ActorSystem。
+    config     ActorConfiguration  // ActorContext 的配置。
+    provider   ActorProvider       // ActorContext 的 ActorProvider。
+    parent     ActorRef            // ActorContext 的父 Actor 引用，顶级 Actor 为 nil。
+    ref        ActorRef            // ActorContext 自身的引用。
+    mailbox    mailbox.Mailbox     // ActorContext 的邮箱。
+    childGuid  int64               // ActorContext 的子 Actor GUID，用于生成子 Actor 引用。
+    children   map[string]ActorRef // ActorContext 的子 Actor 引用映射。
+    actor      Actor               // Actor 实例。
+    sender     ActorRef            // 当前正在处理的消息的发送者。
+    message    Message             // 当前正在处理的消息。
+    state      uint32              // Actor 状态。
+    killedInfo *OnKilled           // 记录终止 Actor 的信息
+    fatal      *Fatal              // 当前致命错误信息
+    restarting bool                // Actor 是否正在重启中。
 }
 
 func (ctx *actorContext) OnSystemMessage(message any) {
-	startAt := time.Now()
-	ctx.sender, ctx.message = unwrapMessage(message)
-	ctx.system.hooks.trigger(actorHandleSystemMessageBeforeHookType, ctx.sender, ctx.ref, message)
+    startAt := time.Now()
+    ctx.sender, ctx.message = unwrapMessage(message)
+    ctx.system.hooks.trigger(actorHandleSystemMessageBeforeHookType, ctx.sender, ctx.ref, message)
 
-	switch msg := ctx.message.(type) {
-	case *OnLaunch:
-		ctx.onLaunch(msg)
-	case *OnKill:
-		ctx.onKill(msg)
-	case *OnKilled:
-		ctx.onKilled(msg)
-	case *Fatal:
-		ctx.handleFatal(msg)
-	case SupervisorDirective:
-		ctx.executeSupervisorDirective(msg)
-	case *OnPreRestart:
-		ctx.onPreRestart()
-	case *OnRestart:
-		ctx.onRestart()
-	}
+    switch msg := ctx.message.(type) {
+    case *OnLaunch:
+        ctx.onLaunch(msg)
+    case *OnKill:
+        ctx.onKill(msg)
+    case *OnKilled:
+        ctx.onKilled(msg)
+    case *Fatal:
+        ctx.handleFatal(msg)
+    case SupervisorDirective:
+        ctx.executeSupervisorDirective(msg)
+    case *OnPreRestart:
+        ctx.onPreRestart()
+    case *OnRestart:
+        ctx.onRestart()
+    }
 
-	ctx.system.hooks.trigger(actorHandleSystemMessageAfterHookType, ctx.sender, ctx.ref, message, time.Since(startAt))
+    ctx.system.hooks.trigger(actorHandleSystemMessageAfterHookType, ctx.sender, ctx.ref, message, time.Since(startAt))
 }
 
 func (ctx *actorContext) OnUserMessage(message any) {
-	startAt := time.Now()
-	ctx.sender, ctx.message = unwrapMessage(message)
-	ctx.system.hooks.trigger(actorHandleUserMessageBeforeHookType, ctx.sender, ctx.ref, message)
+    startAt := time.Now()
+    ctx.sender, ctx.message = unwrapMessage(message)
+    ctx.system.hooks.trigger(actorHandleUserMessageBeforeHookType, ctx.sender, ctx.ref, message)
 
-	switch msg := ctx.message.(type) {
-	case *OnKill:
-		ctx.onKill(msg)
-	default:
-		ctx.onReceiveWithRecover()
-	}
+    switch msg := ctx.message.(type) {
+    case *OnKill:
+        ctx.onKill(msg)
+    default:
+        ctx.onReceiveWithRecover()
+    }
 
-	ctx.system.hooks.trigger(actorHandleUserMessageAfterHookType, ctx.sender, ctx.ref, message, time.Since(startAt))
+    ctx.system.hooks.trigger(actorHandleUserMessageAfterHookType, ctx.sender, ctx.ref, message, time.Since(startAt))
 }
 
 func (ctx *actorContext) HandleUserMessage(sender processor.UnitIdentifier, message any) {
-	// 当 Actor 处于终止状态时，不再接收用户消息，处于终止中时还应该继续接收，但是邮箱会屏蔽用户消息的处理
-	if atomic.LoadUint32(&ctx.state) == actorStateStopped {
-		ctx.Logger().Debug("Rejecting user message, actor not running",
-			log.String("actor", ctx.ref.GetPath()),
-			log.Any("state", ctx.state))
-		return
-	}
+    // 当 Actor 处于终止状态时，不再接收用户消息，处于终止中时还应该继续接收，但是邮箱会屏蔽用户消息的处理
+    if atomic.LoadUint32(&ctx.state) == actorStateStopped {
+        ctx.Logger().Debug("Rejecting user message, actor not running",
+            log.String("actor", ctx.ref.GetPath()),
+            log.Any("state", ctx.state))
+        return
+    }
 
-	ctx.system.hooks.trigger(actorMailboxPushUserMessageBeforeHookType, ctx.ref, message)
+    ctx.system.hooks.trigger(actorMailboxPushUserMessageBeforeHookType, ctx.ref, message)
 
-	ctx.mailbox.PushUserMessage(message)
+    ctx.mailbox.PushUserMessage(message)
 
 }
 
 func (ctx *actorContext) HandleSystemMessage(sender processor.UnitIdentifier, message any) {
-	ctx.system.hooks.trigger(actorMailboxPushSystemMessageBeforeHookType, ctx.ref, message)
+    ctx.system.hooks.trigger(actorMailboxPushSystemMessageBeforeHookType, ctx.ref, message)
 
-	ctx.mailbox.PushSystemMessage(message)
+    ctx.mailbox.PushSystemMessage(message)
 }
 
 func (ctx *actorContext) Tell(target ActorRef, message Message) {
-	unit, err := ctx.system.registry.GetUnit(target)
-	if err != nil {
-		ctx.Logger().Error("Tell", log.Err(err))
-		return
-	}
-	unit.HandleUserMessage(ctx.ref, message)
+    unit, err := ctx.system.registry.GetUnit(target)
+    if err != nil {
+        ctx.Logger().Error("Tell", log.Err(err))
+        return
+    }
+    unit.HandleUserMessage(ctx.ref, message)
 }
 
 func (ctx *actorContext) Probe(target ActorRef, message Message) {
-	unit, err := ctx.system.registry.GetUnit(target)
-	if err != nil {
-		ctx.Logger().Error("Probe", log.Err(err))
-		return
-	}
-	unit.HandleUserMessage(ctx.ref, wrapMessage(ctx.ref, message))
+    unit, err := ctx.system.registry.GetUnit(target)
+    if err != nil {
+        ctx.Logger().Error("Probe", log.Err(err))
+        return
+    }
+    unit.HandleUserMessage(ctx.ref, wrapMessage(ctx.ref, message))
 }
 
 func (ctx *actorContext) Kill(target ActorRef, reason ...string) {
-	ctx.systemTell(target, newOnKill(ctx.ref, false, reason))
+    ctx.systemTell(target, newOnKill(ctx.ref, false, reason))
 }
 
 func (ctx *actorContext) PoisonKill(target ActorRef, reason ...string) {
-	ctx.Tell(target, newOnKill(ctx.ref, true, reason))
+    ctx.Tell(target, newOnKill(ctx.ref, true, reason))
 }
 
 func (ctx *actorContext) Ask(target ActorRef, message Message, timeout ...time.Duration) future.Future {
-	t := ctx.system.config.FutureDefaultTimeout
-	if len(timeout) > 0 {
-		t = timeout[0]
-	}
+    t := ctx.system.config.FutureDefaultTimeout
+    if len(timeout) > 0 {
+        t = timeout[0]
+    }
 
-	ref := ctx.system.Ref().Branch(fmt.Sprintf("future-%d", ctx.childGuid))
-	f := builtinfuture.New(ctx.system.registry, ref, t)
-	unit, err := ctx.system.registry.GetUnit(target)
-	if err != nil {
-		ctx.Logger().Error("Ask", log.Err(err))
-		return f
-	}
-	unit.HandleUserMessage(ref, wrapMessage(ref, message))
-	return f
+    ref := ctx.system.Ref().Branch(fmt.Sprintf("future-%d", ctx.childGuid))
+    f := builtinfuture.New(ctx.system.registry, ref, t)
+    unit, err := ctx.system.registry.GetUnit(target)
+    if err != nil {
+        ctx.Logger().Error("Ask", log.Err(err))
+        return f
+    }
+    unit.HandleUserMessage(ref, wrapMessage(ref, message))
+    return f
 }
 
 func (ctx *actorContext) Reply(message Message) {
-	ctx.Tell(ctx.sender, message)
+    ctx.Tell(ctx.sender, message)
 }
 
 func (ctx *actorContext) systemTell(target ActorRef, message Message) {
-	unit, err := ctx.system.registry.GetUnit(target)
-	if err != nil {
-		ctx.Logger().Error("systemTell", log.Any("target", target), log.Err(err))
-		return
-	}
-	unit.HandleSystemMessage(ctx.ref, message)
+    unit, err := ctx.system.registry.GetUnit(target)
+    if err != nil {
+        ctx.Logger().Error("systemTell", log.Any("target", target), log.Err(err))
+        return
+    }
+    unit.HandleSystemMessage(ctx.ref, message)
 }
 
 func (ctx *actorContext) systemProbe(target ActorRef, message Message) {
-	unit, err := ctx.system.registry.GetUnit(target)
-	if err != nil {
-		ctx.Logger().Error("systemProbe", log.Err(err))
-		return
-	}
-	unit.HandleSystemMessage(ctx.ref, wrapMessage(ctx.ref, message))
+    unit, err := ctx.system.registry.GetUnit(target)
+    if err != nil {
+        ctx.Logger().Error("systemProbe", log.Err(err))
+        return
+    }
+    unit.HandleSystemMessage(ctx.ref, wrapMessage(ctx.ref, message))
 }
 
 func (ctx *actorContext) Logger() log.Logger {
-	return ctx.config.Logger
+    return ctx.config.Logger
 }
 
 func (ctx *actorContext) ActorOf(provider ActorProviderFN) ActorGenerator {
-	return newActorGenerator(ctx, provider)
+    return newActorGenerator(ctx, provider)
 }
 
 func (ctx *actorContext) ActorOfP(provider ActorProvider) ActorGenerator {
-	return newActorGenerator(ctx, provider)
+    return newActorGenerator(ctx, provider)
 }
 
 func (ctx *actorContext) SpawnOf(provider ActorProviderFN) ActorRef {
-	return ctx.ActorOf(provider).Spawn()
+    return ctx.ActorOf(provider).Spawn()
 }
 
 func (ctx *actorContext) SpawnOfP(provider ActorProvider) ActorRef {
-	return ctx.ActorOfP(provider).Spawn()
+    return ctx.ActorOfP(provider).Spawn()
 }
 
 func (ctx *actorContext) bindChild(ref ActorRef) {
-	if ctx == nil {
-		return
-	}
-	if ctx.children == nil {
-		ctx.children = make(map[string]ActorRef)
-	}
-	ctx.children[ref.GetPath()] = ref
+    if ctx == nil {
+        return
+    }
+    if ctx.children == nil {
+        ctx.children = make(map[string]ActorRef)
+    }
+    ctx.children[ref.GetPath()] = ref
 }
 
 func (ctx *actorContext) unbindChild(ref ActorRef) {
-	if ctx == nil {
-		return
-	}
-	delete(ctx.children, ref.GetPath())
-	if len(ctx.children) == 0 {
-		ctx.children = nil
-	}
+    if ctx == nil {
+        return
+    }
+    delete(ctx.children, ref.GetPath())
+    if len(ctx.children) == 0 {
+        ctx.children = nil
+    }
 }
 
 // onKill 处理终止消息。
 func (ctx *actorContext) onKill(onKill *OnKill) {
-	if onKill.applied || !atomic.CompareAndSwapUint32(&ctx.state, actorStateRunning, actorStateStopping) {
-		return
-	}
-	onKill.applied = true
-	ctx.killedInfo = newOnKilled(onKill.operator, ctx.ref, onKill.IsPoison(), onKill.Reason())
+    if onKill.applied || !atomic.CompareAndSwapUint32(&ctx.state, actorStateRunning, actorStateStopping) {
+        return
+    }
+    onKill.applied = true
+    ctx.killedInfo = newOnKilled(onKill.operator, ctx.ref, onKill.IsPoison(), onKill.Reason())
 
-	// 暂停邮箱继续处理用户消息
-	// 此刻新的用户级消息继续被投递到邮箱中，但不会被执行
-	ctx.mailbox.Suspend()
+    // 暂停邮箱继续处理用户消息
+    // 此刻新的用户级消息继续被投递到邮箱中，但不会被执行
+    ctx.mailbox.Suspend()
 
-	// 等待用户处理关闭消息
-	ctx.onReceiveWithRecover()
+    // 等待用户处理关闭消息
+    ctx.onReceiveWithRecover()
 
-	// 终止所有子 Actor
-	for _, ref := range ctx.children {
-		if onKill.IsPoison() {
-			ctx.PoisonKill(ref, onKill.Reason()...)
-		} else {
-			ctx.Kill(ref, onKill.Reason()...)
-		}
-	}
+    // 终止所有子 Actor
+    for _, ref := range ctx.children {
+        if onKill.IsPoison() {
+            ctx.PoisonKill(ref, onKill.Reason()...)
+        } else {
+            ctx.Kill(ref, onKill.Reason()...)
+        }
+    }
 
-	ctx.system.hooks.trigger(actorKillHookType, ctx, onKill)
+    ctx.system.hooks.trigger(actorKillHookType, ctx, onKill)
 
-	ctx.tryConvertStateToStopping()
+    ctx.tryConvertStateToStopping()
 }
 
 func (ctx *actorContext) onKilled(msg *OnKilled) {
-	// 解绑已终止的子 Actor
-	ctx.unbindChild(msg.ref)
-	ctx.onReceiveWithRecover()
-	ctx.tryConvertStateToStopping()
+    // 解绑已终止的子 Actor
+    ctx.unbindChild(msg.ref)
+    ctx.onReceiveWithRecover()
+    ctx.tryConvertStateToStopping()
 }
 
 // tryConvertStateToStopping 尝试将状态转换为停止状态，需要注意 onKilled 可能是来自子 Actor 的终止消息
 func (ctx *actorContext) tryConvertStateToStopping() {
-	// 如果子 Actor 已全部终止，完成自身终止
-	if len(ctx.children) > 0 {
-		return
-	}
+    // 如果子 Actor 已全部终止，完成自身终止
+    if len(ctx.children) > 0 {
+        return
+    }
 
-	// 重启状态中
-	if ctx.restarting {
-		ctx.tryRestart()
-	}
+    // 重启状态中
+    if ctx.restarting {
+        ctx.tryRestart()
+    }
 
-	// 状态变更
-	if !atomic.CompareAndSwapUint32(&ctx.state, actorStateStopping, actorStateStopped) {
-		return
-	}
+    // 状态变更
+    if !atomic.CompareAndSwapUint32(&ctx.state, actorStateStopping, actorStateStopped) {
+        return
+    }
 
-	// 取消处理单元注册
-	ctx.system.registry.UnregisterUnit(ctx.ref, ctx.ref)
+    // 取消处理单元注册
+    ctx.system.registry.UnregisterUnit(ctx.ref, ctx.ref)
 
-	// 触发钩子
-	ctx.system.hooks.trigger(actorKilledHookType, ctx.killedInfo)
+    // 触发钩子
+    ctx.system.hooks.trigger(actorKilledHookType, ctx.killedInfo)
 
-	// 通知父 Actor，如果不使用系统消息，会因为邮箱已经暂停而导致无法通知终止中的父 Actor
-	if ctx.parent != nil {
-		ctx.systemTell(ctx.parent, ctx.killedInfo)
-	} else {
-		ctx.system.shutdownWG.Done()
-	}
+    // 通知父 Actor，如果不使用系统消息，会因为邮箱已经暂停而导致无法通知终止中的父 Actor
+    if ctx.parent != nil {
+        ctx.systemTell(ctx.parent, ctx.killedInfo)
+    } else {
+        ctx.system.shutdownWG.Done()
+    }
 }
 
 func (ctx *actorContext) handleFatal(fatal *Fatal) {
-	// 暂停邮箱继续处理用户消息
-	if ctx.ref == fatal.Ref() {
-		ctx.mailbox.Suspend()
-		fatal.restartCount++
-	}
+    // 暂停邮箱继续处理用户消息
+    if ctx.ref == fatal.Ref() {
+        ctx.mailbox.Suspend()
+        fatal.restartCount++
+    }
 
-	// 寻求监管策略
-	var directive SupervisorDirective
+    // 寻求监管策略
+    var directive SupervisorDirective
 
-	var escalate = ctx.config.SupervisionProvider == nil
-	go func() {
-		if !escalate {
-			supervision := ctx.config.SupervisionProvider.Provide()
-			directive = supervision.Strategy(fatal)
-			escalate = directive == DirectiveEscalate
-		}
+    var escalate = ctx.config.SupervisionProvider == nil
+    go func() {
+        if !escalate {
+            supervision := ctx.config.SupervisionProvider.Provide()
+            directive = supervision.Strategy(fatal)
+            escalate = directive == DirectiveEscalate
+        }
 
-		if escalate {
-			ctx.systemTell(ctx.parent, fatal)
-		} else {
-			ctx.systemTell(fatal.Ref(), directive)
-		}
-	}()
+        if escalate {
+            ctx.systemTell(ctx.parent, fatal)
+        } else {
+            ctx.systemTell(fatal.Ref(), directive)
+        }
+    }()
 
 }
 
 func (ctx *actorContext) executeSupervisorDirective(directive SupervisorDirective) {
-	switch directive {
-	case DirectiveKill:
-		ctx.Kill(ctx.ref, ctx.fatal.string())
-	case DirectivePoisonKill:
-		ctx.PoisonKill(ctx.ref, ctx.fatal.string())
-		ctx.mailbox.Resume()
-	case DirectiveResume:
-		ctx.mailbox.Resume()
-	case DirectiveRestart:
-		ctx.systemTell(ctx.ref, &OnPreRestart{})
-	case DirectiveEscalate:
-		ctx.systemTell(ctx.parent, ctx.fatal)
-	}
+    switch directive {
+    case DirectiveKill:
+        ctx.Kill(ctx.ref, ctx.fatal.String())
+    case DirectivePoisonKill:
+        ctx.PoisonKill(ctx.ref, ctx.fatal.String())
+        ctx.mailbox.Resume()
+    case DirectiveResume:
+        ctx.mailbox.Resume()
+    case DirectiveRestart:
+        ctx.systemTell(ctx.ref, &OnPreRestart{})
+    case DirectiveEscalate:
+        ctx.systemTell(ctx.parent, ctx.fatal)
+    }
 }
 
 func (ctx *actorContext) onPreRestart() {
-	if ctx.onReceiveWithRecover() {
-		return // 重启前发生异常，视为全新的错误
-	}
+    if ctx.onReceiveWithRecover() {
+        return // 重启前发生异常，视为全新的错误
+    }
 
-	// 关闭所有子 Actor
-	ctx.restarting = true
-	var killReason = ctx.fatal.string()
-	for _, ref := range ctx.children {
-		ctx.PoisonKill(ref, killReason)
-	}
+    // 关闭所有子 Actor
+    ctx.restarting = true
+    var killReason = ctx.fatal.String()
+    for _, ref := range ctx.children {
+        ctx.PoisonKill(ref, killReason)
+    }
 
-	ctx.tryRestart()
+    ctx.tryRestart()
 }
 
 func (ctx *actorContext) tryRestart() {
-	if len(ctx.children) > 0 {
-		return // 子 Actor 尚未全部终止
-	}
+    if len(ctx.children) > 0 {
+        return // 子 Actor 尚未全部终止
+    }
 
-	// 刷新 Actor 状态
-	ctx.actor = ctx.provider.Provide()
+    // 刷新 Actor 状态
+    ctx.actor = ctx.provider.Provide()
 
-	// 投递 OnRestart 消息
-	ctx.restarting = false
-	ctx.systemTell(ctx.ref, &OnRestart{})
+    // 投递 OnRestart 消息
+    ctx.restarting = false
+    ctx.systemTell(ctx.ref, &OnRestart{})
 }
 
 func (ctx *actorContext) onRestart() {
-	if ctx.onReceiveWithRecover() {
-		return // 重启前发生异常，视为全新的错误
-	}
+    if ctx.onReceiveWithRecover() {
+        return // 重启前发生异常，视为全新的错误
+    }
 
-	// 处理初始化消息，不经过邮箱，避免中间出现其他消息导致初始化消息被丢弃
-	ctx.OnSystemMessage(onLaunchInstance)
+    // 处理初始化消息，不经过邮箱，避免中间出现其他消息导致初始化消息被丢弃
+    ctx.OnSystemMessage(onLaunchInstance)
 }
 
 func (ctx *actorContext) Ref() ActorRef {
-	return ctx.ref
+    return ctx.ref
 }
 
 func (ctx *actorContext) Parent() ActorRef {
-	return ctx.parent
+    return ctx.parent
 }
 
 func (ctx *actorContext) Sender() ActorRef {
-	return ctx.sender
+    return ctx.sender
 }
 
 func (ctx *actorContext) Message() Message {
-	return ctx.message
+    return ctx.message
 }
 
 func (ctx *actorContext) onReceiveWithRecover() (recovered bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			ctx.Logger().Error("panic", log.Any("reason", r))
-			switch ctx.message.(type) {
-			// 当发生此类消息如若作为致命错误会导致可能被监管策略反复重启从而引发不可预期的错误
-			case *OnKill:
-				return
-			default:
-				recovered = true
-				ctx.fatal = newFatal(ctx, ctx.ref, ctx.message, r, debug.Stack())
-				ctx.handleFatal(ctx.fatal)
-			}
-		}
-	}()
-	ctx.actor.Receive(ctx)
-	return
+    defer func() {
+        if r := recover(); r != nil {
+            ctx.Logger().Error("panic", log.Any("reason", r))
+            switch ctx.message.(type) {
+            // 当发生此类消息如若作为致命错误会导致可能被监管策略反复重启从而引发不可预期的错误
+            case *OnKill:
+                return
+            default:
+                recovered = true
+                ctx.fatal = newFatal(ctx, ctx.ref, ctx.message, r, debug.Stack())
+                ctx.handleFatal(ctx.fatal)
+            }
+        }
+    }()
+    ctx.actor.Receive(ctx)
+    return
 }
 
 func (ctx *actorContext) onLaunch(msg *OnLaunch) {
-	if !ctx.onReceiveWithRecover() {
-		// 致命状态恢复、邮箱恢复
-		ctx.fatal = nil
-		ctx.mailbox.Resume()
-	}
+    if !ctx.onReceiveWithRecover() {
+        // 致命状态恢复、邮箱恢复
+        ctx.fatal = nil
+        ctx.mailbox.Resume()
+    }
 }
