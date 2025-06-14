@@ -202,7 +202,7 @@ func TestRegistry_Shutdown(t *testing.T) {
 	}
 
 	// 执行关闭
-	if err := registry.Shutdown(registry.GetUnitIdentifier()); err != nil {
+	if err := registry.Shutdown(); err != nil {
 		t.Errorf("unexpected error during shutdown: %v", err)
 	}
 
