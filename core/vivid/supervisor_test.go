@@ -2,7 +2,7 @@ package vivid_test
 
 import (
 	"errors"
-	vivid "github.com/kercylan98/vivid/engine/v1"
+	"github.com/kercylan98/vivid/core/vivid"
 	"testing"
 	"time"
 )

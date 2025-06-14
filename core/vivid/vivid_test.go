@@ -2,7 +2,7 @@ package vivid_test
 
 import (
 	"github.com/kercylan98/go-log/log"
-	vivid "github.com/kercylan98/vivid/engine/v1"
+	"github.com/kercylan98/vivid/core/vivid"
 	"sync"
 	"testing"
 )

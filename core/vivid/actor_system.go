@@ -1,13 +1,12 @@
 package vivid
 
 import (
+	processor2 "github.com/kercylan98/vivid/core/vivid/internal/processor"
+	metrics2 "github.com/kercylan98/vivid/core/vivid/metrics"
 	"sync"
 	"sync/atomic"
 
-	"github.com/kercylan98/vivid/engine/v1/metrics"
-
 	"github.com/kercylan98/go-log/log"
-	"github.com/kercylan98/vivid/engine/v1/internal/processor"
 )
 
 // ActorSystem 定义了 Actor 系统的核心接口。
@@ -57,7 +56,7 @@ func NewActorSystemFromConfig(config *ActorSystemConfiguration) ActorSystem {
 	}
 
 	if config.Metrics {
-		sys.metrics = newActorSystemMetrics(metrics.NewManagerWithConfigurators(metrics.ManagerConfiguratorFN(func(c *metrics.ManagerConfiguration) {
+		sys.metrics = newActorSystemMetrics(metrics2.NewManagerWithConfigurators(metrics2.ManagerConfiguratorFN(func(c *metrics2.ManagerConfiguration) {
 			c.WithLogger(config.Logger.WithGroup("metrics"))
 		})))
 		config.Hooks = append(sys.metrics.hooks(), config.Hooks...)
@@ -70,7 +69,7 @@ func NewActorSystemFromConfig(config *ActorSystemConfiguration) ActorSystem {
 
 	daemon := new(daemonActor)
 
-	sys.registry = processor.NewRegistryWithConfigurators(processor.RegistryConfiguratorFN(func(c *processor.RegistryConfiguration) {
+	sys.registry = processor2.NewRegistryWithConfigurators(processor2.RegistryConfiguratorFN(func(c *processor2.RegistryConfiguration) {
 		c.WithLogger(config.Logger.WithGroup("unit-registry"))
 		c.WithDaemon(daemon)
 	}))
@@ -117,7 +116,7 @@ func NewActorSystemWithConfigurators(configurators ...ActorSystemConfigurator) A
 type actorSystem struct {
 	ActorContext
 	config     ActorSystemConfiguration
-	registry   processor.Registry
+	registry   processor2.Registry
 	shutdownWG sync.WaitGroup
 	futureGuid atomic.Uint64
 	hooks      *hookRegister

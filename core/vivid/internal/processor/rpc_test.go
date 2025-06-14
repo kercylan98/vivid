@@ -4,17 +4,17 @@ package processor_test
 import (
 	"errors"
 	"fmt"
+	processor2 "github.com/kercylan98/vivid/core/vivid/internal/processor"
 	"testing"
 
 	"github.com/kercylan98/go-log/log"
-	"github.com/kercylan98/vivid/engine/v1/internal/processor"
 )
 
 // TestRegistryRPCServerLifecycle 测试注册表和 RPC 服务器的生命周期管理
 func TestRegistryRPCServerLifecycle(t *testing.T) {
 	// 创建不带 RPC 服务器的注册表
-	registry := processor.NewRegistryWithOptions(
-		processor.WithLogger(log.GetDefault()),
+	registry := processor2.NewRegistryWithOptions(
+		processor2.WithLogger(log.GetDefault()),
 	)
 
 	// 测试启动不存在的 RPC 服务器
@@ -28,16 +28,16 @@ func TestRegistryRPCServerLifecycle(t *testing.T) {
 	}
 
 	// 测试关闭后启动 RPC 服务器
-	if err := registry.StartRPCServer(); !errors.Is(err, processor.ErrRegistryShutdown) {
+	if err := registry.StartRPCServer(); !errors.Is(err, processor2.ErrRegistryShutdown) {
 		t.Errorf("Expected ErrRegistryShutdown, got: %v", err)
 	}
 }
 
 // BenchmarkRegistryWithRPCConcurrency 测试注册表在高并发场景下的性能
 func BenchmarkRegistryWithRPCConcurrency(b *testing.B) {
-	registry := processor.NewRegistryWithOptions(
-		processor.WithLogger(log.GetDefault()),
-		processor.WithDaemon(&TestUnit{}),
+	registry := processor2.NewRegistryWithOptions(
+		processor2.WithLogger(log.GetDefault()),
+		processor2.WithDaemon(&TestUnit{}),
 	)
 	defer func() {
 		_ = registry.Shutdown(registry.GetUnitIdentifier())
@@ -53,7 +53,7 @@ func BenchmarkRegistryWithRPCConcurrency(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			// 模拟获取远程单元（实际会回退到守护单元）
-			id := processor.NewCacheUnitIdentifier("remote-server:8080", "/service/remote")
+			id := processor2.NewCacheUnitIdentifier("remote-server:8080", "/service/remote")
 			_, err := registry.GetUnit(id)
 			if err != nil {
 				b.Errorf("GetUnit failed: %v", err)

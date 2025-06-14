@@ -1,13 +1,13 @@
 package builtinmailbox
 
 import (
-	"github.com/kercylan98/vivid/engine/v1/mailbox"
+	mailbox2 "github.com/kercylan98/vivid/core/vivid/mailbox"
 	"sync/atomic"
 )
 
-var _ mailbox.Dispatcher = (*Dispatcher)(nil)
+var _ mailbox2.Dispatcher = (*Dispatcher)(nil)
 
-func NewDispatcher(executor mailbox.Executor) *Dispatcher {
+func NewDispatcher(executor mailbox2.Executor) *Dispatcher {
 	return &Dispatcher{
 		executor: executor,
 	}
@@ -15,17 +15,17 @@ func NewDispatcher(executor mailbox.Executor) *Dispatcher {
 
 type Dispatcher struct {
 	status   uint32
-	executor mailbox.Executor
+	executor mailbox2.Executor
 }
 
-func (d *Dispatcher) Dispatch(mailbox mailbox.Mailbox) {
+func (d *Dispatcher) Dispatch(mailbox mailbox2.Mailbox) {
 	// 无论 CAS 是否成功，都要确保在状态变为 idle 后再次检查是否有新消息
 	if atomic.CompareAndSwapUint32(&d.status, 0, 1) {
 		go d.dispatch(mailbox)
 	}
 }
 
-func (d *Dispatcher) dispatch(m mailbox.Mailbox) {
+func (d *Dispatcher) dispatch(m mailbox2.Mailbox) {
 	// 持续处理直到没有消息为止
 	for {
 		processed := d.process(m)
@@ -48,7 +48,7 @@ func (d *Dispatcher) dispatch(m mailbox.Mailbox) {
 	}
 }
 
-func (d *Dispatcher) process(m mailbox.Mailbox) (processed bool) {
+func (d *Dispatcher) process(m mailbox2.Mailbox) (processed bool) {
 	var message any
 
 	// 处理系统消息

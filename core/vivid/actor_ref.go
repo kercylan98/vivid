@@ -1,6 +1,8 @@
 package vivid
 
-import "github.com/kercylan98/vivid/engine/v1/internal/processor"
+import (
+	"github.com/kercylan98/vivid/core/vivid/internal/processor"
+)
 
 // ActorRef 是 Actor 的引用类型，用于标识和定位 Actor 实例。
 //

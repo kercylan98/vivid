@@ -2,7 +2,7 @@ package processor
 
 import (
 	"github.com/kercylan98/go-log/log"
-	"github.com/kercylan98/vivid/engine/v1/processor"
+	"github.com/kercylan98/vivid/core/vivid/processor"
 	"github.com/kercylan98/vivid/src/configurator"
 	"github.com/kercylan98/vivid/src/serializer"
 )

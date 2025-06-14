@@ -1,9 +1,8 @@
 package vivid
 
 import (
+	metrics2 "github.com/kercylan98/vivid/core/vivid/metrics"
 	"time"
-
-	"github.com/kercylan98/vivid/engine/v1/metrics"
 )
 
 // 指标名称常量
@@ -88,31 +87,31 @@ const (
 
 var (
 	// 预定义的常用标签，避免重复创建
-	tagTypeSystem = metrics.WithTag(TagKeyType, TagValueSystem)
-	tagTypeUser   = metrics.WithTag(TagKeyType, TagValueUser)
+	tagTypeSystem = metrics2.WithTag(TagKeyType, TagValueSystem)
+	tagTypeUser   = metrics2.WithTag(TagKeyType, TagValueUser)
 
 	// 预定义的BucketProvider，避免重复创建
-	durationBucketProvider = metrics.HistogramBucketProviderFN(func() []metrics.Bucket {
-		return metrics.ExponentialBuckets(0.001, 2, 10) // 1ms到1s的指数分布桶
+	durationBucketProvider = metrics2.HistogramBucketProviderFN(func() []metrics2.Bucket {
+		return metrics2.ExponentialBuckets(0.001, 2, 10) // 1ms到1s的指数分布桶
 	})
 
-	timeoutBucketProvider = metrics.HistogramBucketProviderFN(func() []metrics.Bucket {
-		return metrics.ExponentialBuckets(0.001, 2, 15) // 1ms到32s的指数分布桶
+	timeoutBucketProvider = metrics2.HistogramBucketProviderFN(func() []metrics2.Bucket {
+		return metrics2.ExponentialBuckets(0.001, 2, 15) // 1ms到32s的指数分布桶
 	})
 
-	sizeBucketProvider = metrics.HistogramBucketProviderFN(func() []metrics.Bucket {
-		return metrics.ExponentialBuckets(1, 2, 20) // 1B到1MB的指数分布桶
+	sizeBucketProvider = metrics2.HistogramBucketProviderFN(func() []metrics2.Bucket {
+		return metrics2.ExponentialBuckets(1, 2, 20) // 1B到1MB的指数分布桶
 	})
 
-	gcPauseBucketProvider = metrics.HistogramBucketProviderFN(func() []metrics.Bucket {
-		return metrics.ExponentialBuckets(0.0001, 2, 15) // 0.1ms到3.2s的指数分布桶
+	gcPauseBucketProvider = metrics2.HistogramBucketProviderFN(func() []metrics2.Bucket {
+		return metrics2.ExponentialBuckets(0.0001, 2, 15) // 0.1ms到3.2s的指数分布桶
 	})
 )
 
 type ActorSystemMetrics interface {
 }
 
-func newActorSystemMetrics(manager metrics.Manager) *actorSystemMetrics {
+func newActorSystemMetrics(manager metrics2.Manager) *actorSystemMetrics {
 	return &actorSystemMetrics{
 		Manager: manager,
 	}
@@ -120,13 +119,13 @@ func newActorSystemMetrics(manager metrics.Manager) *actorSystemMetrics {
 
 type actorSystemMetrics struct {
 	HookCore
-	metrics.Manager
+	metrics2.Manager
 }
 
 func (m *actorSystemMetrics) OnActorHandleSystemMessageBefore(sender ActorRef, receiver ActorRef, message Message) {
 	m.Gauge(MetricActorMailboxSize,
 		tagTypeSystem,
-		metrics.WithTag(TagKeyRef, receiver.GetPath()),
+		metrics2.WithTag(TagKeyRef, receiver.GetPath()),
 	).Dec()
 	m.Gauge(MetricProcessorMessageNum, tagTypeSystem).Inc()
 }
@@ -134,13 +133,13 @@ func (m *actorSystemMetrics) OnActorHandleSystemMessageBefore(sender ActorRef, r
 func (m *actorSystemMetrics) OnActorHandleUserMessageBefore(sender ActorRef, receiver ActorRef, message Message) {
 	m.Gauge(MetricActorMailboxSize,
 		tagTypeUser,
-		metrics.WithTag(TagKeyRef, receiver.GetPath()),
+		metrics2.WithTag(TagKeyRef, receiver.GetPath()),
 	).Dec()
 	m.Gauge(MetricProcessorMessageNum, tagTypeUser).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorHandleSystemMessageAfter(sender ActorRef, receiver ActorRef, message Message, duration time.Duration) {
-	refTag := metrics.WithTag(TagKeyRef, receiver.GetPath())
+	refTag := metrics2.WithTag(TagKeyRef, receiver.GetPath())
 	m.Gauge(MetricProcessorMessageNum, tagTypeSystem).Dec()
 	m.Histogram(MetricMessageHandleDuration,
 		durationBucketProvider,
@@ -154,7 +153,7 @@ func (m *actorSystemMetrics) OnActorHandleSystemMessageAfter(sender ActorRef, re
 }
 
 func (m *actorSystemMetrics) OnActorHandleUserMessageAfter(sender ActorRef, receiver ActorRef, message Message, duration time.Duration) {
-	refTag := metrics.WithTag(TagKeyRef, receiver.GetPath())
+	refTag := metrics2.WithTag(TagKeyRef, receiver.GetPath())
 	m.Gauge(MetricProcessorMessageNum, tagTypeUser).Dec()
 	m.Histogram(MetricMessageHandleDuration,
 		durationBucketProvider,
@@ -169,46 +168,46 @@ func (m *actorSystemMetrics) OnActorHandleUserMessageAfter(sender ActorRef, rece
 
 func (m *actorSystemMetrics) OnActorHandleMessageError(sender ActorRef, receiver ActorRef, message Message, err error) {
 	m.Counter(MetricMessageHandleErrorsTotal,
-		metrics.WithTag(TagKeyRef, receiver.GetPath()),
-		metrics.WithTag(TagKeyErrorType, err.Error()),
+		metrics2.WithTag(TagKeyRef, receiver.GetPath()),
+		metrics2.WithTag(TagKeyErrorType, err.Error()),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorMailboxPushUserMessageBefore(ref ActorRef, message Message) {
 	m.Gauge(MetricActorMailboxSize,
 		tagTypeUser,
-		metrics.WithTag(TagKeyRef, ref.GetPath()),
+		metrics2.WithTag(TagKeyRef, ref.GetPath()),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorMailboxPushSystemMessageBefore(ref ActorRef, message Message) {
 	m.Gauge(MetricActorMailboxSize,
 		tagTypeSystem,
-		metrics.WithTag(TagKeyRef, ref.GetPath()),
+		metrics2.WithTag(TagKeyRef, ref.GetPath()),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorMailboxPushUserMessageAfter(ref ActorRef, message Message) {
 	m.Counter(MetricMessageQueuedTotal,
 		tagTypeUser,
-		metrics.WithTag(TagKeyRef, ref.GetPath()),
+		metrics2.WithTag(TagKeyRef, ref.GetPath()),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorMailboxPushSystemMessageAfter(ref ActorRef, message Message) {
 	m.Counter(MetricMessageQueuedTotal,
 		tagTypeSystem,
-		metrics.WithTag(TagKeyRef, ref.GetPath()),
+		metrics2.WithTag(TagKeyRef, ref.GetPath()),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorMailboxOverflow(ref ActorRef, message Message) {
 	m.Counter(MetricMailboxOverflowTotal,
-		metrics.WithTag(TagKeyRef, ref.GetPath()),
+		metrics2.WithTag(TagKeyRef, ref.GetPath()),
 	).Inc()
 	m.Counter(MetricMessageDroppedTotal,
-		metrics.WithTag(TagKeyRef, ref.GetPath()),
-		metrics.WithTag(TagKeyReason, "mailbox_overflow"),
+		metrics2.WithTag(TagKeyRef, ref.GetPath()),
+		metrics2.WithTag(TagKeyReason, "mailbox_overflow"),
 	).Inc()
 }
 
@@ -216,15 +215,15 @@ func (m *actorSystemMetrics) OnActorLaunch(ctx ActorContext) {
 	// 当前存活的 Actor 数量
 	m.Gauge(MetricAliveActorNum).Inc()
 	m.Counter(MetricActorLaunchedTotal,
-		metrics.WithTag(TagKeyRef, ctx.Ref().GetPath()),
+		metrics2.WithTag(TagKeyRef, ctx.Ref().GetPath()),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorRestart(ctx ActorContext, reason interface{}) {
-	refTag := metrics.WithTag(TagKeyRef, ctx.Ref().GetPath())
+	refTag := metrics2.WithTag(TagKeyRef, ctx.Ref().GetPath())
 	m.Counter(MetricActorRestartTotal,
 		refTag,
-		metrics.WithTag(TagKeyReason, TagValueRestart),
+		metrics2.WithTag(TagKeyReason, TagValueRestart),
 	).Inc()
 	m.Gauge(MetricRestartingActorNum).Inc()
 }
@@ -243,19 +242,19 @@ func (m *actorSystemMetrics) OnActorKilled(message *OnKilled) {
 	m.Gauge(MetricAliveActorNum).Dec()
 	m.Gauge(MetricStoppingActorNum).Dec()
 	m.Counter(MetricActorKilledTotal,
-		metrics.WithTag(TagKeyRef, message.Ref().GetPath()),
+		metrics2.WithTag(TagKeyRef, message.Ref().GetPath()),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorPanic(ctx ActorContext, reason interface{}) {
 	m.Counter(MetricActorPanicTotal,
-		metrics.WithTag(TagKeyRef, ctx.Ref().GetPath()),
-		metrics.WithTag(TagKeyReason, TagValuePanic),
+		metrics2.WithTag(TagKeyRef, ctx.Ref().GetPath()),
+		metrics2.WithTag(TagKeyReason, TagValuePanic),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorTimeout(ref ActorRef, duration time.Duration) {
-	refTag := metrics.WithTag(TagKeyRef, ref.GetPath())
+	refTag := metrics2.WithTag(TagKeyRef, ref.GetPath())
 	m.Counter(MetricActorTimeoutTotal, refTag).Inc()
 	m.Histogram(MetricActorTimeoutDuration,
 		timeoutBucketProvider,
@@ -265,7 +264,7 @@ func (m *actorSystemMetrics) OnActorTimeout(ref ActorRef, duration time.Duration
 
 func (m *actorSystemMetrics) OnActorMemoryUsage(ref ActorRef, memoryBytes uint64) {
 	m.Gauge(MetricActorMemoryUsageBytes,
-		metrics.WithTag(TagKeyRef, ref.GetPath()),
+		metrics2.WithTag(TagKeyRef, ref.GetPath()),
 	).Set(float64(memoryBytes))
 }
 
@@ -276,21 +275,21 @@ func (m *actorSystemMetrics) OnSystemLoad(cpuPercent float64, memoryPercent floa
 
 func (m *actorSystemMetrics) OnActorSupervisionStrategyApplied(supervisor ActorRef, child ActorRef, strategy string) {
 	m.Counter(MetricSupervisionStrategyAppliedTotal,
-		metrics.WithTag(TagKeySupervisor, supervisor.GetPath()),
-		metrics.WithTag(TagKeyChild, child.GetPath()),
-		metrics.WithTag(TagKeyStrategy, strategy),
+		metrics2.WithTag(TagKeySupervisor, supervisor.GetPath()),
+		metrics2.WithTag(TagKeyChild, child.GetPath()),
+		metrics2.WithTag(TagKeyStrategy, strategy),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnDeadLetterMessage(sender ActorRef, receiver ActorRef, message Message) {
 	m.Counter(MetricDeadLetterMessagesTotal,
-		metrics.WithTag(TagKeySender, sender.GetPath()),
-		metrics.WithTag(TagKeyReceiver, receiver.GetPath()),
+		metrics2.WithTag(TagKeySender, sender.GetPath()),
+		metrics2.WithTag(TagKeyReceiver, receiver.GetPath()),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorMailboxFullWarning(ref ActorRef, currentSize int, maxSize int) {
-	refTag := metrics.WithTag(TagKeyRef, ref.GetPath())
+	refTag := metrics2.WithTag(TagKeyRef, ref.GetPath())
 	m.Counter(MetricMailboxFullWarningsTotal, refTag).Inc()
 	m.Gauge(MetricActorMailboxUtilization,
 		refTag,
@@ -299,13 +298,13 @@ func (m *actorSystemMetrics) OnActorMailboxFullWarning(ref ActorRef, currentSize
 
 func (m *actorSystemMetrics) OnActorChildCreated(parent ActorRef, child ActorRef) {
 	m.Counter(MetricActorChildCreatedTotal,
-		metrics.WithTag(TagKeyParent, parent.GetPath()),
-		metrics.WithTag(TagKeyChild, child.GetPath()),
+		metrics2.WithTag(TagKeyParent, parent.GetPath()),
+		metrics2.WithTag(TagKeyChild, child.GetPath()),
 	).Inc()
 	// 计算Actor层级深度（基于路径中的'/'数量）
 	pathParts := len(child.GetPath()) // 简化实现，实际应该计算路径分隔符
 	m.Gauge(MetricActorHierarchyDepth,
-		metrics.WithTag(TagKeyRef, child.GetPath()),
+		metrics2.WithTag(TagKeyRef, child.GetPath()),
 	).Set(float64(pathParts))
 }
 
@@ -313,40 +312,40 @@ func (m *actorSystemMetrics) OnActorChildCreated(parent ActorRef, child ActorRef
 
 func (m *actorSystemMetrics) OnActorWatch(watcher ActorRef, watched ActorRef) {
 	m.Counter("actor_watch_total",
-		metrics.WithTag("watcher", watcher.GetPath()),
-		metrics.WithTag("watched", watched.GetPath()),
+		metrics2.WithTag("watcher", watcher.GetPath()),
+		metrics2.WithTag("watched", watched.GetPath()),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorUnwatch(watcher ActorRef, watched ActorRef) {
 	m.Counter("actor_unwatch_total",
-		metrics.WithTag("watcher", watcher.GetPath()),
-		metrics.WithTag("watched", watched.GetPath()),
+		metrics2.WithTag("watcher", watcher.GetPath()),
+		metrics2.WithTag("watched", watched.GetPath()),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorTerminate(ctx ActorContext, reason interface{}) {
 	m.Counter("actor_terminate_total",
-		metrics.WithTag(TagKeyRef, ctx.Ref().GetPath()),
-		metrics.WithTag(TagKeyReason, "terminate"),
+		metrics2.WithTag(TagKeyRef, ctx.Ref().GetPath()),
+		metrics2.WithTag(TagKeyReason, "terminate"),
 	).Inc()
 }
 
 func (m *actorSystemMetrics) OnActorReceiveTimeout(ctx ActorContext, duration time.Duration) {
 	m.Counter("actor_receive_timeout_total",
-		metrics.WithTag(TagKeyRef, ctx.Ref().GetPath()),
+		metrics2.WithTag(TagKeyRef, ctx.Ref().GetPath()),
 	).Inc()
 	m.Histogram("actor_receive_timeout_duration",
 		timeoutBucketProvider,
-		metrics.WithTag(TagKeyRef, ctx.Ref().GetPath()),
+		metrics2.WithTag(TagKeyRef, ctx.Ref().GetPath()),
 	).Observe(duration.Seconds())
 }
 
 func (m *actorSystemMetrics) OnActorStateChange(ctx ActorContext, oldState string, newState string) {
 	m.Counter("actor_state_change_total",
-		metrics.WithTag(TagKeyRef, ctx.Ref().GetPath()),
-		metrics.WithTag("old_state", oldState),
-		metrics.WithTag("new_state", newState),
+		metrics2.WithTag(TagKeyRef, ctx.Ref().GetPath()),
+		metrics2.WithTag("old_state", oldState),
+		metrics2.WithTag("new_state", newState),
 	).Inc()
 }
 
@@ -362,8 +361,8 @@ func (m *actorSystemMetrics) OnSystemGCPause(duration time.Duration) {
 
 func (m *actorSystemMetrics) OnNetworkConnection(protocol string, direction string) {
 	m.Counter(MetricNetworkConnectionsTotal,
-		metrics.WithTag(TagKeyProtocol, protocol),
-		metrics.WithTag(TagKeyDirection, direction),
+		metrics2.WithTag(TagKeyProtocol, protocol),
+		metrics2.WithTag(TagKeyDirection, direction),
 	).Inc()
 }
 
@@ -377,14 +376,14 @@ func (m *actorSystemMetrics) OnNetworkBytesTransferred(direction string, bytes u
 
 func (m *actorSystemMetrics) OnMessageRetry(ref ActorRef, attempt int, reason string) {
 	m.Counter(MetricMessageRetryTotal,
-		metrics.WithTag(TagKeyRef, ref.GetPath()),
-		metrics.WithTag(TagKeyReason, reason),
+		metrics2.WithTag(TagKeyRef, ref.GetPath()),
+		metrics2.WithTag(TagKeyReason, reason),
 	).Inc()
 	m.Histogram("message_retry_attempt",
-		metrics.HistogramBucketProviderFN(func() []metrics.Bucket {
-			return metrics.LinearBuckets(1, 1, 10) // 1-10次重试的线性分布桶
+		metrics2.HistogramBucketProviderFN(func() []metrics2.Bucket {
+			return metrics2.LinearBuckets(1, 1, 10) // 1-10次重试的线性分布桶
 		}),
-		metrics.WithTag(TagKeyRef, ref.GetPath()),
+		metrics2.WithTag(TagKeyRef, ref.GetPath()),
 	).Observe(float64(attempt))
 }
 

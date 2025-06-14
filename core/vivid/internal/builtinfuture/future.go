@@ -2,20 +2,20 @@ package builtinfuture
 
 import (
 	"fmt"
-	"github.com/kercylan98/vivid/engine/v1/future"
-	"github.com/kercylan98/vivid/engine/v1/internal/processor"
+	"github.com/kercylan98/vivid/core/vivid/future"
+	processor2 "github.com/kercylan98/vivid/core/vivid/internal/processor"
 	"github.com/kercylan98/wasteland/src/wasteland"
 	"sync/atomic"
 	"time"
 )
 
 var (
-	_                  future.Future  = (*Future)(nil)
-	_                  processor.Unit = (*Future)(nil)
-	ErrorFutureTimeout                = fmt.Errorf("future timeout")
+	_                  future.Future   = (*Future)(nil)
+	_                  processor2.Unit = (*Future)(nil)
+	ErrorFutureTimeout                 = fmt.Errorf("future timeout")
 )
 
-func New(registry processor.Registry, ref processor.UnitIdentifier, timeout time.Duration) *Future {
+func New(registry processor2.Registry, ref processor2.UnitIdentifier, timeout time.Duration) *Future {
 	f := &Future{
 		registry: registry,
 		ref:      ref,
@@ -36,8 +36,8 @@ func New(registry processor.Registry, ref processor.UnitIdentifier, timeout time
 }
 
 type Future struct {
-	registry processor.Registry
-	ref      processor.UnitIdentifier
+	registry processor2.Registry
+	ref      processor2.UnitIdentifier
 	done     chan struct{}
 	timeout  time.Duration
 	timer    *time.Timer
@@ -46,7 +46,7 @@ type Future struct {
 	message  wasteland.Message
 }
 
-func (f *Future) HandleUserMessage(sender processor.UnitIdentifier, message any) {
+func (f *Future) HandleUserMessage(sender processor2.UnitIdentifier, message any) {
 	if f.closed.Load() {
 		return
 	}
@@ -59,7 +59,7 @@ func (f *Future) HandleUserMessage(sender processor.UnitIdentifier, message any)
 	}
 }
 
-func (f *Future) HandleSystemMessage(sender processor.UnitIdentifier, message any) {
+func (f *Future) HandleSystemMessage(sender processor2.UnitIdentifier, message any) {
 	f.HandleUserMessage(sender, message)
 }
 

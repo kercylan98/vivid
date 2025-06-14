@@ -4,16 +4,16 @@ package processor_test
 import (
 	"errors"
 	"fmt"
+	processor2 "github.com/kercylan98/vivid/core/vivid/internal/processor"
 	"testing"
 
 	"github.com/kercylan98/go-log/log"
-	"github.com/kercylan98/vivid/engine/v1/internal/processor"
 )
 
 var (
-	_ processor.Unit            = (*TestUnit)(nil)
-	_ processor.UnitInitializer = (*TestUnit)(nil)
-	_ processor.UnitCloser      = (*TestUnit)(nil)
+	_ processor2.Unit            = (*TestUnit)(nil)
+	_ processor2.UnitInitializer = (*TestUnit)(nil)
+	_ processor2.UnitCloser      = (*TestUnit)(nil)
 )
 
 // TestUnit 测试用的处理单元实现
@@ -29,16 +29,16 @@ func (t *TestUnit) Init() {
 }
 
 // Handle 实现 Unit 接口
-func (t *TestUnit) HandleUserMessage(sender processor.UnitIdentifier, message any) {
+func (t *TestUnit) HandleUserMessage(sender processor2.UnitIdentifier, message any) {
 	t.handle = true
 }
 
-func (t *TestUnit) HandleSystemMessage(sender processor.UnitIdentifier, message any) {
+func (t *TestUnit) HandleSystemMessage(sender processor2.UnitIdentifier, message any) {
 	t.handle = true
 }
 
 // Close 实现 UnitCloser 接口
-func (t *TestUnit) Close(operator processor.UnitIdentifier) {
+func (t *TestUnit) Close(operator processor2.UnitIdentifier) {
 	t.close = true
 }
 
@@ -51,32 +51,32 @@ func (t *TestUnit) Closed() bool {
 type TestRegistryConfigurator struct{}
 
 // Configure 实现 RegistryConfigurator 接口
-func (t *TestRegistryConfigurator) Configure(c *processor.RegistryConfiguration) {
+func (t *TestRegistryConfigurator) Configure(c *processor2.RegistryConfiguration) {
 	c.WithLogger(log.GetDefault())
 }
 
 // TestNewRegistry 测试注册表的创建
 func TestNewRegistry(t *testing.T) {
 	// 测试从配置创建
-	processor.NewRegistryFromConfig(processor.NewRegistryConfiguration(processor.WithLogger(log.GetDefault())))
-	processor.NewRegistryFromConfig(&processor.RegistryConfiguration{
+	processor2.NewRegistryFromConfig(processor2.NewRegistryConfiguration(processor2.WithLogger(log.GetDefault())))
+	processor2.NewRegistryFromConfig(&processor2.RegistryConfiguration{
 		Logger: log.GetDefault(),
 	})
 
 	// 测试使用配置器创建
-	processor.NewRegistryWithConfigurators(processor.RegistryConfiguratorFN(func(c *processor.RegistryConfiguration) {
+	processor2.NewRegistryWithConfigurators(processor2.RegistryConfiguratorFN(func(c *processor2.RegistryConfiguration) {
 		c.WithLogger(log.GetDefault())
 		c.Logger = log.GetDefault()
 	}))
-	processor.NewRegistryWithConfigurators(new(TestRegistryConfigurator))
+	processor2.NewRegistryWithConfigurators(new(TestRegistryConfigurator))
 
 	// 测试使用选项创建
-	processor.NewRegistryWithOptions(processor.WithLogger(log.GetDefault()))
+	processor2.NewRegistryWithOptions(processor2.WithLogger(log.GetDefault()))
 }
 
 // TestRegistry_Logger 测试日志记录器功能
 func TestRegistry_Logger(t *testing.T) {
-	registry := processor.NewRegistryFromConfig(processor.NewRegistryConfiguration())
+	registry := processor2.NewRegistryFromConfig(processor2.NewRegistryConfiguration())
 	if registry.Logger() == nil {
 		t.Error("registry logger is nil")
 	}
@@ -85,7 +85,7 @@ func TestRegistry_Logger(t *testing.T) {
 // TestRegistry_GetUnit 测试处理单元获取功能
 func TestRegistry_GetUnit(t *testing.T) {
 	daemonUnit := new(TestUnit)
-	registry := processor.NewRegistryFromConfig(processor.NewRegistryConfiguration().WithDaemon(daemonUnit))
+	registry := processor2.NewRegistryFromConfig(processor2.NewRegistryConfiguration().WithDaemon(daemonUnit))
 
 	// 设置守护单元后，nil 标识符应该返回守护单元
 	if unit, err := registry.GetUnit(nil); err != nil || unit != daemonUnit {
@@ -93,7 +93,7 @@ func TestRegistry_GetUnit(t *testing.T) {
 	}
 
 	// 测试不存在的单元，应该返回守护单元
-	id := processor.NewCacheUnitIdentifier("localhost", "/nonexistent")
+	id := processor2.NewCacheUnitIdentifier("localhost", "/nonexistent")
 	if unit, err := registry.GetUnit(id); err != nil || unit != daemonUnit {
 		t.Errorf("expected daemon unit for nonexistent path, got unit=%v, err=%v", unit, err)
 	}
@@ -101,12 +101,12 @@ func TestRegistry_GetUnit(t *testing.T) {
 
 // TestRegistry_RegisterUnit 测试处理单元注册功能
 func TestRegistry_RegisterUnit(t *testing.T) {
-	registry := processor.NewRegistryFromConfig(processor.NewRegistryConfiguration())
+	registry := processor2.NewRegistryFromConfig(processor2.NewRegistryConfiguration())
 
 	var tests = []struct {
 		name       string
-		identifier processor.UnitIdentifier
-		unit       processor.Unit
+		identifier processor2.UnitIdentifier
+		unit       processor2.Unit
 		err        error
 	}{
 		{
@@ -118,12 +118,12 @@ func TestRegistry_RegisterUnit(t *testing.T) {
 			name:       "already exists",
 			identifier: registry.GetUnitIdentifier().Branch("test"),
 			unit:       new(TestUnit),
-			err:        processor.ErrUnitAlreadyExists,
+			err:        processor2.ErrUnitAlreadyExists,
 		},
 		{
 			name:       "nil unit",
 			identifier: registry.GetUnitIdentifier().Branch("nil"),
-			err:        processor.ErrUnitInvalid,
+			err:        processor2.ErrUnitInvalid,
 		},
 		{
 			name: "register not nil unit",
@@ -134,7 +134,7 @@ func TestRegistry_RegisterUnit(t *testing.T) {
 		{
 			name: "invalid identifier",
 			unit: new(TestUnit),
-			err:  processor.ErrUnitIdentifierInvalid,
+			err:  processor2.ErrUnitIdentifierInvalid,
 		},
 	}
 
@@ -149,7 +149,7 @@ func TestRegistry_RegisterUnit(t *testing.T) {
 
 // TestRegistry_UnregisterUnit 测试处理单元注销功能
 func TestRegistry_UnregisterUnit(t *testing.T) {
-	registry := processor.NewRegistryFromConfig(processor.NewRegistryConfiguration())
+	registry := processor2.NewRegistryFromConfig(processor2.NewRegistryConfiguration())
 
 	// 注册一个测试单元
 	testUnit := &TestUnit{}
@@ -180,7 +180,7 @@ func TestRegistry_UnregisterUnit(t *testing.T) {
 // TestRegistry_Shutdown 测试注册表关闭功能
 func TestRegistry_Shutdown(t *testing.T) {
 	daemonUnit := &TestUnit{}
-	registry := processor.NewRegistryFromConfig(processor.NewRegistryConfiguration().WithDaemon(daemonUnit))
+	registry := processor2.NewRegistryFromConfig(processor2.NewRegistryConfiguration().WithDaemon(daemonUnit))
 
 	// 注册一些测试单元
 	testUnits := []*TestUnit{
@@ -224,11 +224,11 @@ func TestRegistry_Shutdown(t *testing.T) {
 	// 验证关闭后的操作会返回错误
 	testUnit := &TestUnit{}
 	id := registry.GetUnitIdentifier().Branch("after-shutdown")
-	if err := registry.RegisterUnit(id, testUnit); !errors.Is(err, processor.ErrRegistryShutdown) {
+	if err := registry.RegisterUnit(id, testUnit); !errors.Is(err, processor2.ErrRegistryShutdown) {
 		t.Errorf("expected ErrRegistryShutdown, got %v", err)
 	}
 
-	if _, err := registry.GetUnit(processor.NewCacheUnitIdentifier("localhost", "/test")); !errors.Is(err, processor.ErrRegistryShutdown) {
+	if _, err := registry.GetUnit(processor2.NewCacheUnitIdentifier("localhost", "/test")); !errors.Is(err, processor2.ErrRegistryShutdown) {
 		t.Errorf("expected ErrRegistryShutdown, got %v", err)
 	}
 }

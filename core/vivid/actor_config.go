@@ -2,7 +2,7 @@ package vivid
 
 import (
 	"github.com/kercylan98/go-log/log"
-	"github.com/kercylan98/vivid/engine/v1/mailbox"
+	mailbox2 "github.com/kercylan98/vivid/core/vivid/mailbox"
 	"github.com/kercylan98/vivid/src/configurator"
 )
 
@@ -37,12 +37,12 @@ type (
 	//
 	// 所有字段均为私有，通过 GetXxx 方法获取值，通过 WithXxx 方法设置值。
 	ActorConfiguration struct {
-		Name                string                     // Actor 名称
-		Logger              log.Logger                 // Actor 日志记录器
-		MailboxProvider     mailbox.Provider           // Actor 邮箱提供器
-		DispatcherProvider  mailbox.DispatcherProvider // Actor 消息调度器提供器
-		SupervisionProvider SupervisorProvider         // Actor 监督者
-		PersistenceConfig   *PersistenceConfiguration  // 持久化配置，如果设置则启用持久化功能
+		Name                string                      // Actor 名称
+		Logger              log.Logger                  // Actor 日志记录器
+		MailboxProvider     mailbox2.Provider           // Actor 邮箱提供器
+		DispatcherProvider  mailbox2.DispatcherProvider // Actor 消息调度器提供器
+		SupervisionProvider SupervisorProvider          // Actor 监督者
+		PersistenceConfig   *PersistenceConfiguration   // 持久化配置，如果设置则启用持久化功能
 	}
 )
 
@@ -73,26 +73,26 @@ func WithActorLogger(logger log.Logger) ActorOption {
 }
 
 // WithMailboxProvider 设置 Actor 的邮箱提供器
-func (c *ActorConfiguration) WithMailboxProvider(provider mailbox.Provider) *ActorConfiguration {
+func (c *ActorConfiguration) WithMailboxProvider(provider mailbox2.Provider) *ActorConfiguration {
 	c.MailboxProvider = provider
 	return c
 }
 
 // WithActorMailboxProvider 设置 Actor 的邮箱提供器
-func WithActorMailboxProvider(provider mailbox.Provider) ActorOption {
+func WithActorMailboxProvider(provider mailbox2.Provider) ActorOption {
 	return func(c *ActorConfiguration) {
 		c.WithMailboxProvider(provider)
 	}
 }
 
 // WithDispatcherProvider 设置 Actor 的消息调度器提供器
-func (c *ActorConfiguration) WithDispatcherProvider(provider mailbox.DispatcherProvider) *ActorConfiguration {
+func (c *ActorConfiguration) WithDispatcherProvider(provider mailbox2.DispatcherProvider) *ActorConfiguration {
 	c.DispatcherProvider = provider
 	return c
 }
 
 // WithActorDispatcherProvider 设置 Actor 的消息调度器提供器
-func WithActorDispatcherProvider(provider mailbox.DispatcherProvider) ActorOption {
+func WithActorDispatcherProvider(provider mailbox2.DispatcherProvider) ActorOption {
 	return func(c *ActorConfiguration) {
 		c.WithDispatcherProvider(provider)
 	}

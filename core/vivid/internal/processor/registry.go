@@ -4,11 +4,10 @@ package processor
 import (
 	"context"
 	"fmt"
+	processor2 "github.com/kercylan98/vivid/core/vivid/processor"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/kercylan98/vivid/engine/v1/processor"
 
 	"github.com/kercylan98/go-log/log"
 	"github.com/puzpuzpuz/xsync/v3"
@@ -298,12 +297,12 @@ func (r *registry) fromRPC(id UnitIdentifier) (unit Unit, err error) {
 	}
 
 	// 建立远程单元客户端
-	var conn processor.RPCConn
+	var conn processor2.RPCConn
 	if r.config.RPCClientProvider != nil {
 		if conn, err = r.config.RPCClientProvider.Provide(id.GetAddress()); err != nil {
 			return nil, fmt.Errorf("RPC client provider error: %w", err)
 		} else {
-			handshake := processor.NewRPCHandshakeWithAddress(r.rootUnitIdentifier.GetAddress())
+			handshake := processor2.NewRPCHandshakeWithAddress(r.rootUnitIdentifier.GetAddress())
 			handshakeBuf, err := handshake.Marshal()
 			if err != nil {
 				return nil, fmt.Errorf("RPC handshake marshal error: %w", err)
