@@ -47,12 +47,16 @@ func (h *hookInfo) trigger(args []any) {
 	var argVof = make([]reflect.Value, len(args)+1)
 	argVof[0] = h.hookVof
 	for i, arg := range args {
-		argVof[i+1] = reflect.ValueOf(arg)
+		if arg == nil {
+			argVof[i+1] = reflect.Zero(h.argTypes[i+1])
+		} else {
+			argVof[i+1] = reflect.ValueOf(arg)
+		}
 	}
 
 	defer func() {
 		if r := recover(); r != nil {
-			panic(fmt.Errorf("hook %s panicked: %v", h.hookType, r))
+			panic(fmt.Errorf("hook %s[%+v] panicked: %v", h.hookType, args, r))
 		}
 	}()
 
