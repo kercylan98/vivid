@@ -3,15 +3,16 @@ package vivid
 import (
 	"context"
 	"fmt"
+	"math"
+	"runtime/debug"
+	"sync/atomic"
+	"time"
+
 	"github.com/kercylan98/vivid/core/vivid/future"
 	"github.com/kercylan98/vivid/core/vivid/internal/builtinfuture"
 	builtinmailbox2 "github.com/kercylan98/vivid/core/vivid/internal/builtinmailbox"
 	processor2 "github.com/kercylan98/vivid/core/vivid/internal/processor"
 	"github.com/kercylan98/vivid/core/vivid/mailbox"
-	"math"
-	"runtime/debug"
-	"sync/atomic"
-	"time"
 
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/src/queues"
@@ -255,8 +256,8 @@ func (ctx *actorContext) OnSystemMessage(message any) {
 func (ctx *actorContext) OnUserMessage(message any) {
 	var startAt *time.Time
 	if ctx.system.hooks.hasHook(actorHandleUserMessageAfterHookType) {
-		startAt = new(time.Time)
-		*startAt = time.Now()
+		now := time.Now()
+		startAt = &now
 	}
 
 	ctx.sender, ctx.message = unwrapMessage(message)
