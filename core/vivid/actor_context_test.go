@@ -27,6 +27,24 @@ func TestActorContext_Tell(t *testing.T) {
 		Shutdown(true)
 }
 
+func BenchmarkActorContext_Tell(b *testing.B) {
+	system := vivid.NewActorSystemWithOptions()
+	defer func() {
+		if err := system.Shutdown(false); err != nil {
+			b.Error(err)
+		}
+	}()
+	ref := system.SpawnOf(func() vivid.Actor {
+		return vivid.ActorFN(func(context vivid.ActorContext) {})
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		system.Tell(ref, i)
+	}
+	b.StopTimer()
+}
+
 func TestActorContext_Probe(t *testing.T) {
 	NewTestActorSystem(t).
 		WaitAdd(2).

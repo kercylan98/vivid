@@ -79,6 +79,40 @@ func (r *RingBuffer) Pop() any {
 	return item
 }
 
+// PopN 从队列头部批量移除并返回指定数量的元素。
+//
+// 参数 n 指定要弹出的元素数量。
+// 如果队列中的元素数量少于 n，则返回所有可用元素。
+// 返回一个切片，包含弹出的元素。
+// 此操作是线程安全的，会自动清理不再使用的引用以避免内存泄漏。
+func (r *RingBuffer) PopN(n int64) []any {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	// 如果队列为空或 n <= 0，返回空切片
+	if r.count == 0 || n <= 0 {
+		return []any{}
+	}
+
+	// 如果请求的数量大于当前元素数量，调整为实际可用数量
+	if n > r.count {
+		n = r.count
+	}
+
+	// 创建结果切片
+	result := make([]any, n)
+
+	// 复制元素并清理原引用
+	for i := int64(0); i < n; i++ {
+		result[i] = r.buffer[r.head]
+		r.buffer[r.head] = nil // 清理引用，避免内存泄漏
+		r.head = (r.head + 1) % r.size
+	}
+
+	r.count -= n
+	return result
+}
+
 // resize 扩容方法，将缓冲区容量扩展为原来的 2 倍。
 //
 // 此方法会创建新的缓冲区并复制现有数据，重新整理头尾指针。

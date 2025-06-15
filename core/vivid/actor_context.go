@@ -253,8 +253,14 @@ func (ctx *actorContext) OnSystemMessage(message any) {
 }
 
 func (ctx *actorContext) OnUserMessage(message any) {
-	startAt := time.Now()
+	var startAt *time.Time
+	if ctx.system.hooks.hasHook(actorHandleUserMessageAfterHookType) {
+		startAt = new(time.Time)
+		*startAt = time.Now()
+	}
+
 	ctx.sender, ctx.message = unwrapMessage(message)
+
 	ctx.system.hooks.trigger(actorHandleUserMessageBeforeHookType, ctx.sender, ctx.ref, message)
 
 	switch msg := ctx.message.(type) {
@@ -264,7 +270,9 @@ func (ctx *actorContext) OnUserMessage(message any) {
 		ctx.onReceiveWithRecover()
 	}
 
-	ctx.system.hooks.trigger(actorHandleUserMessageAfterHookType, ctx.sender, ctx.ref, message, time.Since(startAt))
+	if startAt != nil {
+		ctx.system.hooks.trigger(actorHandleUserMessageAfterHookType, ctx.sender, ctx.ref, message, time.Since(*startAt))
+	}
 }
 
 func (ctx *actorContext) HandleUserMessage(sender processor2.UnitIdentifier, message any) {
@@ -279,7 +287,6 @@ func (ctx *actorContext) HandleUserMessage(sender processor2.UnitIdentifier, mes
 	ctx.system.hooks.trigger(actorMailboxPushUserMessageBeforeHookType, ctx.ref, message)
 
 	ctx.mailbox.PushUserMessage(message)
-
 }
 
 func (ctx *actorContext) HandleSystemMessage(sender processor2.UnitIdentifier, message any) {
