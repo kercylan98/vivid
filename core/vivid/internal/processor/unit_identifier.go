@@ -49,6 +49,9 @@ type UnitIdentifier interface {
 	// GetPath 获取处理单元的路径
 	GetPath() string
 
+	// String 实现 Stringer 接口，返回标识符的字符串表示
+	String() string
+
 	// Branch 基于当前标识符生成子单元标识符
 	// path 参数将作为子路径追加到当前路径后
 	Branch(path string) UnitIdentifier
