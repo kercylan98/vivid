@@ -16,7 +16,7 @@ require (
 
 require (
 	github.com/kercylan98/chrono v0.1.1
-	github.com/kercylan98/go-log v1.0.2
+	github.com/kercylan98/go-log v1.0.3
 	github.com/kercylan98/wasteland v0.0.5
 )
 

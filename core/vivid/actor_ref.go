@@ -2,6 +2,7 @@ package vivid
 
 import (
 	"github.com/kercylan98/vivid/core/vivid/internal/processor"
+	"strings"
 )
 
 // ActorRef 是 Actor 的引用类型，用于标识和定位 Actor 实例。
@@ -24,4 +25,9 @@ type ActorRef = processor.UnitIdentifier
 // 返回一个可用于消息发送的 ActorRef 实例。
 func NewActorRef(address, path string) ActorRef {
 	return processor.NewCacheUnitIdentifier(address, path)
+}
+
+func NewActorRefFromAddress(address string) ActorRef {
+	var split = strings.SplitN(address, "/", 2)
+	return NewActorRef(split[0], split[1])
 }

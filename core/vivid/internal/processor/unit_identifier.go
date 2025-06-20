@@ -55,6 +55,9 @@ type UnitIdentifier interface {
 
 	// IsRoot 实现 UnitIdentifier 接口，判断标识符是否为根标识符
 	IsRoot() bool
+
+	// String 获取引用的字符串表示
+	String() string
 }
 
 // CacheUnitIdentifier 定义了带缓存功能的单元标识符接口。
