@@ -176,6 +176,12 @@ type ActorContext interface {
 
 	// UnWatch 停止对指定的 Actor 生命周期的监视。
 	UnWatch(target ActorRef)
+
+	// AttachTask 以当前上下文为基准附加一个任务，该任务将被放入邮箱的末端进行处理。
+	// 通过该函数将允许基于当前作用域执行延迟任务，例如作为异步的回调任务来执行。
+	//
+	// 在 ActorContextTask 中获得的 Sender 以及 Message 均是当前上下文所能得到的结果。
+	AttachTask(task ActorContextTask)
 }
 
 func newActorContext(system *actorSystem, ref, parent ActorRef, provider ActorProvider, config *ActorConfiguration) *actorContext {
@@ -283,8 +289,10 @@ func (ctx *actorContext) OnUserMessage(message any) {
 	switch msg := ctx.message.(type) {
 	case *OnKill:
 		ctx.onKill(msg)
+	case *taskContext:
+		msg.handle()
 	default:
-		ctx.onReceiveWithRecover()
+		ctx.onSafeReceive()
 	}
 
 	if startAt != nil {
@@ -430,7 +438,7 @@ func (ctx *actorContext) onKill(onKill *OnKill) {
 	ctx.mailbox.Suspend()
 
 	// 等待用户处理关闭消息
-	ctx.onReceiveWithRecover()
+	ctx.onSafeReceive()
 
 	// 终止所有子 Actor
 	for _, ref := range ctx.children {
@@ -449,7 +457,7 @@ func (ctx *actorContext) onKill(onKill *OnKill) {
 func (ctx *actorContext) onKilled(msg *OnKilled) {
 	// 解绑已终止的子 Actor
 	ctx.unbindChild(msg.ref)
-	ctx.onReceiveWithRecover()
+	ctx.onSafeReceive()
 	ctx.tryConvertStateToStopping()
 }
 
@@ -540,7 +548,7 @@ func (ctx *actorContext) executeSupervisorDirective(directive SupervisorDirectiv
 }
 
 func (ctx *actorContext) onPreRestart() {
-	if ctx.onReceiveWithRecover() {
+	if ctx.onSafeReceive() {
 		return // 重启前发生异常，视为全新的错误
 	}
 
@@ -568,7 +576,7 @@ func (ctx *actorContext) tryRestart() {
 }
 
 func (ctx *actorContext) onRestart() {
-	if ctx.onReceiveWithRecover() {
+	if ctx.onSafeReceive() {
 		return // 重启前发生异常，视为全新的错误
 	}
 
@@ -609,7 +617,7 @@ func (ctx *actorContext) AsPersistent() PersistenceContext {
 	return nil
 }
 
-func (ctx *actorContext) onReceiveWithRecover() (recovered bool) {
+func (ctx *actorContext) withFatalRecover(handler func()) (recovered bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			ctx.Logger().Error("panic", log.Any("reason", r))
@@ -624,12 +632,19 @@ func (ctx *actorContext) onReceiveWithRecover() (recovered bool) {
 			}
 		}
 	}()
-	ctx.actor.Receive(ctx)
+	handler()
+	return
+}
+
+func (ctx *actorContext) onSafeReceive() (recovered bool) {
+	ctx.withFatalRecover(func() {
+		ctx.actor.Receive(ctx)
+	})
 	return
 }
 
 func (ctx *actorContext) onLaunch(msg *OnLaunch) {
-	if !ctx.onReceiveWithRecover() {
+	if !ctx.onSafeReceive() {
 		// 致命状态恢复、邮箱恢复
 		ctx.fatal = nil
 		ctx.mailbox.Resume()
@@ -665,4 +680,8 @@ func (ctx *actorContext) onUnWatch(_ *onUnWatch) {
 		return
 	}
 	delete(ctx.watches, ctx.Sender().String())
+}
+
+func (ctx *actorContext) AttachTask(task ActorContextTask) {
+	ctx.Tell(ctx.ref, newTaskContext(ctx, task))
 }
