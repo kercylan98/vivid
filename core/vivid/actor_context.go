@@ -227,7 +227,7 @@ type actorContext struct {
 	parent         ActorRef            // ActorContext 的父 Actor 引用，顶级 Actor 为 nil。
 	ref            ActorRef            // ActorContext 自身的引用。
 	mailbox        mailbox.Mailbox     // ActorContext 的邮箱。
-	childGuid      int64               // ActorContext 的子 Actor GUID，用于生成子 Actor 引用。
+	childGuid      atomic.Int64        // ActorContext 的子 Actor GUID，用于生成子 Actor 引用。
 	children       map[string]ActorRef // ActorContext 的子 Actor 引用映射。
 	actor          Actor               // Actor 实例。
 	sender         ActorRef            // 当前正在处理的消息的发送者。
@@ -344,7 +344,7 @@ func (ctx *actorContext) Ask(target ActorRef, message Message, timeout ...time.D
 		t = timeout[0]
 	}
 
-	ref := ctx.system.Ref().Branch(fmt.Sprintf("future-%d", ctx.childGuid))
+	ref := ctx.Ref().Branch(fmt.Sprintf("future-%d", ctx.childGuid.Add(1)))
 	f := builtinfuture.New(ctx.system.registry, ref, t)
 	unit, err := ctx.system.registry.GetUnit(target)
 	if err != nil {
