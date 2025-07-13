@@ -66,8 +66,7 @@ type actorGenerator struct {
 
 func (g *actorGenerator) FromConfig(config *ActorConfiguration) ActorRef {
 	if config.Name == "" {
-		g.context.childGuid++
-		config.Name = strconv.FormatInt(g.context.childGuid, 10)
+		config.Name = strconv.FormatInt(g.context.childGuid.Add(1), 10)
 	}
 
 	ctx := newActorContext(g.context.system, g.context.ref.Branch(config.Name), g.context.ref, g.provider, config)
