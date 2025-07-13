@@ -182,6 +182,9 @@ type ActorContext interface {
 	//
 	// 在 ActorContextTask 中获得的 Sender 以及 Message 均是当前上下文所能得到的结果。
 	AttachTask(task ActorContextTask)
+
+	// Future 创建一个异步任务，并将结果投递到目标 Actor。
+	Future(ref ActorRef, task FutureTask, failureHandlers ...FutureTaskFailureHandler)
 }
 
 func newActorContext(system *actorSystem, ref, parent ActorRef, provider ActorProvider, config *ActorConfiguration) *actorContext {
@@ -684,4 +687,21 @@ func (ctx *actorContext) onUnWatch(_ *onUnWatch) {
 
 func (ctx *actorContext) AttachTask(task ActorContextTask) {
 	ctx.Tell(ctx.ref, newTaskContext(ctx, task))
+}
+
+func (ctx *actorContext) Future(ref ActorRef, task FutureTask, failureHandlers ...FutureTaskFailureHandler) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if len(failureHandlers) == 0 {
+					ctx.Logger().Error("future panic", log.Any("reason", r))
+					return
+				}
+				for _, handler := range failureHandlers {
+					handler.OnFailure(ctx, ref, r)
+				}
+			}
+		}()
+		ctx.Tell(ref, task.Execute())
+	}()
 }
