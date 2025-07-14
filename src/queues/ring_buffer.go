@@ -15,12 +15,15 @@ import (
 //   - 内存优化：及时清理不再使用的引用
 //   - 高效访问：O(1) 时间复杂度的 Push 和 Pop 操作
 type RingBuffer struct {
-	buffer []any      // 存储数据的缓冲区
-	lock   sync.Mutex // 保护并发访问的互斥锁
-	head   int64      // 队列头部索引
-	tail   int64      // 队列尾部索引
-	size   int64      // 缓冲区总容量
-	count  int64      // 当前元素数量
+	buffer      []any      // 存储数据的缓冲区
+	lock        sync.Mutex // 保护并发访问的互斥锁
+	head        int64      // 队列头部索引
+	tail        int64      // 队列尾部索引
+	size        int64      // 缓冲区总容量
+	count       int64      // 当前元素数量
+	avgCount    float64    // 历史均值
+	statTimes   int64      // 统计次数
+	initialSize int64      // 初始容量
 }
 
 // NewRingBuffer 创建一个新的环形缓冲区。
@@ -33,11 +36,12 @@ type RingBuffer struct {
 //	buffer := NewRingBuffer(1024)
 func NewRingBuffer(initialSize int64) *RingBuffer {
 	return &RingBuffer{
-		buffer: make([]any, initialSize),
-		size:   initialSize,
-		head:   0,
-		tail:   0,
-		count:  0,
+		buffer:      make([]any, initialSize),
+		size:        initialSize,
+		head:        0,
+		tail:        0,
+		count:       0,
+		initialSize: initialSize,
 	}
 }
 
@@ -57,6 +61,7 @@ func (r *RingBuffer) Push(item any) {
 	r.buffer[r.tail] = item
 	r.tail = (r.tail + 1) % r.size
 	r.count++
+	r.shrinkIfNeeded()
 }
 
 // Pop 从队列头部移除并返回元素。
@@ -76,6 +81,7 @@ func (r *RingBuffer) Pop() any {
 	r.head = (r.head + 1) % r.size
 	r.count--
 
+	r.shrinkIfNeeded()
 	return item
 }
 
@@ -110,6 +116,7 @@ func (r *RingBuffer) PopN(n int64) []any {
 	}
 
 	r.count -= n
+	r.shrinkIfNeeded()
 	return result
 }
 
@@ -148,4 +155,24 @@ func (r *RingBuffer) Cap() int64 {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	return r.size
+}
+
+// 收缩逻辑
+func (r *RingBuffer) shrinkIfNeeded() {
+	// 更新均值
+	r.statTimes++
+	r.avgCount += (float64(r.count) - r.avgCount) / float64(r.statTimes)
+
+	// 收缩逻辑
+	if r.count == 0 && float64(r.size) > r.avgCount && r.size > r.initialSize {
+		newSize := int64(r.avgCount)
+		if newSize < r.initialSize {
+			newSize = r.initialSize
+		}
+		newBuffer := make([]any, newSize)
+		r.buffer = newBuffer
+		r.head = 0
+		r.tail = 0
+		r.size = newSize
+	}
 }

@@ -1,14 +1,14 @@
 package builtinmailbox
 
 import (
-	mailbox2 "github.com/kercylan98/vivid/core/vivid/mailbox"
+	"github.com/kercylan98/vivid/core/vivid/mailbox"
 	"github.com/kercylan98/vivid/src/queues"
 	"sync/atomic"
 )
 
-var _ mailbox2.Mailbox = (*Mailbox)(nil)
+var _ mailbox.Mailbox = (*Mailbox)(nil)
 
-func NewMailbox(system, user queues.Queue, dispatcher mailbox2.Dispatcher) mailbox2.Mailbox {
+func NewMailbox(system, user queues.Queue, dispatcher mailbox.Dispatcher) mailbox.Mailbox {
 	return &Mailbox{
 		systemQueue: system,
 		userQueue:   user,
@@ -21,7 +21,7 @@ type Mailbox struct {
 	userQueue   queues.Queue
 	userNum     int32
 	systemNum   int32
-	dispatcher  mailbox2.Dispatcher
+	dispatcher  mailbox.Dispatcher
 	suspend     uint32
 }
 
