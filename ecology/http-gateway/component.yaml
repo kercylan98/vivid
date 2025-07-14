@@ -1,0 +1,55 @@
+# Vivid Ecology Component Configuration
+# HTTP Gateway Component
+
+component:
+  name: http-gateway
+  version: v0.1.0
+  status: development
+  category: network
+  description: HTTP to Actor message gateway with RESTful API support
+  
+author:
+  name: Vivid Team
+  email: team@vivid.dev
+  
+dependencies:
+  go:
+    - github.com/gin-gonic/gin
+    - github.com/kercylan98/vivid/core/vivid
+  
+features:
+  - RESTful API to Actor message routing
+  - Automatic request/response serialization
+  - Middleware support for authentication
+  - Rate limiting and request validation
+  - OpenAPI/Swagger documentation generation
+  
+api:
+  main_types:
+    - Gateway
+    - Router
+    - Middleware
+  main_functions:
+    - NewGateway
+    - RegisterRoute
+    - Start
+    - Stop
+    
+examples:
+  - name: basic
+    description: Basic HTTP gateway setup
+    path: examples/basic/main.go
+  - name: middleware
+    description: Custom middleware usage
+    path: examples/middleware/main.go
+    
+documentation:
+  readme: README.md
+  
+testing:
+  coverage_target: 85
+  benchmark: true
+  
+maintenance:
+  last_updated: 2024-01-15
+  next_review: 2024-03-15

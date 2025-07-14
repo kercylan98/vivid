@@ -1,0 +1,51 @@
+# Vivid Ecology Component Configuration
+# This file defines the metadata for the grpc-server component
+
+component:
+  name: grpc-server
+  version: v1.0.0
+  status: stable
+  category: network
+  description: High-performance gRPC server integration for Vivid Actor Framework
+  
+author:
+  name: Vivid Team
+  email: team@vivid.dev
+  
+dependencies:
+  go:
+    - google.golang.org/grpc
+    - github.com/kercylan98/vivid/core/vivid
+  
+features:
+  - Actor-based gRPC service handling
+  - Automatic lifecycle management
+  - Graceful shutdown support
+  - Configuration-driven setup
+  
+api:
+  main_types:
+    - Server
+    - Config
+  main_functions:
+    - NewServer
+    - Start
+    - Stop
+    - RegisterService
+    
+examples:
+  - name: basic
+    description: Basic gRPC server setup
+    path: examples/basic/main.go
+    
+documentation:
+  readme: README.md
+  godoc: https://pkg.go.dev/github.com/kercylan98/vivid/ecology/grpc-server
+  
+testing:
+  coverage_target: 80
+  benchmark: true
+  
+maintenance:
+  last_updated: 2024-01-15
+  next_review: 2024-04-15
