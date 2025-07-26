@@ -3,7 +3,7 @@ module github.com/kercylan98/vivid/grpc-net
 go 1.24.3
 
 require (
-	github.com/kercylan98/vivid v0.0.2
+	github.com/kercylan98/vivid v0.0.1
 	google.golang.org/grpc v1.74.2
 	google.golang.org/protobuf v1.36.6
 )
