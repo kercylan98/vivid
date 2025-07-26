@@ -2,7 +2,8 @@ package processor
 
 import (
 	"context"
-	processor3 "github.com/kercylan98/vivid/pkg/vivid/processor"
+	"github.com/kercylan98/vivid/pkg/serializer"
+	"github.com/kercylan98/vivid/pkg/vivid/processor"
 	"math/rand/v2"
 	"net"
 	"sync"
@@ -25,29 +26,9 @@ func NewRPCServer(config *RPCServerConfiguration) *RPCServer {
 		config.Logger = log.GetDefault()
 	}
 
-	// 验证必填配置项
-	if config.Server == nil {
-		panic("RPC server core implementation is required")
-	}
-	if config.Serializer == nil {
-		panic("RPC server serializer is required")
-	}
-	if config.ReactorProvider == nil {
-		panic("RPC server reactor provider is required")
-	}
-	if config.Network == "" {
-		panic("RPC server network type is required")
-	}
-	if config.AdvertisedAddress == "" {
-		panic("RPC server advertised address is required")
-	}
-	if config.BindAddress == "" {
-		panic("RPC server bind address is required")
-	}
-
 	return &RPCServer{
 		config:  *config,
-		remotes: make(map[string][]processor3.RPCConn),
+		remotes: make(map[string][]processor.RPCConn),
 		reactor: config.ReactorProvider.Provide(),
 	}
 }
@@ -56,12 +37,12 @@ func NewRPCServer(config *RPCServerConfiguration) *RPCServer {
 // 负责处理远程连接的建立、维护和消息路由。
 // 支持多客户端并发连接和优雅关闭。
 type RPCServer struct {
-	config      RPCServerConfiguration          // 服务器配置
-	context     context.Context                 // 运行上下文，用于控制服务器生命周期
-	cancel      context.CancelFunc              // 取消函数，用于停止服务器
-	remotes     map[string][]processor3.RPCConn // 远程连接映射，key为地址，value为连接列表
-	remotesLock sync.RWMutex                    // 远程连接锁，保护并发访问
-	reactor     RPCConnReactor                  // 连接反应器，处理消息事件
+	config      RPCServerConfiguration         // 服务器配置
+	context     context.Context                // 运行上下文，用于控制服务器生命周期
+	cancel      context.CancelFunc             // 取消函数，用于停止服务器
+	remotes     map[string][]processor.RPCConn // 远程连接映射，key为地址，value为连接列表
+	remotesLock sync.RWMutex                   // 远程连接锁，保护并发访问
+	reactor     processor.RPCConnReactor       // 连接反应器，处理消息事件
 }
 
 // SetContext 设置服务器运行上下文。
@@ -88,7 +69,7 @@ func (srv *RPCServer) Run() error {
 
 	srv.Logger().Info("RPC server listening",
 		log.String("network", srv.config.Network),
-		log.String("address", srv.config.BindAddress))
+		log.String("sender", srv.config.BindAddress))
 
 	go func() {
 		defer func() {
@@ -115,7 +96,7 @@ func (srv *RPCServer) Run() error {
 			srv.Logger().Info("RPC server stopping due to context cancellation")
 			return nil
 		case conn := <-srv.config.Server.Listen():
-			go srv.onConnected(conn)
+			go srv.onConnected(conn, srv.config.SerializerProvider.Provide(), false)
 		}
 	}
 }
@@ -129,7 +110,7 @@ func (srv *RPCServer) Stop() {
 	}
 }
 
-func (srv *RPCServer) GetConn(address string) processor3.RPCConn {
+func (srv *RPCServer) GetConn(address string) processor.RPCConn {
 	srv.remotesLock.RLock()
 	defer srv.remotesLock.RUnlock()
 
@@ -145,8 +126,8 @@ func (srv *RPCServer) Logger() log.Logger {
 	return srv.config.Logger
 }
 
-func (srv *RPCServer) onConnected(conn processor3.RPCConn) {
-	handshake, err := srv.onWaitHandshake(conn)
+func (srv *RPCServer) onConnected(conn processor.RPCConn, serializer serializer.NameSerializer, client bool) {
+	handshake, err := srv.onWaitHandshake(conn, client)
 	if err != nil {
 		srv.Logger().Error("onConnected", log.Err(err))
 		if err = conn.Close(); err != nil {
@@ -197,35 +178,35 @@ func (srv *RPCServer) onConnected(conn processor3.RPCConn) {
 				return
 			}
 
-			srv.reactor.OnMessage(conn, packet)
+			srv.reactor.OnMessage(conn, serializer, packet)
 		}
 	}
 }
 
-func (srv *RPCServer) onWaitHandshake(conn processor3.RPCConn) (processor3.RPCHandshake, error) {
+func (srv *RPCServer) onWaitHandshake(conn processor.RPCConn, client bool) (processor.RPCHandshake, error) {
 	packet, err := conn.Recv()
 	if err != nil {
 		srv.Logger().Error("onWaitHandshake", log.Err(err))
 		return nil, err
 	}
 
-	_, data := unpackRPCMessage(packet)
-	handshake := processor3.NewRPCHandshake()
-	if err := handshake.Unmarshal(data); err != nil {
+	handshake := processor.NewRPCHandshake()
+	if err := handshake.Unmarshal(packet); err != nil {
 		srv.Logger().Error("onWaitHandshake", log.String("event", "Unmarshal"), log.Err(err))
 		return nil, err
 	}
 
-	reply, err := processor3.NewRPCHandshakeWithAddress(srv.config.AdvertisedAddress).Marshal()
-	if err != nil {
-		srv.Logger().Error("onWaitHandshake", log.String("event", "Marshal"), log.Err(err))
-		return nil, err
-	}
+	if !client {
+		reply, err := processor.NewRPCHandshakeWithAddress(srv.config.AdvertisedAddress).Marshal()
+		if err != nil {
+			srv.Logger().Error("onWaitHandshake", log.String("event", "Marshal"), log.Err(err))
+			return nil, err
+		}
 
-	if err = conn.Send(reply); err != nil {
-		srv.Logger().Error("onWaitHandshake", log.String("event", "Send"), log.Err(err))
-		return nil, err
+		if err = conn.Send(reply); err != nil {
+			srv.Logger().Error("onWaitHandshake", log.String("event", "Send"), log.Err(err))
+			return nil, err
+		}
 	}
-
 	return handshake, nil
 }

@@ -1,0 +1,13 @@
+// protoc --go_out=./ --go-grpc_out=./ ./*.proto
+syntax = "proto3";
+
+package stream;
+option go_package = "./;stream";
+
+service Stream {
+    rpc ActorStreaming(stream Message) returns (stream Message);
+}
+
+message Message {
+    bytes data = 1;
+}

@@ -3,6 +3,7 @@ package processor
 import (
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/pkg/configurator"
+	"github.com/kercylan98/vivid/pkg/provider"
 	"github.com/kercylan98/vivid/pkg/serializer"
 )
 
@@ -39,10 +40,10 @@ type (
 
 	// RPCUnitConfiguration RPCUnit配置结构体
 	RPCUnitConfiguration struct {
-		Logger     log.Logger                // 日志记录器
-		Serializer serializer.NameSerializer // 名称序列化器
-		BatchSize  int                       // 批量处理大小
-		FailRetry  int                       // 失败重试次数
+		Logger             log.Logger                                   // 日志记录器
+		SerializerProvider provider.Provider[serializer.NameSerializer] // 名称序列化器
+		BatchSize          int                                          // 批量处理大小
+		FailRetry          int                                          // 失败重试次数
 	}
 )
 
@@ -57,14 +58,14 @@ func WithRPCUnitLogger(logger log.Logger) RPCUnitOption {
 	}
 }
 
-func (c *RPCUnitConfiguration) WithSerializer(serializer serializer.NameSerializer) *RPCUnitConfiguration {
-	c.Serializer = serializer
+func (c *RPCUnitConfiguration) WithSerializerProvider(provider provider.Provider[serializer.NameSerializer]) *RPCUnitConfiguration {
+	c.SerializerProvider = provider
 	return c
 }
 
-func WithRPCUnitSerializer(serializer serializer.NameSerializer) RPCUnitOption {
+func WithRPCUnitSerializerProvider(provider provider.Provider[serializer.NameSerializer]) RPCUnitOption {
 	return func(configuration *RPCUnitConfiguration) {
-		configuration.WithSerializer(serializer)
+		configuration.WithSerializerProvider(provider)
 	}
 }
 

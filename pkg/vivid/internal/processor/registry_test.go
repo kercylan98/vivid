@@ -95,7 +95,7 @@ func TestRegistry_GetUnit(t *testing.T) {
 	// 测试不存在的单元，应该返回守护单元
 	id := processor.NewCacheUnitIdentifier("localhost", "/nonexistent")
 	if unit, err := registry.GetUnit(id); err != nil || unit != daemonUnit {
-		t.Errorf("expected daemon unit for nonexistent path, got unit=%v, err=%v", unit, err)
+		t.Errorf("expected daemon unit for nonexistent target, got unit=%v, err=%v", unit, err)
 	}
 }
 

@@ -3,6 +3,7 @@ package processor
 import (
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/pkg/configurator"
+	"github.com/kercylan98/vivid/pkg/provider"
 	"github.com/kercylan98/vivid/pkg/serializer"
 	"github.com/kercylan98/vivid/pkg/vivid/processor"
 )
@@ -51,17 +52,17 @@ type (
 		// 注意：不同的实现可能有不同的性能特征和功能支持
 		Server processor.RPCServer
 
-		// Serializer 序列化器，用于消息的序列化和反序列化。
+		// SerializerProviderSerializer 序列化器，用于消息的序列化和反序列化。
 		// 负责将消息对象转换为字节流进行网络传输，以及反向转换。
 		// 必填项：此字段必须设置，否则无法正确处理消息
 		// 注意：序列化器的选择会影响性能和兼容性，建议选择高效且跨语言的格式
-		Serializer serializer.NameSerializer
+		SerializerProvider provider.Provider[serializer.NameSerializer]
 
 		// ReactorProvider 连接反应器提供器，用于处理连接上的消息事件。
 		// 提供消息处理器实例，负责具体的消息路由和业务逻辑处理。
 		// 必填项：此字段必须设置，否则无法处理接收到的消息
 		// 注意：反应器的实现会直接影响消息处理的性能和正确性
-		ReactorProvider RPCConnReactorProvider
+		ReactorProvider processor.RPCConnReactorProvider
 
 		// Network 网络类型，指定服务器监听的网络协议。
 		// 支持的值通常包括 "tcp"、"tcp4"、"tcp6"、"unix" 等。
@@ -107,25 +108,25 @@ func WithRPCServer(server processor.RPCServer) RPCServerOption {
 	}
 }
 
-func (c *RPCServerConfiguration) WithSerializer(serializer serializer.NameSerializer) RPCServerOption {
+func (c *RPCServerConfiguration) WithSerializerProvider(provider provider.Provider[serializer.NameSerializer]) RPCServerOption {
 	return func(c *RPCServerConfiguration) {
-		c.Serializer = serializer
+		c.SerializerProvider = provider
 	}
 }
 
-func WithRPCServerSerializer(serializer serializer.NameSerializer) RPCServerOption {
+func WithRPCServerSerializerProvider(provider provider.Provider[serializer.NameSerializer]) RPCServerOption {
 	return func(c *RPCServerConfiguration) {
-		c.Serializer = serializer
+		c.SerializerProvider = provider
 	}
 }
 
-func (c *RPCServerConfiguration) WithReactorProvider(provider RPCConnReactorProvider) RPCServerOption {
+func (c *RPCServerConfiguration) WithReactorProvider(provider processor.RPCConnReactorProvider) RPCServerOption {
 	return func(c *RPCServerConfiguration) {
 		c.ReactorProvider = provider
 	}
 }
 
-func WithRPCServerReactorProvider(provider RPCConnReactorProvider) RPCServerOption {
+func WithRPCServerReactorProvider(provider processor.RPCConnReactorProvider) RPCServerOption {
 	return func(c *RPCServerConfiguration) {
 		c.ReactorProvider = provider
 	}

@@ -1,6 +1,9 @@
 package vivid
 
 import (
+	"github.com/kercylan98/vivid/pkg/provider"
+	"github.com/kercylan98/vivid/pkg/serializer"
+	"github.com/kercylan98/vivid/pkg/vivid/processor"
 	"time"
 
 	"github.com/kercylan98/go-log/log"
@@ -36,6 +39,17 @@ func NewActorSystemConfiguration(options ...ActorSystemOption) *ActorSystemConfi
 	return c
 }
 
+func NewActorSystemNetworkConfiguration(options ...ActorSystemNetworkOption) *ActorSystemNetworkConfiguration {
+	c := &ActorSystemNetworkConfiguration{
+		Network:     "tcp",
+		BindAddress: "127.0.0.1:0",
+	}
+	for _, option := range options {
+		option(c)
+	}
+	return c
+}
+
 type (
 	// ActorSystemConfigurator 配置器接口
 	ActorSystemConfigurator = configurator.Configurator[*ActorSystemConfiguration]
@@ -46,16 +60,137 @@ type (
 	// ActorSystemOption 配置选项函数类型
 	ActorSystemOption = configurator.Option[*ActorSystemConfiguration]
 
-	// ActorSystemConfiguration ActorSystem配置结构体
-	//
-	// 所有字段均为私有，通过 GetXxx 方法获取值，通过 WithXxx 方法设置值。
+	// ActorSystemConfiguration ActorSystem 配置结构体
 	ActorSystemConfiguration struct {
 		Logger               log.Logger
 		FutureDefaultTimeout time.Duration
 		Hooks                []Hook
 		Metrics              bool // 是否启用指标采集
+		Network              ActorSystemNetworkConfiguration
+	}
+
+	ActorSystemNetworkConfigurator   = configurator.Configurator[*ActorSystemNetworkConfiguration]
+	ActorSystemNetworkConfiguratorFN = configurator.FN[*ActorSystemNetworkConfiguration]
+	ActorSystemNetworkOption         = configurator.Option[*ActorSystemNetworkConfiguration]
+
+	// ActorSystemNetworkConfiguration ActorSystem 网络配置
+	ActorSystemNetworkConfiguration struct {
+		Network            string
+		AdvertisedAddress  string
+		BindAddress        string
+		Server             processor.RPCServer
+		Connector          processor.RPCConnProvider
+		SerializerProvider provider.Provider[serializer.NameSerializer]
 	}
 )
+
+func (c *ActorSystemNetworkConfiguration) WithSerializerProvider(provider provider.Provider[serializer.NameSerializer]) *ActorSystemNetworkConfiguration {
+	c.SerializerProvider = provider
+	return nil
+}
+
+func WithActorSystemNetworkConfigurationSerializerProvider(provider provider.Provider[serializer.NameSerializer]) ActorSystemNetworkOption {
+	return func(configuration *ActorSystemNetworkConfiguration) {
+		configuration.WithSerializerProvider(provider)
+	}
+}
+
+func (c *ActorSystemNetworkConfiguration) WithConnector(provider processor.RPCConnProvider) *ActorSystemNetworkConfiguration {
+	c.Connector = provider
+	return nil
+}
+
+func WithActorSystemNetworkConfigurationConnector(provider processor.RPCConnProvider) ActorSystemNetworkOption {
+	return func(configuration *ActorSystemNetworkConfiguration) {
+		configuration.WithConnector(provider)
+	}
+}
+
+func (c *ActorSystemNetworkConfiguration) WithNetwork(network string) *ActorSystemNetworkConfiguration {
+	c.Network = network
+	return nil
+}
+
+func WithActorSystemNetworkConfigurationNetwork(network string) ActorSystemNetworkOption {
+	return func(configuration *ActorSystemNetworkConfiguration) {
+		configuration.WithNetwork(network)
+	}
+}
+
+func (c *ActorSystemNetworkConfiguration) WithAdvertisedAddress(address string) *ActorSystemNetworkConfiguration {
+	c.AdvertisedAddress = address
+	return nil
+}
+
+func WithActorSystemNetworkConfigurationAdvertisedAddress(address string) ActorSystemNetworkOption {
+	return func(configuration *ActorSystemNetworkConfiguration) {
+		configuration.WithAdvertisedAddress(address)
+	}
+}
+
+func (c *ActorSystemNetworkConfiguration) WithBindAddress(address string) *ActorSystemNetworkConfiguration {
+	c.BindAddress = address
+	return nil
+}
+
+func WithActorSystemNetworkConfigurationBindAddress(address string) ActorSystemNetworkOption {
+	return func(configuration *ActorSystemNetworkConfiguration) {
+		configuration.WithBindAddress(address)
+	}
+}
+
+func (c *ActorSystemNetworkConfiguration) WithServer(server processor.RPCServer) *ActorSystemNetworkConfiguration {
+	c.Server = server
+	return nil
+}
+
+func WithActorSystemNetworkConfigurationServer(server processor.RPCServer) ActorSystemNetworkOption {
+	return func(configuration *ActorSystemNetworkConfiguration) {
+		configuration.WithServer(server)
+	}
+}
+
+// WithNetwork 设置 Actor 系统网络配置
+func (c *ActorSystemConfiguration) WithNetwork(configuration *ActorSystemNetworkConfiguration) *ActorSystemConfiguration {
+	c.Network = *configuration
+	return c
+}
+
+// WithNetworkWithConfigurators 设置 Actor 系统网络配置
+func (c *ActorSystemConfiguration) WithNetworkWithConfigurators(configurators ...ActorSystemNetworkConfigurator) *ActorSystemConfiguration {
+	nc := NewActorSystemNetworkConfiguration()
+	for _, cc := range configurators {
+		cc.Configure(nc)
+	}
+	return c.WithNetwork(nc)
+}
+
+// WithNetworkWithOptions 设置 Actor 系统网络配置
+func (c *ActorSystemConfiguration) WithNetworkWithOptions(options ...ActorSystemNetworkOption) *ActorSystemConfiguration {
+	nc := NewActorSystemNetworkConfiguration(options...)
+	return c.WithNetwork(nc)
+}
+
+// WithActorSystemNetwork 设置 Actor 系统网络配置
+func WithActorSystemNetwork(configuration *ActorSystemNetworkConfiguration) ActorSystemOption {
+	return func(c *ActorSystemConfiguration) {
+		c.WithNetwork(configuration)
+	}
+}
+
+// WithActorSystemNetworkWithConfigurators 设置 Actor 系统网络配置
+func WithActorSystemNetworkWithConfigurators(configurators ...ActorSystemNetworkConfigurator) ActorSystemOption {
+	return func(c *ActorSystemConfiguration) {
+		c.WithNetworkWithConfigurators(configurators...)
+	}
+}
+
+// WithActorSystemNetworkWithOptions 设置 Actor 系统网络配置
+func WithActorSystemNetworkWithOptions(options ...ActorSystemNetworkOption) ActorSystemOption {
+	return func(c *ActorSystemConfiguration) {
+		c.WithNetworkWithOptions(options...)
+	}
+}
 
 // WithLogger 设置日志器
 func (c *ActorSystemConfiguration) WithLogger(logger log.Logger) *ActorSystemConfiguration {

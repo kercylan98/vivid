@@ -3,7 +3,8 @@ package processor
 import (
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/pkg/queues"
-	processor3 "github.com/kercylan98/vivid/pkg/vivid/processor"
+	"github.com/kercylan98/vivid/pkg/serializer"
+	"github.com/kercylan98/vivid/pkg/vivid/processor"
 	"math"
 	"math/rand/v2"
 	"sync/atomic"
@@ -24,34 +25,37 @@ var (
 	_ Unit = (*rpcUnit)(nil)
 )
 
-func NewRPCUnit(remoteId UnitIdentifier, conn processor3.RPCConn, config *RPCUnitConfiguration) Unit {
+func NewRPCUnit(remoteId UnitIdentifier, conn processor.RPCConn, config *RPCUnitConfiguration) (Unit, serializer.NameSerializer) {
 	if config.Logger == nil {
 		config.Logger = log.GetDefault()
 	}
-
+	s := config.SerializerProvider.Provide()
 	return &rpcUnit{
-		config:   *config,
-		remoteId: remoteId,
-		conn:     conn,
-		queue:    queues.NewRingBuffer(32),
-	}
+		config:     *config,
+		serializer: s,
+		remoteId:   remoteId,
+		conn:       conn,
+		queue:      queues.NewRingBuffer(32),
+	}, s
 }
 
 type rpcUnitMessage struct {
-	address string
-	path    string
+	sender  string
+	target  string
 	typ     string
 	message []byte
+	system  bool
 }
 
 // rpcUnit 是用于实现 RPC 功能的处理单元
 type rpcUnit struct {
-	config   RPCUnitConfiguration
-	remoteId UnitIdentifier
-	conn     processor3.RPCConn
-	queue    *queues.RingBuffer
-	num      int32
-	status   uint32
+	config     RPCUnitConfiguration
+	serializer serializer.NameSerializer
+	remoteId   UnitIdentifier
+	conn       processor.RPCConn
+	queue      *queues.RingBuffer
+	num        int32
+	status     uint32
 }
 
 func (r *rpcUnit) Logger() log.Logger {
@@ -59,27 +63,39 @@ func (r *rpcUnit) Logger() log.Logger {
 }
 
 func (r *rpcUnit) HandleUserMessage(sender UnitIdentifier, message any) {
-	typ, data, err := r.config.Serializer.Serialize(message)
+	r.handleMessage(sender, false, message)
+}
+
+func (r *rpcUnit) HandleSystemMessage(sender UnitIdentifier, message any) {
+	r.handleMessage(sender, true, message)
+}
+
+func (r *rpcUnit) handleMessage(sender UnitIdentifier, system bool, message any) {
+	sender, message = UnwrapMessage(message)
+	typ, data, err := r.serializer.Serialize(message)
 	if err != nil {
 		r.Logger().Error("serialize", log.Err(err))
 		return
 	}
 
-	r.queue.Push(&rpcUnitMessage{
-		address: sender.GetAddress(),
-		path:    sender.GetPath(),
+	unitMessage := &rpcUnitMessage{
+		target:  r.remoteId.String(), // 指向本地创建该远程单元的 Actor
 		typ:     typ,
 		message: data,
-	})
+		system:  system,
+	}
+
+	// 投递该消息的发送者 Actor
+	if sender != nil {
+		unitMessage.sender = sender.String()
+	}
+
+	r.queue.Push(unitMessage)
 
 	atomic.AddInt32(&r.num, 1)
 	if atomic.CompareAndSwapUint32(&r.status, rpcUnitIdle, rpcUnitRunning) {
 		go r.flush()
 	}
-}
-
-func (r *rpcUnit) HandleSystemMessage(sender UnitIdentifier, message any) {
-	r.HandleUserMessage(sender, message)
 }
 
 func (r *rpcUnit) flush() {
@@ -108,17 +124,17 @@ func (r *rpcUnit) flush() {
 func (r *rpcUnit) batchPack() bool {
 	processed := false
 
-	var batch = processor3.NewRPCBatchMessage()
+	var batch = processor.NewRPCBatchMessage()
 
 	for {
 		if message, ok := r.queue.Pop().(*rpcUnitMessage); ok {
 			atomic.AddInt32(&r.num, -1)
-			batch.Add(message.address, message.path, message.typ, message.message)
+			batch.Add(message.sender, message.target, message.typ, message.message, message.system)
 			processed = true
 
 			if batch.Len() >= r.config.BatchSize {
 				r.publish(batch)
-				batch = processor3.NewRPCBatchMessage()
+				batch = processor.NewRPCBatchMessage()
 			}
 			continue
 		}
@@ -132,7 +148,7 @@ func (r *rpcUnit) batchPack() bool {
 	return processed
 }
 
-func (r *rpcUnit) publish(batch processor3.RPCBatchMessage) {
+func (r *rpcUnit) publish(batch processor.RPCBatchMessage) {
 	var failCount int
 
 	for {
@@ -143,10 +159,8 @@ func (r *rpcUnit) publish(batch processor3.RPCBatchMessage) {
 		}
 
 		if err = r.conn.Send(buf); err == nil {
-			r.Logger().Error("send", log.Err(err))
 			break
 		}
-
 		// 退避重试，该重试没有必要存在上限，因为即便是达到次数上限跳出循环，也会被下一次消息发送重新激活而继续阻塞
 		failCount++
 		delay := float64(rpcUnitBaseDelay) * math.Pow(rpcUnitMultiplier, float64(failCount))

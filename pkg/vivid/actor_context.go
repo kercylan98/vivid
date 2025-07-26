@@ -173,8 +173,8 @@ type ActorContext interface {
 	// 当指定 Actor 停止时，当前 Actor 会收到 OnWatchEnd 消息。
 	Watch(target ActorRef)
 
-	// UnWatch 停止对指定的 Actor 生命周期的监视。
-	UnWatch(target ActorRef)
+	// Unwatch 停止对指定的 Actor 生命周期的监视。
+	Unwatch(target ActorRef)
 
 	// AttachTask 以当前上下文为基准附加一个任务，该任务将被放入邮箱的末端进行处理。
 	// 通过该函数将允许基于当前作用域执行延迟任务，例如作为异步的回调任务来执行。
@@ -250,7 +250,7 @@ type actorContext struct {
 
 func (ctx *actorContext) OnSystemMessage(message any) {
 	startAt := time.Now()
-	ctx.sender, ctx.message = unwrapMessage(message)
+	ctx.sender, ctx.message = processor.UnwrapMessage(message)
 	ctx.system.hooks.trigger(actorHandleSystemMessageBeforeHookType, ctx.sender, ctx.ref, message)
 
 	switch msg := ctx.message.(type) {
@@ -270,8 +270,8 @@ func (ctx *actorContext) OnSystemMessage(message any) {
 		ctx.onRestart()
 	case *onWatch:
 		ctx.onWatch(msg)
-	case *onUnWatch:
-		ctx.onUnWatch(msg)
+	case *onUnwatch:
+		ctx.onUnwatch(msg)
 	}
 
 	ctx.system.hooks.trigger(actorHandleSystemMessageAfterHookType, ctx.sender, ctx.ref, message, time.Since(startAt))
@@ -284,7 +284,7 @@ func (ctx *actorContext) OnUserMessage(message any) {
 		startAt = &now
 	}
 
-	ctx.sender, ctx.message = unwrapMessage(message)
+	ctx.sender, ctx.message = processor.UnwrapMessage(message)
 
 	ctx.system.hooks.trigger(actorHandleUserMessageBeforeHookType, ctx.sender, ctx.ref, message)
 
@@ -337,7 +337,7 @@ func (ctx *actorContext) Probe(target ActorRef, message Message) {
 		ctx.Logger().Error("Probe", log.Err(err))
 		return
 	}
-	unit.HandleUserMessage(ctx.ref, wrapMessage(ctx.ref, message))
+	unit.HandleUserMessage(ctx.ref, processor.WrapMessage(ctx.ref, message))
 }
 
 func (ctx *actorContext) Kill(target ActorRef, reason ...string) {
@@ -361,7 +361,7 @@ func (ctx *actorContext) Ask(target ActorRef, message Message, timeout ...time.D
 		ctx.Logger().Error("Ask", log.Err(err))
 		return f
 	}
-	unit.HandleUserMessage(ref, wrapMessage(ref, message))
+	unit.HandleUserMessage(ref, processor.WrapMessage(ref, message))
 	return f
 }
 
@@ -378,13 +378,40 @@ func (ctx *actorContext) systemTell(target ActorRef, message Message) {
 	unit.HandleSystemMessage(ctx.ref, message)
 }
 
+func (ctx *actorContext) tell(sender, target ActorRef, message Message, system bool) {
+	unit, err := ctx.system.registry.GetUnit(target)
+	if err != nil {
+		ctx.Logger().Error("tell", log.Any("target", target), log.Err(err))
+		return
+	}
+	if system {
+		unit.HandleSystemMessage(sender, message)
+	} else {
+		unit.HandleUserMessage(sender, message)
+	}
+}
+
 func (ctx *actorContext) systemProbe(target ActorRef, message Message) {
 	unit, err := ctx.system.registry.GetUnit(target)
 	if err != nil {
 		ctx.Logger().Error("systemProbe", log.Err(err))
 		return
 	}
-	unit.HandleSystemMessage(ctx.ref, wrapMessage(ctx.ref, message))
+	unit.HandleSystemMessage(ctx.ref, processor.WrapMessage(ctx.ref, message))
+}
+
+func (ctx *actorContext) probe(sender, target ActorRef, message Message, system bool) {
+	unit, err := ctx.system.registry.GetUnit(target)
+	if err != nil {
+		ctx.Logger().Error("probe", log.Err(err))
+		return
+	}
+	message = processor.WrapMessage(sender, message)
+	if system {
+		unit.HandleSystemMessage(sender, message)
+	} else {
+		unit.HandleUserMessage(sender, message)
+	}
 }
 
 func (ctx *actorContext) Logger() log.Logger {
@@ -656,8 +683,8 @@ func (ctx *actorContext) Watch(target ActorRef) {
 	ctx.systemProbe(target, &onWatch{})
 }
 
-func (ctx *actorContext) UnWatch(target ActorRef) {
-	ctx.systemProbe(target, &onUnWatch{})
+func (ctx *actorContext) Unwatch(target ActorRef) {
+	ctx.systemProbe(target, &onUnwatch{})
 }
 
 func (ctx *actorContext) onWatch(_ *onWatch) {
@@ -676,7 +703,7 @@ func (ctx *actorContext) onWatch(_ *onWatch) {
 	ctx.watches[ctx.Sender().String()] = ctx.Sender()
 }
 
-func (ctx *actorContext) onUnWatch(_ *onUnWatch) {
+func (ctx *actorContext) onUnwatch(_ *onUnwatch) {
 	if ctx.watches == nil {
 		return
 	}

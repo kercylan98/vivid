@@ -1,11 +1,13 @@
 package vivid
 
+import "github.com/kercylan98/vivid/pkg/provider"
+
 type (
 	// Message 定义了 Actor 系统中消息的通用类型。
 	//
 	// 在 vivid 框架中，任何类型的数据都可以作为消息在 Actor 之间传递。
 	Message           = any
-	internalMessageId = uint16
+	internalMessageId = string
 	internalMessage   interface {
 		marshal() (internalMessageId, []byte)
 		unmarshal(b []byte)
@@ -13,14 +15,33 @@ type (
 )
 
 const (
-	onLaunchMessageId internalMessageId = iota + 1
-	onKillMessageId
-	onPreRestartMessageId
-	onRestartMessageId
-	onWatchMessageId
-	onUnWatchMessageId
-	onWatchEndMessageId
+	onLaunchMessageId     internalMessageId = "launch"
+	onKillMessageId       internalMessageId = "kill"
+	onPreRestartMessageId internalMessageId = "pre_restart"
+	onRestartMessageId    internalMessageId = "restart"
+	onWatchMessageId      internalMessageId = "watch"
+	onUnwatchMessageId    internalMessageId = "unwatch"
+	onWatchEndMessageId   internalMessageId = "watch_end"
 )
+
+var (
+	internalMessageProviders = map[internalMessageId]provider.Provider[internalMessage]{
+		onLaunchMessageId:     provider.FN[internalMessage](func() internalMessage { return new(OnLaunch) }),
+		onKillMessageId:       provider.FN[internalMessage](func() internalMessage { return new(OnKill) }),
+		onPreRestartMessageId: provider.FN[internalMessage](func() internalMessage { return new(OnPreRestart) }),
+		onRestartMessageId:    provider.FN[internalMessage](func() internalMessage { return new(OnRestart) }),
+		onWatchMessageId:      provider.FN[internalMessage](func() internalMessage { return new(onWatch) }),
+		onUnwatchMessageId:    provider.FN[internalMessage](func() internalMessage { return new(onUnwatch) }),
+		onWatchEndMessageId:   provider.FN[internalMessage](func() internalMessage { return new(OnWatchEnd) }),
+	}
+)
+
+func provideInternalMessageInstance(id internalMessageId) internalMessage {
+	if p, exist := internalMessageProviders[id]; exist {
+		return p.Provide()
+	}
+	return nil
+}
 
 var (
 	onLaunchInstance = &OnLaunch{}
@@ -32,12 +53,12 @@ var (
 // 这是 Actor 生命周期中的第一个消息，通常用于初始化操作。
 type OnLaunch struct{}
 
-func (m *OnLaunch) marshal() (internalMessageId, []byte, error) {
-	return onLaunchMessageId, nil, nil
+func (m *OnLaunch) marshal() (internalMessageId, []byte) {
+	return onLaunchMessageId, nil
 }
 
-func (m *OnLaunch) unmarshal(b []byte) error {
-	return nil
+func (m *OnLaunch) unmarshal(b []byte) {
+	return
 }
 
 // OnKill 表示 Actor 终止消息。
@@ -223,14 +244,14 @@ func (m *onWatch) unmarshal(b []byte) {
 	return
 }
 
-// onUnWatch 表示 Actor 停止被监视的消息。
-type onUnWatch struct{}
+// onUnwatch 表示 Actor 停止被监视的消息。
+type onUnwatch struct{}
 
-func (m *onUnWatch) marshal() (internalMessageId, []byte) {
-	return onUnWatchMessageId, nil
+func (m *onUnwatch) marshal() (internalMessageId, []byte) {
+	return onUnwatchMessageId, nil
 }
 
-func (m *onUnWatch) unmarshal(b []byte) {
+func (m *onUnwatch) unmarshal(b []byte) {
 	return
 }
 

@@ -8,7 +8,7 @@ import (
 )
 
 // NewUnitIdentifier 创建一个新的单元标识符。
-// address 参数指定处理单元的网络地址，path 参数指定处理单元的路径。
+// sender 参数指定处理单元的网络地址，target 参数指定处理单元的路径。
 // 路径会被自动标准化：确保以 "/" 开头，移除末尾的 "/"，处理重复的 "/"。
 func NewUnitIdentifier(address string, path string) UnitIdentifier {
 	return newUnitIdentifier(address, path)
@@ -53,11 +53,14 @@ type UnitIdentifier interface {
 	String() string
 
 	// Branch 基于当前标识符生成子单元标识符
-	// path 参数将作为子路径追加到当前路径后
+	// target 参数将作为子路径追加到当前路径后
 	Branch(path string) UnitIdentifier
 
 	// IsRoot 实现 UnitIdentifier 接口，判断标识符是否为根标识符
 	IsRoot() bool
+
+	// Clone 克隆一个相同的标识符
+	Clone() UnitIdentifier
 }
 
 // CacheUnitIdentifier 定义了带缓存功能的单元标识符接口。
@@ -136,8 +139,12 @@ func (u *unitIdentifier) ClearCache() {
 }
 
 func (u *unitIdentifier) String() string {
-	if u == nil {
-		return "<nil>"
-	}
 	return u.Address + u.Path
+}
+
+func (u *unitIdentifier) Clone() UnitIdentifier {
+	return &unitIdentifier{
+		Address: u.Address,
+		Path:    u.Path,
+	}
 }

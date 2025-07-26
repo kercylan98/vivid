@@ -42,6 +42,9 @@ func NewActorRefFromAddress(address string) ActorRef {
 //
 // 返回一个可用于消息发送的 ActorRef 实例。
 func ParseActorRef(address string) ActorRef {
+	if address == "" {
+		return nil
+	}
 	var split = strings.SplitN(address, "/", 2)
 	return NewActorRef(split[0], split[1])
 }

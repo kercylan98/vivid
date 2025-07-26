@@ -1,8 +1,11 @@
 package vivid
 
 import (
+	"github.com/kercylan98/vivid/pkg/provider"
+	"github.com/kercylan98/vivid/pkg/serializer"
 	"github.com/kercylan98/vivid/pkg/vivid/internal/processor"
 	"github.com/kercylan98/vivid/pkg/vivid/metrics"
+	processorOutside "github.com/kercylan98/vivid/pkg/vivid/processor"
 	"sync"
 	"sync/atomic"
 
@@ -54,6 +57,7 @@ func NewActorSystemFromConfig(config *ActorSystemConfiguration) ActorSystem {
 	sys := &actorSystem{
 		config: *config,
 	}
+	sys.actorSystemRPC = &actorSystemRPC{actorSystem: sys}
 
 	if config.Metrics {
 		sys.metrics = newActorSystemMetrics(metrics.NewManagerWithConfigurators(metrics.ManagerConfiguratorFN(func(c *metrics.ManagerConfiguration) {
@@ -69,9 +73,30 @@ func NewActorSystemFromConfig(config *ActorSystemConfiguration) ActorSystem {
 
 	daemon := newDaemonActor()
 
+	var rpc bool
 	sys.registry = processor.NewRegistryWithConfigurators(processor.RegistryConfiguratorFN(func(c *processor.RegistryConfiguration) {
 		c.WithLogger(config.Logger.WithGroup("unit-registry"))
 		c.WithDaemon(daemon)
+		if config.Network.Server != nil {
+			rpc = true
+			serializerProvider := provider.FN[serializer.NameSerializer](func() serializer.NameSerializer {
+				return &actorSystemRPCSerializer{outside: config.Network.SerializerProvider.Provide()}
+			})
+			c.WithRPCUnitConfigurator(processor.RPCUnitConfiguratorFN(func(c *processor.RPCUnitConfiguration) {
+				c.WithLogger(sys.Logger().WithGroup("rpc-unit"))
+				c.WithSerializerProvider(serializerProvider)
+			}))
+			c.WithRPCClientProvider(config.Network.Connector)
+			c.WithRPCServer(processor.NewRPCServer(&processor.RPCServerConfiguration{
+				Logger:             sys.Logger().WithGroup("rpc"),
+				Server:             config.Network.Server,
+				ReactorProvider:    processorOutside.RPCConnReactorProviderFN(func() processorOutside.RPCConnReactor { return sys }),
+				Network:            config.Network.Network,
+				AdvertisedAddress:  config.Network.AdvertisedAddress,
+				BindAddress:        config.Network.BindAddress,
+				SerializerProvider: serializerProvider,
+			}))
+		}
 	}))
 
 	ctx := newActorContext(sys, sys.registry.GetUnitIdentifier(), nil, ActorProviderFN(func() Actor {
@@ -83,8 +108,13 @@ func NewActorSystemFromConfig(config *ActorSystemConfiguration) ActorSystem {
 	}))
 
 	bindActorContext(sys, nil, ctx)
-	sys.ActorContext = ctx
+	sys.actorContext = ctx
 
+	if rpc {
+		if err := sys.registry.StartRPCServer(); err != nil {
+			panic(err)
+		}
+	}
 	return sys
 }
 
@@ -114,7 +144,8 @@ func NewActorSystemWithConfigurators(configurators ...ActorSystemConfigurator) A
 }
 
 type actorSystem struct {
-	ActorContext
+	*actorContext
+	*actorSystemRPC
 	config     ActorSystemConfiguration
 	registry   processor.Registry
 	shutdownWG sync.WaitGroup
@@ -128,11 +159,14 @@ func (sys *actorSystem) Logger() log.Logger {
 }
 
 func (sys *actorSystem) Shutdown(poison bool, reason ...string) error {
+	if err := sys.registry.Shutdown(); err != nil {
+		return err
+	}
 	if poison {
 		sys.PoisonKill(sys.Ref(), reason...)
 	} else {
 		sys.Kill(sys.Ref(), reason...)
 	}
 	sys.shutdownWG.Wait()
-	return sys.registry.Shutdown()
+	return nil
 }

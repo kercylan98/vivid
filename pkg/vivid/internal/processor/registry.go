@@ -4,7 +4,8 @@ package processor
 import (
 	"context"
 	"fmt"
-	processor3 "github.com/kercylan98/vivid/pkg/vivid/processor"
+	"github.com/kercylan98/vivid/pkg/serializer"
+	"github.com/kercylan98/vivid/pkg/vivid/processor"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,11 +48,11 @@ func newRegistry(config RegistryConfiguration) *registry {
 
 	// 如果配置了 RPC 服务器，设置上下文
 	if r.rpcServer != nil {
-		r.rootUnitIdentifier = newUnitIdentifier(r.rpcServer.config.AdvertisedAddress, "/")
+		r.rootUnitIdentifier = NewUnitIdentifier(r.rpcServer.config.AdvertisedAddress, "/")
 		r.rpcLock = xsync.NewMapOf[string, *sync.Mutex]()
 		r.ctx, r.cancel = context.WithCancel(context.Background())
 	} else {
-		r.rootUnitIdentifier = newUnitIdentifier(onlyLocalAddress, "/")
+		r.rootUnitIdentifier = NewUnitIdentifier(onlyLocalAddress, "/")
 	}
 
 	return r
@@ -297,12 +298,13 @@ func (r *registry) fromRPC(id UnitIdentifier) (unit Unit, err error) {
 	}
 
 	// 建立远程单元客户端
-	var conn processor3.RPCConn
+	var conn processor.RPCConn
+	var opened bool
 	if r.config.RPCClientProvider != nil {
 		if conn, err = r.config.RPCClientProvider.Provide(id.GetAddress()); err != nil {
 			return nil, fmt.Errorf("RPC client provider error: %w", err)
 		} else {
-			handshake := processor3.NewRPCHandshakeWithAddress(r.rootUnitIdentifier.GetAddress())
+			handshake := processor.NewRPCHandshakeWithAddress(r.rootUnitIdentifier.GetAddress())
 			handshakeBuf, err := handshake.Marshal()
 			if err != nil {
 				return nil, fmt.Errorf("RPC handshake marshal error: %w", err)
@@ -310,7 +312,7 @@ func (r *registry) fromRPC(id UnitIdentifier) (unit Unit, err error) {
 			if err = conn.Send(handshakeBuf); err != nil {
 				return nil, fmt.Errorf("RPC handshake error: %w", err)
 			}
-			go r.rpcServer.onConnected(conn)
+			opened = true
 		}
 	} else if r.rpcServer != nil {
 		// 尝试查找已有连接，增加空指针检查
@@ -328,10 +330,15 @@ func (r *registry) fromRPC(id UnitIdentifier) (unit Unit, err error) {
 	if r.config.RPCUnitConfigurator != nil {
 		r.config.RPCUnitConfigurator.Configure(rpcUnitConfig)
 	}
-	unit = NewRPCUnit(id, conn, rpcUnitConfig)
+	var nameSerializer serializer.NameSerializer
+	unit, nameSerializer = NewRPCUnit(id, conn, rpcUnitConfig)
 
 	if cache, ok := id.(CacheUnitIdentifier); ok {
 		cache.StoreCache(unit)
+	}
+
+	if opened {
+		go r.rpcServer.onConnected(conn, nameSerializer, true)
 	}
 	return unit, nil
 }

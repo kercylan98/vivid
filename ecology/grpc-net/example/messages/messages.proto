@@ -1,0 +1,10 @@
+// protoc --go_out=./ --go-grpc_out=./ ./*.proto
+syntax = "proto3";
+
+package messages;
+option go_package = "./;messages";
+
+
+message Message {
+    string text = 1;
+}

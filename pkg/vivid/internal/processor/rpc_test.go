@@ -23,7 +23,7 @@ func TestRegistryRPCServerLifecycle(t *testing.T) {
 	}
 
 	// 测试关闭注册表
-	if err := registry.Shutdown(registry.GetUnitIdentifier()); err != nil {
+	if err := registry.Shutdown(); err != nil {
 		t.Errorf("Registry shutdown failed: %v", err)
 	}
 
@@ -40,7 +40,7 @@ func BenchmarkRegistryWithRPCConcurrency(b *testing.B) {
 		processor.WithDaemon(&TestUnit{}),
 	)
 	defer func() {
-		_ = registry.Shutdown(registry.GetUnitIdentifier())
+		_ = registry.Shutdown()
 	}()
 
 	// 注册多个处理单元
