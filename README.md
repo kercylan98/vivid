@@ -43,7 +43,7 @@ package main
 
 import (
     "fmt"
-    "github.com/kercylan98/vivid/core/vivid"
+    "github.com/kercylan98/vivid/pkg/vivid"
 )
 
 func main() {

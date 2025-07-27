@@ -200,23 +200,27 @@ const VividApp = {
         const codeContent = `package main
 
 import (
-  "fmt"
-  "github.com/kercylan98/vivid/src/vivid"
+    "fmt"
+    "github.com/kercylan98/vivid/pkg/vivid"
 )
 
 func main() {
-  system := vivid.NewActorSystem()
-  system.StartP()
-  defer system.StopP()
-  
-  ref := system.ActorOf(func() vivid.Actor {
-    return vivid.ActorFN(func(ctx vivid.ActorContext) {
-      fmt.Println("收到消息:", ctx.Message())
+    system := vivid.NewActorSystem()
+    defer func() {
+        if err := system.Shutdown(true); err != nil {
+            panic(err)
+        }
+    }()
+
+    ref := system.SpawnOf(func() vivid.Actor {
+        return vivid.ActorFN(func(ctx vivid.ActorContext) {
+            fmt.Println(ctx.Message())
+        })
     })
-  })
-  
-  system.Tell("Hello Vivid!")
-}`;
+
+    system.Tell(ref, "Hello Vivid!")
+}
+`;
 
         this.typewriterEffect(codeElement, codeContent, this.config.typewriterSpeed);
     },
