@@ -1,7 +1,7 @@
 package grpcnet
 
 import (
-	"github.com/kercylan98/vivid/grpc-net/grpcnet/internal/stream"
+	"github.com/kercylan98/vivid/ecology/grpc-net/grpcnet/internal/stream"
 	"github.com/kercylan98/vivid/pkg/vivid/processor"
 	"google.golang.org/grpc"
 	"net"

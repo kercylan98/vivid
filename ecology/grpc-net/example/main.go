@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/kercylan98/vivid/grpc-net/example/messages"
-	"github.com/kercylan98/vivid/grpc-net/grpcnet"
+	"github.com/kercylan98/vivid/ecology/grpc-net/example/messages"
+	"github.com/kercylan98/vivid/ecology/grpc-net/grpcnet"
 	"github.com/kercylan98/vivid/pkg/vivid"
 )
 

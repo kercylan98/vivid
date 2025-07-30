@@ -17,7 +17,7 @@ GRPC-Net 是 Vivid Actor 模型框架的网络通信扩展模块，提供了基�
 ## 安装
 
 ```bash
-go get github.com/kercylan98/vivid/grpc-net
+go get github.com/kercylan98/vivid/ecology/grpc-net
 ```
 
 ## 依赖
@@ -58,7 +58,7 @@ package main
 
 import (
     "fmt"
-    "github.com/kercylan98/vivid/grpc-net/grpcnet"
+    "github.com/kercylan98/vivid/ecology/grpc-net/grpcnet"
     "github.com/kercylan98/vivid/pkg/vivid"
     "your-project/messages"
 )

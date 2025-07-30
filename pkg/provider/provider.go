@@ -17,3 +17,9 @@ type FN[T any] func() T
 func (f FN[T]) Provide() T {
 	return f()
 }
+
+type Param1Provider[P, T any] interface {
+	Provide(P) T
+}
+
+type Param1FN[P, T any] func(P) T
