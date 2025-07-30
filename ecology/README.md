@@ -2,9 +2,6 @@
 
 > 可选扩展生态组件目录，按需引入，保持核心轻量！
 
-<!-- 此文档由 go generate 自动生成，请勿手动编辑 -->
-<!-- go:generate go run ./tools/docgen --target=ecology --output=README.md -->
-
 ## 组件导航
 
 | 状态   | 组件                     | 描述                           | 文档                             |
