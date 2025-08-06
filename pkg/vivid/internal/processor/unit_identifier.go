@@ -61,6 +61,9 @@ type UnitIdentifier interface {
 
 	// Clone 克隆一个相同的标识符
 	Clone() UnitIdentifier
+
+	// Equal 检查是否具有相同的指向
+	Equal(t UnitIdentifier) bool
 }
 
 // CacheUnitIdentifier 定义了带缓存功能的单元标识符接口。
@@ -136,6 +139,11 @@ func (u *unitIdentifier) StoreCache(unit Unit) {
 // 使用原子操作保证并发安全。
 func (u *unitIdentifier) ClearCache() {
 	u.cache.Store(nil)
+}
+
+// Equal 检查是否具有相同的指向
+func (u *unitIdentifier) Equal(t UnitIdentifier) bool {
+	return u.Address == t.GetAddress() && u.Path == t.GetPath()
 }
 
 func (u *unitIdentifier) String() string {
