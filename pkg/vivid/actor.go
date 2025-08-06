@@ -1,5 +1,7 @@
 package vivid
 
+import "github.com/kercylan98/vivid/pkg/provider"
+
 // Actor 定义了 Actor 模型中的基本行为接口。
 //
 // Actor 是 vivid 框架中的基本计算单元，通过消息传递进行通信。
@@ -25,19 +27,9 @@ func (fn ActorFN) Receive(context ActorContext) {
 // ActorProvider 定义了 Actor 实例的提供者接口。
 //
 // 用于创建 Actor 实例，支持依赖注入和工厂模式。
-type ActorProvider interface {
-	// Provide 创建并返回一个新的 Actor 实例。
-	//
-	// 每次调用都应该返回一个新的 Actor 实例。
-	Provide() Actor
-}
+type ActorProvider = provider.Provider[Actor]
 
 // ActorProviderFN 是 ActorProvider 接口的函数式实现。
 //
 // 允许使用函数直接实现 Actor 提供者，简化了 Actor 工厂的创建。
-type ActorProviderFN func() Actor
-
-// Provide 实现 ActorProvider 接口的 Provide 方法。
-func (fn ActorProviderFN) Provide() Actor {
-	return fn()
-}
+type ActorProviderFN = provider.FN[Actor]

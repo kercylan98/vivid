@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"fmt"
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/pkg/configurator"
 	"github.com/kercylan98/vivid/pkg/vivid/mailbox"
@@ -43,8 +44,28 @@ type (
 		DispatcherProvider  mailbox.DispatcherProvider // Actor 消息调度器提供器
 		SupervisionProvider SupervisorProvider         // Actor 监督者
 		PersistenceConfig   *PersistenceConfiguration  // 持久化配置，如果设置则启用持久化功能
+		RouterConfig        *RouterConfig              // 作为路由器的配置
 	}
 )
+
+// WithRouter 将 Actor 以路由器的模式运行。
+func (c *ActorConfiguration) WithRouter(poolSize int, selector RouterSelector) *ActorConfiguration {
+	if selector == nil {
+		panic(fmt.Errorf("no router selector"))
+	}
+	c.RouterConfig = &RouterConfig{
+		PoolSize:       poolSize,
+		RouterSelector: selector,
+	}
+	return c
+}
+
+// WithActorRouter 是 ActorConfiguration.WithRouter 的 Option 模式。
+func WithActorRouter(poolSize int, selector RouterSelector) ActorOption {
+	return func(configuration *ActorConfiguration) {
+		configuration.WithRouter(poolSize, selector)
+	}
+}
 
 // WithName 设置 Actor 的名称
 func (c *ActorConfiguration) WithName(name string) *ActorConfiguration {
