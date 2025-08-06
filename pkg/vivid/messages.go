@@ -1,6 +1,10 @@
 package vivid
 
-import "github.com/kercylan98/vivid/pkg/provider"
+import (
+	"fmt"
+	"github.com/kercylan98/vivid/pkg/provider"
+	"strings"
+)
 
 type (
 	// Message 定义了 Actor 系统中消息的通用类型。
@@ -262,6 +266,18 @@ func (m *onUnwatch) unmarshal(b []byte) {
 type OnWatchEnd struct {
 	ref    ActorRef // 被监视的 Actor
 	reason []string // 停止原因
+}
+
+func (m *OnWatchEnd) GetRef() ActorRef {
+	return m.ref
+}
+
+func (m *OnWatchEnd) GetReason() []string {
+	return m.reason
+}
+
+func (m *OnWatchEnd) String() string {
+	return fmt.Sprintf("%s watch end, reason: %s", m.ref, strings.Join(m.reason, ", "))
 }
 
 func (m *OnWatchEnd) marshal() (internalMessageId, []byte) {
