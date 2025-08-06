@@ -2,7 +2,6 @@ package vivid
 
 import (
 	"github.com/kercylan98/vivid/pkg/vivid/internal/processor"
-	"strconv"
 	"time"
 )
 
@@ -35,9 +34,11 @@ func (r *routerActor) Receive(context ActorContext) {
 	switch m := context.Message().(type) {
 	case *OnLaunch:
 		r.onLaunch(context, m)
-	case *OnKill, *OnKilled, *OnPreRestart, *OnRestart, *OnWatchEnd:
+	case *OnKill, *OnPreRestart, *OnRestart, *OnWatchEnd:
 	case *RouterMetrics: // 将路由成员指标更新进行合并
 		r.onRouterMetrics(context, m)
+	case *OnKilled:
+		r.onKilled(context, m)
 	default:
 		r.onBalance(context, m)
 	}
@@ -47,7 +48,7 @@ func (r *routerActor) onLaunch(context ActorContext, m *OnLaunch) {
 	var refs = make([]ActorRef, r.routerConfig.PoolSize)
 	for i := 0; i < r.routerConfig.PoolSize; i++ {
 		c := *r.config
-		c.Name = strconv.Itoa(i)
+		c.Name = ""
 		refs[i] = context.ActorOfP(r.provider).FromConfig(&c)
 	}
 
@@ -72,5 +73,12 @@ func (r *routerActor) onBalance(context ActorContext, m Message) {
 func (r *routerActor) onRouterMetrics(context ActorContext, m *RouterMetrics) {
 	if c, exist := r.routerTable.metrics[context.Sender()]; exist {
 		c.merge(m)
+	}
+}
+
+func (r *routerActor) onKilled(context ActorContext, m *OnKilled) {
+	r.routerTable.remove(m.ref)
+	if context.ChildNum() == 0 {
+		context.Kill(context.Ref(), "natural")
 	}
 }

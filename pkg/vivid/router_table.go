@@ -33,3 +33,13 @@ func (r *routerTable) GetMetrics(ref ActorRef) (metrics RouterMetrics) {
 	}
 	return
 }
+
+func (r *routerTable) remove(ref ActorRef) {
+	for i, actorRef := range r.refs {
+		if actorRef.String() == ref.String() {
+			delete(r.metrics, actorRef)
+			r.refs = append(r.refs[:i], r.refs[i+1:]...)
+			return
+		}
+	}
+}
