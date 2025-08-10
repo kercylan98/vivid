@@ -1,10 +1,11 @@
 package vivid_test
 
 import (
-	"github.com/kercylan98/go-log/log"
-	"github.com/kercylan98/vivid/pkg/vivid"
 	"sync"
 	"testing"
+
+	"github.com/kercylan98/go-log/log"
+	"github.com/kercylan98/vivid/pkg/vivid"
 )
 
 type TestActorSystem struct {

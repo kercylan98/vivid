@@ -1,14 +1,15 @@
 package processor
 
 import (
-	"github.com/kercylan98/go-log/log"
-	"github.com/kercylan98/vivid/pkg/queues"
-	"github.com/kercylan98/vivid/pkg/serializer"
-	"github.com/kercylan98/vivid/pkg/vivid/processor"
 	"math"
 	"math/rand/v2"
 	"sync/atomic"
 	"time"
+
+	"github.com/kercylan98/go-log/log"
+	"github.com/kercylan98/vivid/pkg/queues"
+	"github.com/kercylan98/vivid/pkg/serializer"
+	"github.com/kercylan98/vivid/pkg/vivid/processor"
 )
 
 const (
