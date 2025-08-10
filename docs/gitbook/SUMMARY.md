@@ -2,10 +2,10 @@
 
 * [Welcome](README.md)
 
-## Getting Started
+## 入门
 
-* [Quickstart](getting-started/quickstart.md)
-* [Publish your docs](getting-started/publish-your-docs.md)
+* [快速开始](getting-started/quickstart.md)
+<!-- * [Publish your docs](getting-started/publish-your-docs.md)
 
 ## Basics
 
@@ -13,4 +13,4 @@
 * [Markdown](basics/markdown.md)
 * [Images & media](basics/images-and-media.md)
 * [Interactive blocks](basics/interactive-blocks.md)
-* [Integrations](basics/integrations.md)
+* [Integrations](basics/integrations.md) -->

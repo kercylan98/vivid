@@ -2,20 +2,13 @@ package vivid
 
 import (
 	"fmt"
+
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/pkg/configurator"
 	"github.com/kercylan98/vivid/pkg/vivid/mailbox"
 )
 
-// NewActorConfiguration 创建新的Actor配置实例
-//
-// 支持通过选项模式进行配置，提供灵活的配置方式。
-//
-// 参数:
-//   - options: 可变数量的配置选项
-//
-// 返回:
-//   - *ActorConfiguration: 配置实例
+// NewActorConfiguration return a new ActorConfiguration instance with options.
 func NewActorConfiguration(options ...ActorOption) *ActorConfiguration {
 	c := &ActorConfiguration{}
 	for _, option := range options {
