@@ -1,10 +1,11 @@
 # Table of contents
 
-* [Welcome](README.md)
+* [介绍](README.md)
+* [设计哲学](design-philosophy.md)
 
-## 入门
+<!-- ## 入门 -->
 
-* [快速开始](getting-started/quickstart.md)
+<!-- * [快速开始](getting-started/quickstart.md) -->
 <!-- * [Publish your docs](getting-started/publish-your-docs.md)
 
 ## Basics
