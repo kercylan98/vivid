@@ -592,7 +592,7 @@ func (ctx *actorContext) executeSupervisorDirective(directive SupervisorDirectiv
 	case DirectiveResume:
 		ctx.mailbox.Resume()
 	case DirectiveRestart:
-		ctx.systemTell(ctx.ref, &OnPreRestart{})
+		ctx.systemTell(ctx.ref, onPreRestartInstance)
 	case DirectiveEscalate:
 		ctx.systemTell(ctx.parent, ctx.fatal)
 	}
@@ -623,7 +623,7 @@ func (ctx *actorContext) tryRestart() {
 
 	// 投递 OnRestart 消息
 	ctx.restarting = false
-	ctx.systemTell(ctx.ref, &OnRestart{})
+	ctx.systemTell(ctx.ref, onRestartInstance)
 }
 
 func (ctx *actorContext) onRestart() {
@@ -702,11 +702,11 @@ func (ctx *actorContext) onLaunch(_ *OnLaunch) {
 }
 
 func (ctx *actorContext) Watch(target ActorRef) {
-	ctx.systemProbe(target, &onWatch{})
+	ctx.systemProbe(target, onWatchInstance)
 }
 
 func (ctx *actorContext) Unwatch(target ActorRef) {
-	ctx.systemProbe(target, &onUnwatch{})
+	ctx.systemProbe(target, onUnwatchInstance)
 }
 
 func (ctx *actorContext) onWatch(_ *onWatch) {

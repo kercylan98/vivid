@@ -31,12 +31,12 @@ const (
 
 var (
 	internalMessageProviders = map[internalMessageId]provider.Provider[internalMessage]{
-		onLaunchMessageId:     provider.FN[internalMessage](func() internalMessage { return new(OnLaunch) }),
+		onLaunchMessageId:     provider.FN[internalMessage](func() internalMessage { return onLaunchInstance }), // 该消息目前不拥有任何数据，因此可以复用同一个实例
 		onKillMessageId:       provider.FN[internalMessage](func() internalMessage { return new(OnKill) }),
-		onPreRestartMessageId: provider.FN[internalMessage](func() internalMessage { return new(OnPreRestart) }),
-		onRestartMessageId:    provider.FN[internalMessage](func() internalMessage { return new(OnRestart) }),
-		onWatchMessageId:      provider.FN[internalMessage](func() internalMessage { return new(onWatch) }),
-		onUnwatchMessageId:    provider.FN[internalMessage](func() internalMessage { return new(onUnwatch) }),
+		onPreRestartMessageId: provider.FN[internalMessage](func() internalMessage { return onPreRestartInstance }), // 该消息目前不拥有任何数据，因此可以复用同一个实例
+		onRestartMessageId:    provider.FN[internalMessage](func() internalMessage { return onRestartInstance }),    // 该消息目前不拥有任何数据，因此可以复用同一个实例
+		onWatchMessageId:      provider.FN[internalMessage](func() internalMessage { return onWatchInstance }),      // 该消息目前不拥有任何数据，因此可以复用同一个实例
+		onUnwatchMessageId:    provider.FN[internalMessage](func() internalMessage { return onUnwatchInstance }),    // 该消息目前不拥有任何数据，因此可以复用同一个实例
 		onWatchEndMessageId:   provider.FN[internalMessage](func() internalMessage { return new(OnWatchEnd) }),
 	}
 )
@@ -49,7 +49,11 @@ func provideInternalMessageInstance(id internalMessageId) internalMessage {
 }
 
 var (
-	onLaunchInstance = &OnLaunch{}
+	onLaunchInstance     = &OnLaunch{}
+	onPreRestartInstance = &OnPreRestart{}
+	onRestartInstance    = &OnRestart{}
+	onWatchInstance      = &onWatch{}
+	onUnwatchInstance    = &onUnwatch{}
 )
 
 // OnLaunch 表示 Actor 启动消息。
@@ -115,11 +119,13 @@ func (m *OnKill) unmarshal(b []byte) {
 		})
 }
 
-// IsPoison 返回是否为优雅停止。
-//
-// 返回值：
-//   - true: 优雅停止，Actor 会等待当前消息处理完成后停止
-//   - false: 强制停止，Actor 会立即停止
+// Operator 返回发起停止操作的 Actor。
+func (m *OnKill) Operator() ActorRef {
+	return m.operator
+}
+
+// IsPoison 检查 Actor 的停止是否优雅。
+// 在优雅停止时，Actor 会等待当前消息处理完成后停止。
 func (m *OnKill) IsPoison() bool {
 	return m.poison
 }
@@ -127,6 +133,11 @@ func (m *OnKill) IsPoison() bool {
 // Reason 返回停止的原因说明。
 func (m *OnKill) Reason() []string {
 	return m.reason
+}
+
+// String 返回 OnKill 消息的字符串表示。
+func (m *OnKill) String() string {
+	return fmt.Sprintf("OnKill{operator: %s, poison: %t, reason: %s}", m.operator, m.poison, strings.Join(m.reason, ", "))
 }
 
 // OnKilled 表示 Actor 已终止的通知消息。
@@ -189,7 +200,8 @@ func (m *OnKilled) Ref() ActorRef {
 	return m.ref
 }
 
-// IsPoison 返回是否为优雅停止。
+// IsPoison 检查 Actor 的停止是否优雅。
+// 在优雅停止时，Actor 会等待当前消息处理完成后停止。
 func (m *OnKilled) IsPoison() bool {
 	return m.poison
 }
@@ -197,6 +209,11 @@ func (m *OnKilled) IsPoison() bool {
 // Reason 返回停止的原因说明。
 func (m *OnKilled) Reason() []string {
 	return m.reason
+}
+
+// String 返回 OnKilled 消息的字符串表示。
+func (m *OnKilled) String() string {
+	return fmt.Sprintf("OnKilled{operator: %s, ref: %s, poison: %t, reason: %s}", m.operator, m.ref, m.poison, strings.Join(m.reason, ", "))
 }
 
 // OnPreRestart 表示 Actor 重启前的准备消息。
