@@ -1,5 +1,4 @@
 ---
-icon: hand-wave
 layout:
   width: default
   title:
@@ -16,7 +15,7 @@ layout:
     visible: true
 ---
 
-# 设计哲学
+# 🏦 设计哲学
 
 Vivid 皆在于提供一个健壮且高效，简洁又灵活的分布式系统开发框架。遵循​​最小抽象原则​​与​​显式优于隐式​​的理念以降低开发者心智负担。
 
