@@ -1,8 +1,9 @@
 package vivid
 
 import (
-	"github.com/kercylan98/vivid/pkg/vivid/internal/processor"
 	"time"
+
+	"github.com/kercylan98/vivid/pkg/vivid/internal/processor"
 )
 
 type RouterConfig struct {
@@ -73,6 +74,8 @@ func (r *routerActor) onBalance(context ActorContext, m Message) {
 func (r *routerActor) onRouterMetrics(context ActorContext, m *RouterMetrics) {
 	if c, exist := r.routerTable.metrics[context.Sender()]; exist {
 		c.merge(m)
+		m.reset()
+		metricsPool.Put(m)
 	}
 }
 

@@ -2,15 +2,16 @@ package vivid
 
 import (
 	"fmt"
+	"runtime/debug"
+	"sync/atomic"
+	"time"
+
 	"github.com/kercylan98/vivid/pkg/vivid/future"
 	"github.com/kercylan98/vivid/pkg/vivid/internal/builtinfuture"
 	"github.com/kercylan98/vivid/pkg/vivid/internal/builtinmailbox"
 	"github.com/kercylan98/vivid/pkg/vivid/internal/processor"
 	"github.com/kercylan98/vivid/pkg/vivid/mailbox"
 	"golang.org/x/exp/maps"
-	"runtime/debug"
-	"sync/atomic"
-	"time"
 
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/pkg/queues"
@@ -252,12 +253,12 @@ type actorContext struct {
 	actor          Actor               // Actor 实例。
 	sender         ActorRef            // 当前正在处理的消息的发送者。
 	message        Message             // 当前正在处理的消息。
-	state          uint32              // Actor 状态。
 	killedInfo     *OnKilled           // 记录终止 Actor 的信息
 	fatal          *Fatal              // 当前致命错误信息
-	restarting     bool                // Actor 是否正在重启中。
 	persistenceCtx PersistenceContext  // 缓存的持久化上下文
 	watches        map[string]ActorRef // 监视的 Actor 引用
+	restarting     bool                // Actor 是否正在重启中。
+	state          uint32              // Actor 状态。
 }
 
 func (ctx *actorContext) OnSystemMessage(message any) {
@@ -692,7 +693,7 @@ func (ctx *actorContext) onSafeReceive() (recovered bool) {
 	})
 }
 
-func (ctx *actorContext) onLaunch(msg *OnLaunch) {
+func (ctx *actorContext) onLaunch(_ *OnLaunch) {
 	if !ctx.onSafeReceive() {
 		// 致命状态恢复、邮箱恢复
 		ctx.fatal = nil

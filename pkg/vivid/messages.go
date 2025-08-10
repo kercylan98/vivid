@@ -2,8 +2,9 @@ package vivid
 
 import (
 	"fmt"
-	"github.com/kercylan98/vivid/pkg/provider"
 	"strings"
+
+	"github.com/kercylan98/vivid/pkg/provider"
 )
 
 type (
@@ -61,9 +62,7 @@ func (m *OnLaunch) marshal() (internalMessageId, []byte) {
 	return onLaunchMessageId, nil
 }
 
-func (m *OnLaunch) unmarshal(b []byte) {
-	return
-}
+func (m *OnLaunch) unmarshal(b []byte) {}
 
 // OnKill 表示 Actor 终止消息。
 //
@@ -213,9 +212,7 @@ func (m *OnPreRestart) marshal() (internalMessageId, []byte) {
 	return onPreRestartMessageId, nil
 }
 
-func (m *OnPreRestart) unmarshal(b []byte) {
-	return
-}
+func (m *OnPreRestart) unmarshal(b []byte) {}
 
 // OnRestart 表示 Actor 重启消息。
 //
@@ -230,9 +227,7 @@ func (m *OnRestart) marshal() (internalMessageId, []byte) {
 	return onRestartMessageId, nil
 }
 
-func (m *OnRestart) unmarshal(b []byte) {
-	return
-}
+func (m *OnRestart) unmarshal(b []byte) {}
 
 // onWatch 表示 Actor 开始被监视的消息。
 //
@@ -244,9 +239,7 @@ func (m *onWatch) marshal() (internalMessageId, []byte) {
 	return onWatchMessageId, nil
 }
 
-func (m *onWatch) unmarshal(b []byte) {
-	return
-}
+func (m *onWatch) unmarshal(b []byte) {}
 
 // onUnwatch 表示 Actor 停止被监视的消息。
 type onUnwatch struct{}
@@ -255,9 +248,7 @@ func (m *onUnwatch) marshal() (internalMessageId, []byte) {
 	return onUnwatchMessageId, nil
 }
 
-func (m *onUnwatch) unmarshal(b []byte) {
-	return
-}
+func (m *onUnwatch) unmarshal(b []byte) {}
 
 // OnWatchEnd 表示 Actor 生命周期停止的消息。
 //
