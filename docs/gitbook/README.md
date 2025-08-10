@@ -32,6 +32,16 @@ Vivid 是一款基于 Go 语言实现的​​高可扩展、协议无关的分�
 
 Vivid 深度践行函数式编程范式，大量使用选项模式（Option Pattern）与配置器（Configurator）实现灵活的运行时配置。为复杂场景提供灵活的配置能力。
 
+## 要求
+
+Vivid 依赖于 Go 1.24+ 版本，支持 Linux、Windows、MacOS 平台。
+
+## 安装
+
+```bash
+go get github.com/kercylan98/vivid
+```
+
 
 <!-- 
 ### Jump right in
