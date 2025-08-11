@@ -30,7 +30,6 @@ Vivid 是一款基于 Go 语言实现的​​高可扩展、协议无关的分�
 > 消息投递完全兼容本地与远程调用。开发者无需修改业务代码，即可实现本地 Actor 与跨网络 Actor 的无缝交互。
 
 Vivid 深度践行函数式编程范式，大量使用选项模式（Option Pattern）与配置器（Configurator）实现灵活的运行时配置。为复杂场景提供灵活的配置能力。
-<<<<<<< HEAD
 
 ## 要求
 
@@ -47,5 +46,3 @@ go get github.com/kercylan98/vivid
 ### Jump right in
 
 <table data-view="cards"><thead><tr><th></th><th></th><th></th><th data-hidden data-card-cover data-type="files"></th><th data-hidden></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><h4><i class="fa-bolt">:bolt:</i></h4></td><td><strong>Quickstart</strong></td><td>Create your first site</td><td></td><td></td><td><a href="getting-started/quickstart.md">quickstart.md</a></td></tr><tr><td><h4><i class="fa-leaf">:leaf:</i></h4></td><td><strong>Editor basics</strong></td><td>Learn the basics of GitBook</td><td></td><td></td><td><a href="https://github.com/GitbookIO/gitbook-templates/blob/main/product-docs/broken-reference/README.md">https://github.com/GitbookIO/gitbook-templates/blob/main/product-docs/broken-reference/README.md</a></td></tr><tr><td><h4><i class="fa-globe-pointer">:globe-pointer:</i></h4></td><td><strong>Publish your docs</strong></td><td>Share your docs online</td><td></td><td></td><td><a href="getting-started/publish-your-docs.md">publish-your-docs.md</a></td></tr></tbody></table> -->
-=======
->>>>>>> d0923eed2a01788ebb58cb757a7ca07db5c7e2ef
