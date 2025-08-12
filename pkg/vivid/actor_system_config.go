@@ -1,10 +1,11 @@
 package vivid
 
 import (
+	"time"
+
 	"github.com/kercylan98/vivid/pkg/provider"
 	"github.com/kercylan98/vivid/pkg/serializer"
 	"github.com/kercylan98/vivid/pkg/vivid/processor"
-	"time"
 
 	"github.com/kercylan98/go-log/log"
 	"github.com/kercylan98/vivid/pkg/configurator"
@@ -32,6 +33,7 @@ func NewActorSystemConfiguration(options ...ActorSystemOption) *ActorSystemConfi
 				})
 		})),
 		FutureDefaultTimeout: time.Second,
+		HTW:                  *DefaultHtwConfig(),
 	}
 	for _, option := range options {
 		option(c)
@@ -67,6 +69,7 @@ type (
 		Hooks                []Hook
 		Metrics              bool // 是否启用指标采集
 		Network              ActorSystemNetworkConfiguration
+		HTW                  HtwConfig
 	}
 
 	ActorSystemNetworkConfigurator   = configurator.Configurator[*ActorSystemNetworkConfiguration]
@@ -83,6 +86,17 @@ type (
 		SerializerProvider provider.Provider[serializer.NameSerializer]
 	}
 )
+
+func (c *ActorSystemConfiguration) WithHTW(htw HtwConfig) *ActorSystemConfiguration {
+	c.HTW = htw
+	return c
+}
+
+func WithActorSystemHTW(htw HtwConfig) ActorSystemOption {
+	return func(c *ActorSystemConfiguration) {
+		c.WithHTW(htw)
+	}
+}
 
 func (c *ActorSystemNetworkConfiguration) WithSerializerProvider(provider provider.Provider[serializer.NameSerializer]) *ActorSystemNetworkConfiguration {
 	c.SerializerProvider = provider

@@ -192,6 +192,16 @@ type ActorContext interface {
 
 	// Children 获取子 Actor 引用
 	Children() []ActorRef
+
+	// ---- 调度 API（内置层级时间轮） ----
+	// ScheduleOnce 调度一次性任务（同名覆盖）
+	ScheduleOnce(name string, delay time.Duration, to ActorRef, payload Message)
+	// ScheduleInterval 调度周期任务（同名覆盖）
+	ScheduleInterval(name string, initialDelay, period time.Duration, to ActorRef, payload Message)
+	// ScheduleCron 基于 Cron 表达式调度（同名覆盖）
+	ScheduleCron(name string, spec string, to ActorRef, payload Message)
+	// CancelSchedule 取消任务
+	CancelSchedule(name string)
 }
 
 func newActorContext(system *actorSystem, ref, parent ActorRef, provider ActorProvider, config *ActorConfiguration) *actorContext {
@@ -321,6 +331,23 @@ func (ctx *actorContext) ChildNum() int {
 
 func (ctx *actorContext) Children() []ActorRef {
 	return maps.Values(ctx.children)
+}
+
+// ---- 调度 API 实现 ----
+func (ctx *actorContext) ScheduleOnce(name string, delay time.Duration, to ActorRef, payload Message) {
+	ctx.Tell(ctx.system.htwRef, &scheduleOnce{Name: name, Delay: delay, To: to, Payload: payload})
+}
+
+func (ctx *actorContext) ScheduleInterval(name string, initialDelay, period time.Duration, to ActorRef, payload Message) {
+	ctx.Tell(ctx.system.htwRef, &scheduleInterval{Name: name, InitialDelay: initialDelay, Period: period, To: to, Payload: payload})
+}
+
+func (ctx *actorContext) ScheduleCron(name string, spec string, to ActorRef, payload Message) {
+	ctx.Tell(ctx.system.htwRef, &scheduleCron{Name: name, Spec: spec, To: to, Payload: payload})
+}
+
+func (ctx *actorContext) CancelSchedule(name string) {
+	ctx.Tell(ctx.system.htwRef, &cancelSchedule{Name: name})
 }
 
 func (ctx *actorContext) HandleUserMessage(_ processor.UnitIdentifier, message any) {

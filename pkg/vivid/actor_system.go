@@ -110,6 +110,9 @@ func NewActorSystemFromConfig(config *ActorSystemConfiguration) ActorSystem {
 	bindActorContext(sys, nil, ctx)
 	sys.actorContext = ctx
 
+	// 启动层级时间轮（系统负责生命周期）
+	sys.htwRef = ctx.SpawnOf(ActorProviderFN(func() Actor { return newHtwActor(config.HTW) }))
+
 	if rpc {
 		if err := sys.registry.StartRPCServer(); err != nil {
 			panic(err)
@@ -159,6 +162,7 @@ type actorSystem struct {
 	shutdownWG sync.WaitGroup
 	hooks      *hookRegister
 	metrics    *actorSystemMetrics
+	htwRef     ActorRef
 }
 
 func (sys *actorSystem) Logger() log.Logger {
