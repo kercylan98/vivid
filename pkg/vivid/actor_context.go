@@ -570,6 +570,9 @@ func (ctx *actorContext) tryConvertStateToStopping() {
 		return
 	}
 
+	// 停止调度器
+	ctx.CancelSchedule(watchHeartbeatScheduleName)
+
 	// 重启状态中
 	if ctx.restarting {
 		ctx.tryRestart()
