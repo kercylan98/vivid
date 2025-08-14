@@ -29,6 +29,10 @@ const (
 	actorStateStopped
 )
 
+const (
+	watchHeartbeatScheduleName = "watch-heartbeat"
+)
+
 // SystemContext 定义了 Actor 系统中通用上下文，它们是 Actor 系统和 Actor 共有的上下文。
 type SystemContext interface {
 	// Logger 返回当前 Actor 关联的日志记录器。
@@ -128,7 +132,10 @@ type SystemContext interface {
 	//   - timeout: 可选的超时时间，如果不指定则使用系统默认值
 	//
 	// 返回一个 Future 对象，可以用来获取响应结果。
-	Ask(target ActorRef, message Message, timeout ...time.Duration) future.Future
+	Ask(target ActorRef, message Message, timeout ...time.Duration) future.Future[Message]
+
+	// Ping 向目标 Actor 发送心跳消息以确认连接状态。
+	Ping(target ActorRef) future.Future[*Pong]
 }
 
 // ActorContext 定义了 Actor 运行时上下文的接口。
@@ -252,23 +259,24 @@ func newActorContext(system *actorSystem, ref, parent ActorRef, provider ActorPr
 }
 
 type actorContext struct {
-	system         *actorSystem        // ActorContext 所属的 ActorSystem。
-	config         ActorConfiguration  // ActorContext 的配置。
-	provider       ActorProvider       // ActorContext 的 ActorProvider。
-	parent         ActorRef            // ActorContext 的父 Actor 引用，顶级 Actor 为 nil。
-	ref            ActorRef            // ActorContext 自身的引用。
-	mailbox        mailbox.Mailbox     // ActorContext 的邮箱。
-	childGuid      atomic.Int64        // ActorContext 的子 Actor GUID，用于生成子 Actor 引用。
-	children       map[string]ActorRef // ActorContext 的子 Actor 引用映射。
-	actor          Actor               // Actor 实例。
-	sender         ActorRef            // 当前正在处理的消息的发送者。
-	message        Message             // 当前正在处理的消息。
-	killedInfo     *OnKilled           // 记录终止 Actor 的信息
-	fatal          *Fatal              // 当前致命错误信息
-	persistenceCtx PersistenceContext  // 缓存的持久化上下文
-	watches        map[string]ActorRef // 监视的 Actor 引用
-	restarting     bool                // Actor 是否正在重启中。
-	state          uint32              // Actor 状态。
+	system         *actorSystem          // ActorContext 所属的 ActorSystem。
+	config         ActorConfiguration    // ActorContext 的配置。
+	provider       ActorProvider         // ActorContext 的 ActorProvider。
+	parent         ActorRef              // ActorContext 的父 Actor 引用，顶级 Actor 为 nil。
+	ref            ActorRef              // ActorContext 自身的引用。
+	mailbox        mailbox.Mailbox       // ActorContext 的邮箱。
+	childGuid      atomic.Int64          // ActorContext 的子 Actor GUID，用于生成子 Actor 引用。
+	children       map[string]ActorRef   // ActorContext 的子 Actor 引用映射。
+	actor          Actor                 // Actor 实例。
+	sender         ActorRef              // 当前正在处理的消息的发送者。
+	message        Message               // 当前正在处理的消息。
+	killedInfo     *OnKilled             // 记录终止 Actor 的信息
+	fatal          *Fatal                // 当前致命错误信息
+	persistenceCtx PersistenceContext    // 缓存的持久化上下文
+	watches        map[string]ActorRef   // 正在监视此 Actor 的 Actor 引用
+	watching       map[string]*watchInfo // 此 Actor 正在监视的 Actor 引用
+	restarting     bool                  // Actor 是否正在重启中。
+	state          uint32                // Actor 状态。
 }
 
 func (ctx *actorContext) OnSystemMessage(message any) {
@@ -316,6 +324,10 @@ func (ctx *actorContext) OnUserMessage(message any) {
 		ctx.onKill(msg)
 	case *taskContext:
 		msg.handle()
+	case *onPing:
+		ctx.onPing(msg)
+	case *onWatchPingTick:
+		ctx.onWatchPingTick()
 	default:
 		ctx.onSafeReceive()
 	}
@@ -397,14 +409,26 @@ func (ctx *actorContext) PoisonKill(target ActorRef, reason ...string) {
 	ctx.Tell(target, newOnKill(ctx.ref, true, reason))
 }
 
-func (ctx *actorContext) Ask(target ActorRef, message Message, timeout ...time.Duration) future.Future {
+func (ctx *actorContext) Ask(target ActorRef, message Message, timeout ...time.Duration) future.Future[Message] {
+	return genericAsk[Message](ctx, target, message, timeout...)
+}
+
+func (ctx *actorContext) Ping(target ActorRef) future.Future[*Pong] {
+	return genericAsk[*Pong](ctx, target, &onPing{sendAt: time.Now()})
+}
+
+func (ctx *actorContext) onPing(msg *onPing) {
+	ctx.Reply(&Pong{sendAt: msg.sendAt, recvAt: time.Now()})
+}
+
+func genericAsk[T Message](ctx *actorContext, target ActorRef, message Message, timeout ...time.Duration) future.Future[T] {
 	t := ctx.system.config.FutureDefaultTimeout
 	if len(timeout) > 0 {
 		t = timeout[0]
 	}
 
 	ref := ctx.Ref().Branch(fmt.Sprintf("future-%d", ctx.childGuid.Add(1)))
-	f := builtinfuture.New(ctx.system.registry, ref, t)
+	f := builtinfuture.New[T](ctx.system.registry, ref, t)
 	unit, err := ctx.system.registry.GetUnit(target)
 	if err != nil {
 		ctx.Logger().Error("Ask", log.Err(err))
@@ -728,12 +752,60 @@ func (ctx *actorContext) onLaunch(_ *OnLaunch) {
 	}
 }
 
+func (ctx *actorContext) onWatchPingTick() {
+	type F2R struct {
+		future future.Future[*Pong]
+		target *watchInfo
+	}
+	var futures = make([]*F2R, 0, len(ctx.watching))
+	for _, target := range ctx.watching {
+		futures = append(futures, &F2R{future: ctx.Ping(target.ref), target: target})
+	}
+
+	// 等待所有心跳响应
+	for _, f2r := range futures {
+		if _, err := f2r.future.Result(); err != nil {
+			ctx.Logger().Warn("watch heartbeat", log.String("target", f2r.target.ref.String()), log.Err(err))
+			f2r.target.recordError(err)
+			if len(f2r.target.getErrors()) < 3 {
+				continue
+			}
+
+			err = f2r.target.getError()
+			ctx.Logger().Error("watch heartbeat", log.String("target", f2r.target.ref.String()), log.Err(err))
+
+			// 伪装监视结束
+			ctx.Unwatch(f2r.target.ref)
+			ctx.Reply(&OnWatchEnd{
+				ref:    f2r.target.ref,
+				reason: []string{err.Error()},
+			})
+		}
+	}
+
+}
+
 func (ctx *actorContext) Watch(target ActorRef) {
 	ctx.systemProbe(target, onWatchInstance)
+
+	// 记录观察的对象并持续保持心跳
+	if ctx.watching == nil {
+		ctx.watching = make(map[string]*watchInfo)
+	}
+	ctx.watching[target.String()] = newWatchInfo(target)
+
+	if len(ctx.watching) == 1 {
+		ctx.ScheduleInterval(watchHeartbeatScheduleName, 1*time.Second, 1*time.Second, ctx.ref, onWatchPingTickInstance)
+	}
 }
 
 func (ctx *actorContext) Unwatch(target ActorRef) {
 	ctx.systemProbe(target, onUnwatchInstance)
+
+	delete(ctx.watching, target.String())
+	if len(ctx.watching) == 0 {
+		ctx.CancelSchedule(watchHeartbeatScheduleName)
+	}
 }
 
 func (ctx *actorContext) onWatch(_ *onWatch) {

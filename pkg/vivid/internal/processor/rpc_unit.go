@@ -71,8 +71,8 @@ func (r *rpcUnit) HandleSystemMessage(sender UnitIdentifier, message any) {
 	r.handleMessage(sender, true, message)
 }
 
-func (r *rpcUnit) handleMessage(sender UnitIdentifier, system bool, message any) {
-	sender, message = UnwrapMessage(message)
+func (r *rpcUnit) handleMessage(_ UnitIdentifier, system bool, message any) {
+	sender, message := UnwrapMessage(message)
 	typ, data, err := r.serializer.Serialize(message)
 	if err != nil {
 		r.Logger().Error("serialize", log.Err(err))

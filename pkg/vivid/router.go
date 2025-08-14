@@ -45,7 +45,7 @@ func (r *routerActor) Receive(context ActorContext) {
 	}
 }
 
-func (r *routerActor) onLaunch(context ActorContext, m *OnLaunch) {
+func (r *routerActor) onLaunch(context ActorContext, _ *OnLaunch) {
 	var refs = make([]ActorRef, r.routerConfig.PoolSize)
 	for i := 0; i < r.routerConfig.PoolSize; i++ {
 		c := *r.config

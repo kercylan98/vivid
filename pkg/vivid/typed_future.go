@@ -2,8 +2,9 @@ package vivid
 
 import (
 	"fmt"
-	"github.com/kercylan98/vivid/pkg/vivid/future"
 	"time"
+
+	"github.com/kercylan98/vivid/pkg/vivid/future"
 )
 
 func TypedAsk[T Message](context ActorContext, target ActorRef, message Message, timeout ...time.Duration) *TypedFuture[T] {
@@ -11,7 +12,7 @@ func TypedAsk[T Message](context ActorContext, target ActorRef, message Message,
 }
 
 type TypedFuture[T Message] struct {
-	future.Future
+	future.Future[Message]
 }
 
 func (t *TypedFuture[T]) Result() (v T, err error) {

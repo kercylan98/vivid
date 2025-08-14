@@ -1,8 +1,9 @@
 package vivid
 
 import (
-	"github.com/kercylan98/vivid/pkg/vivid/metrics"
 	"time"
+
+	"github.com/kercylan98/vivid/pkg/vivid/metrics"
 )
 
 // 指标名称常量
@@ -97,10 +98,6 @@ var (
 
 	timeoutBucketProvider = metrics.HistogramBucketProviderFN(func() []metrics.Bucket {
 		return metrics.ExponentialBuckets(0.001, 2, 15) // 1ms到32s的指数分布桶
-	})
-
-	sizeBucketProvider = metrics.HistogramBucketProviderFN(func() []metrics.Bucket {
-		return metrics.ExponentialBuckets(1, 2, 20) // 1B到1MB的指数分布桶
 	})
 
 	gcPauseBucketProvider = metrics.HistogramBucketProviderFN(func() []metrics.Bucket {

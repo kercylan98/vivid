@@ -3,6 +3,7 @@ package vivid
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/kercylan98/vivid/pkg/provider"
 )
@@ -17,6 +18,7 @@ type (
 		marshal() (internalMessageId, []byte)
 		unmarshal(b []byte)
 	}
+	onWatchPingTick struct{}
 )
 
 const (
@@ -27,6 +29,8 @@ const (
 	onWatchMessageId      internalMessageId = "watch"
 	onUnwatchMessageId    internalMessageId = "unwatch"
 	onWatchEndMessageId   internalMessageId = "watch_end"
+	onPingMessageId       internalMessageId = "ping"
+	onPongMessageId       internalMessageId = "pong"
 )
 
 var (
@@ -38,6 +42,8 @@ var (
 		onWatchMessageId:      provider.FN[internalMessage](func() internalMessage { return onWatchInstance }),      // 该消息目前不拥有任何数据，因此可以复用同一个实例
 		onUnwatchMessageId:    provider.FN[internalMessage](func() internalMessage { return onUnwatchInstance }),    // 该消息目前不拥有任何数据，因此可以复用同一个实例
 		onWatchEndMessageId:   provider.FN[internalMessage](func() internalMessage { return new(OnWatchEnd) }),
+		onPingMessageId:       provider.FN[internalMessage](func() internalMessage { return new(onPing) }),
+		onPongMessageId:       provider.FN[internalMessage](func() internalMessage { return new(Pong) }),
 	}
 )
 
@@ -49,12 +55,72 @@ func provideInternalMessageInstance(id internalMessageId) internalMessage {
 }
 
 var (
-	onLaunchInstance     = &OnLaunch{}
-	onPreRestartInstance = &OnPreRestart{}
-	onRestartInstance    = &OnRestart{}
-	onWatchInstance      = &onWatch{}
-	onUnwatchInstance    = &onUnwatch{}
+	onLaunchInstance        = &OnLaunch{}
+	onPreRestartInstance    = &OnPreRestart{}
+	onRestartInstance       = &OnRestart{}
+	onWatchInstance         = &onWatch{}
+	onUnwatchInstance       = &onUnwatch{}
+	onWatchPingTickInstance = &onWatchPingTick{}
 )
+
+// onPing 表示 Actor 心跳消息。
+type onPing struct {
+	sendAt time.Time // 心跳发送时间
+}
+
+func (m *onPing) marshal() (internalMessageId, []byte) {
+	return onPingMessageId, newWriterCapacity(32).
+		writeInt64(m.sendAt.UnixMilli()).
+		bytes()
+}
+
+func (m *onPing) unmarshal(b []byte) {
+	var t int64
+	newReader(b).
+		readInt64To(&t)
+	m.sendAt = time.UnixMilli(t)
+}
+
+// Pong 表示心跳消息的响应。
+type Pong struct {
+	sendAt time.Time // 心跳发送时间
+	recvAt time.Time // 心跳接收时间
+}
+
+// SendAt 返回心跳发送时间。
+func (m *Pong) SendAt() time.Time { return m.sendAt }
+
+// RecvAt 返回心跳接收时间。
+func (m *Pong) RecvAt() time.Time { return m.recvAt }
+
+// Duration 返回心跳消息的持续时间。
+func (m *Pong) Duration() time.Duration { return m.recvAt.Sub(m.sendAt) }
+
+// String 返回 Pong 消息的字符串表示。
+func (m *Pong) String() string {
+	return fmt.Sprintf("Pong{sendAt: %s, recvAt: %s}", m.sendAt, m.recvAt)
+}
+
+func (m *Pong) marshal() (internalMessageId, []byte) {
+	return onPongMessageId, newWriterCapacity(32).
+		writeInt64(m.sendAt.UnixMilli()).
+		writeInt64(m.recvAt.UnixMilli()).
+		bytes()
+}
+
+func (m *Pong) unmarshal(b []byte) {
+	var (
+		sendAt int64
+		recvAt int64
+	)
+	newReader(b).
+		readInt64To(&sendAt).
+		readInt64To(&recvAt).
+		readWith(func(r *reader) {
+			m.sendAt = time.UnixMilli(sendAt)
+			m.recvAt = time.UnixMilli(recvAt)
+		})
+}
 
 // OnLaunch 表示 Actor 启动消息。
 //

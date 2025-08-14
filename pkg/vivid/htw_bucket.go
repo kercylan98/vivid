@@ -36,13 +36,3 @@ func (b *htwBucket) flush() []*timerTask {
 	b.timers.Init()
 	return tasks
 }
-
-// size 返回桶中任务数量（Actor 单线程上下文，无需加锁）
-func (b *htwBucket) size() int {
-	return b.timers.Len()
-}
-
-// isEmpty 检查桶是否为空（Actor 单线程上下文，无需加锁）
-func (b *htwBucket) isEmpty() bool {
-	return b.size() == 0
-}
