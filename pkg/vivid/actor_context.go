@@ -779,7 +779,7 @@ func (ctx *actorContext) onWatchPingTick() {
 
 			// 伪装监视结束
 			ctx.Unwatch(f2r.target.ref)
-			ctx.Reply(&OnWatchEnd{
+			ctx.Tell(ctx.Ref(), &OnWatchEnd{
 				ref:    f2r.target.ref,
 				reason: []string{err.Error()},
 			})

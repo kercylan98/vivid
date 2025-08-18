@@ -1,9 +1,10 @@
 package vivid_test
 
 import (
-	"github.com/kercylan98/vivid/pkg/vivid"
 	"sync/atomic"
 	"testing"
+
+	"github.com/kercylan98/vivid/pkg/vivid"
 )
 
 func TestActorContext_AttachTask(t *testing.T) {
