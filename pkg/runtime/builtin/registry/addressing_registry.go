@@ -1,8 +1,6 @@
 package registry
 
 import (
-	"fmt"
-
 	"github.com/kercylan98/vivid/pkg/runtime"
 	"github.com/puzpuzpuz/xsync/v3"
 )
@@ -30,15 +28,28 @@ func NewAddressingRegistryFromConfig(config *AddressingRegistryConfiguration) ru
 		panic(err)
 	}
 
-	return &AddressingRegistry{
-		config:    *config,
-		processes: xsync.NewMapOf[string, runtime.Process](),
+	// 初始化连接池配置
+	connectionPool := newConnectionPool(config.ServerConfig.AdvertiseAddress, config.ServerConfig.ConnectionPoolConfig)
+
+	registry := &AddressingRegistry{
+		config:         *config,
+		processes:      xsync.NewMapOf[string, runtime.Process](),
+		connectionPool: connectionPool,
+		closeCh:        make(chan struct{}),
 	}
+	if config.ServerConfig.Server != nil {
+		registry.serverHandler = newServerHandler(config.ServerConfig.AdvertiseAddress, registry, config.Serializer)
+	}
+
+	return registry
 }
 
 type AddressingRegistry struct {
-	config    AddressingRegistryConfiguration       // 配置
-	processes *xsync.MapOf[string, runtime.Process] // 进程映射表，key 为地址，value 为进程
+	config         AddressingRegistryConfiguration       // 配置
+	processes      *xsync.MapOf[string, runtime.Process] // 进程映射表，key 为路径，value 为进程
+	connectionPool *connectionPool                       // 连接池
+	closeCh        chan struct{}                         // 关闭信号
+	serverHandler  *serverHandler                        // 服务器处理器
 }
 
 // Find implements runtime.AddressingRegistry.
@@ -49,7 +60,7 @@ func (m *AddressingRegistry) Find(id *runtime.ProcessID) (runtime.Process, error
 	}
 
 	// 远程进程
-	if m.config.Address != id.Address() {
+	if m.config.ServerConfig.AdvertiseAddress != id.Address() {
 		return m.fromBroker(id)
 	}
 
@@ -75,17 +86,69 @@ func (m *AddressingRegistry) Unregister(id *runtime.ProcessID) error {
 	return nil
 }
 
+// Start 启动服务器接收循环（如果配置了服务器）。
+func (m *AddressingRegistry) Start() error {
+	if m.config.ServerConfig.Server == nil {
+		return nil
+	}
+
+	go m.acceptLoop()
+	return nil
+}
+
+// Shutdown 优雅关闭注册表。
+func (m *AddressingRegistry) Shutdown() error {
+	select {
+	case <-m.closeCh:
+		return nil // 已经关闭
+	default:
+		close(m.closeCh)
+	}
+
+	// 关闭连接池
+	if m.connectionPool != nil {
+		m.connectionPool.Close()
+	}
+
+	return nil
+}
+
+// acceptLoop 循环接受新连接。
+func (m *AddressingRegistry) acceptLoop() {
+	for {
+		select {
+		case <-m.closeCh:
+			return
+		default:
+			conn, err := m.config.ServerConfig.Server.Accept()
+			if err != nil {
+				select {
+				case <-m.closeCh:
+					return
+				default:
+					// 记录错误但继续
+					continue
+				}
+			}
+
+			// 为每个连接启动处理 goroutine
+			go func() {
+				if err := m.serverHandler.HandleConnection(conn); err != nil {
+					// 连接处理错误，记录并继续
+				}
+			}()
+		}
+	}
+}
+
 func (m *AddressingRegistry) fromBroker(id *runtime.ProcessID) (runtime.Process, error) {
-	serializer := m.config.BrokerSerializerProvider.Provide(id)
-	if serializer == nil {
-		serializer = m.config.Serializer
+	serializer := m.config.Serializer
+	if m.config.BrokerSerializerProvider != nil {
+		if providedSerializer := m.config.BrokerSerializerProvider.Provide(id); providedSerializer != nil {
+			serializer = providedSerializer
+		}
 	}
 
-	writer := m.config.BrokerWriterProvider.Provide(id)
-	if writer == nil {
-		return nil, fmt.Errorf("%w: %s, broker writer not found", runtime.ErrBadProcess, id)
-	}
-	broker := newBroker(id, serializer, writer)
-
+	broker := newBroker(id, serializer, m.connectionPool)
 	return broker, nil
 }
