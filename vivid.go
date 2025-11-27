@@ -1,5 +1,7 @@
 package vivid
 
+import "net"
+
 type (
 	Message   = any
 	ActorPath = string
@@ -8,15 +10,8 @@ type (
 
 type (
 	ActorRef interface {
+		GetAddress() net.Addr
 		GetPath() ActorPath
-	}
-
-	Actor interface {
-		OnReceive(ctx ActorContext)
-	}
-
-	ActorSystem interface {
-		actorCore
 	}
 
 	ActorContext interface {
@@ -44,39 +39,4 @@ type (
 		// 注意：此方法非并发安全，不适用于多协程并发调用，通常情况下 Actor 的诞生是在其父的上下文中进行的，因此是天然线程安全的。
 		ActorOf(actor Actor, options ...ActorOption) ActorRef
 	}
-
-	Mailbox interface {
-		Enqueue(envelop Envelop)
-		Dequeue() Envelop
-	}
-
-	Envelop interface {
-		Sender() ActorRef
-		Message() Message
-	}
 )
-
-type ActorOptions struct {
-	Name    string  // Actor 名称
-	Mailbox Mailbox // Actor 邮箱
-}
-
-type ActorOption = func(options *ActorOptions)
-
-func WithActorOptions(options ActorOptions) ActorOption {
-	return func(opts *ActorOptions) {
-		*opts = options
-	}
-}
-
-func WithActorName(name string) ActorOption {
-	return func(opts *ActorOptions) {
-		opts.Name = name
-	}
-}
-
-func WithActorMailbox(mailbox Mailbox) ActorOption {
-	return func(opts *ActorOptions) {
-		opts.Mailbox = mailbox
-	}
-}
