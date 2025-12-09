@@ -12,7 +12,12 @@ var (
 	_ vivid.ActorRef = &Ref{}
 )
 
+var zeroAddress = &net.UDPAddr{IP: net.IPv4zero, Port: 0}
+
 func NewRef(address net.Addr, path vivid.ActorPath) *Ref {
+	if address == nil {
+		address = zeroAddress
+	}
 	return &Ref{
 		address: address,
 		path:    path,

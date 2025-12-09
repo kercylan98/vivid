@@ -6,6 +6,12 @@ type Actor interface {
 	OnReceive(ctx ActorContext)
 }
 
+type ActorFN func(ctx ActorContext)
+
+func (fn ActorFN) OnReceive(ctx ActorContext) {
+	fn(ctx)
+}
+
 type ActorOption = func(options *ActorOptions)
 type ActorOptions struct {
 	Name              string        // Actor 名称

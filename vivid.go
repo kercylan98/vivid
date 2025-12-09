@@ -3,7 +3,6 @@ package vivid
 import "net"
 
 type (
-	Message   = any
 	ActorPath = string
 	Behavior  = func(ctx ActorContext)
 )
@@ -19,6 +18,12 @@ type (
 
 		// System 用于获取当前 ActorContext 的 ActorSystem。
 		System() ActorSystem
+
+		// Message 用于获取当前 ActorContext 的 Message。
+		Message() Message
+
+		// Sender 用于获取当前 ActorContext 的 Sender。
+		Sender() ActorRef
 	}
 
 	actorCore interface {

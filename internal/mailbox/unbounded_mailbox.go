@@ -1,38 +1,65 @@
 package mailbox
 
 import (
-	"sync"
+	"sync/atomic"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/queues"
 )
 
 var (
 	_ vivid.Mailbox = &UnboundedMailbox{}
 )
 
-func NewUnboundedMailbox() *UnboundedMailbox {
-	return &UnboundedMailbox{}
+func NewUnboundedMailbox(initialSize int64, handler vivid.EnvelopHandler) *UnboundedMailbox {
+	return &UnboundedMailbox{
+		buffer:  queues.New[vivid.Envelop](initialSize),
+		handler: handler,
+	}
 }
 
 type UnboundedMailbox struct {
-	// 先简单实现一个无界的队列
-	mu    sync.Mutex
-	queue []vivid.Envelop
+	num     int32
+	status  uint32
+	buffer  *queues.RingQueue[vivid.Envelop]
+	handler vivid.EnvelopHandler
 }
 
 func (m *UnboundedMailbox) Enqueue(envelop vivid.Envelop) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.queue = append(m.queue, envelop)
+	m.buffer.Push(envelop)
+	atomic.AddInt32(&m.num, 1)
+
+	if atomic.CompareAndSwapUint32(&m.status, idle, processing) {
+		go m.process()
+	}
 }
 
-func (m *UnboundedMailbox) Dequeue() vivid.Envelop {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.queue) == 0 {
-		return nil
+func (m *UnboundedMailbox) process() {
+process:
+	m.processHandle()
+
+	// 尝试缩容（队列已空，安全时机）
+	m.buffer.Shrink()
+
+	atomic.StoreUint32(&m.status, idle)
+	user := atomic.LoadInt32(&m.num)
+	if user > 0 {
+		if atomic.CompareAndSwapUint32(&m.status, idle, processing) {
+			goto process
+		}
 	}
-	envelop := m.queue[0]
-	m.queue = m.queue[1:]
-	return envelop
+}
+
+func (m *UnboundedMailbox) processHandle() {
+	var msg vivid.Envelop
+	var ok bool
+
+	for {
+		if msg, ok = m.buffer.Pop(); ok {
+			atomic.AddInt32(&m.num, -1)
+			m.handler.HandleEnvelop(msg)
+		} else {
+			return
+		}
+	}
 }

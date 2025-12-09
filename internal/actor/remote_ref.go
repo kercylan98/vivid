@@ -22,7 +22,7 @@ type remoteRef struct {
 	system *System
 }
 
-func (r *remoteRef) HandleEnvelop(envelop vivid.Envelop) {
+func (r *remoteRef) DeliverEnvelop(envelop vivid.Envelop) {
 	// TODO: 发送消息到远程 Actor
 	panic("not implemented")
 }

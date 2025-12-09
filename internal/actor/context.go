@@ -2,18 +2,21 @@ package actor
 
 import (
 	"fmt"
+	"net"
 	"sync/atomic"
 	"time"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
+	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/internal/transparent"
 )
 
 var (
-	_ vivid.ActorContext           = &Context{}
-	_ transparent.TransportContext = &Context{}
+	_ vivid.ActorContext           = (*Context)(nil)
+	_ transparent.TransportContext = (*Context)(nil)
+	_ vivid.EnvelopHandler         = (*Context)(nil)
 )
 
 var (
@@ -29,19 +32,27 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 		parent:        parent,
 		actor:         actor,
 		behaviorStack: NewBehaviorStack(),
-		mailbox:       mailbox.NewUnboundedMailbox(),
 	}
 
 	for _, option := range options {
 		option(ctx.options)
 	}
 
+	ctx.mailbox = mailbox.NewUnboundedMailbox(256, ctx)
+
 	var name = ctx.options.Name
 	if name == "" {
 		name = fmt.Sprintf("%d", actorIncrementId.Add(1))
 	}
 
-	ctx.ref = NewRef(parent.GetAddress(), parent.GetPath()+"/"+name)
+	var parentAddress net.Addr
+	var path = "/"
+	if parent != nil {
+		parentAddress = parent.GetAddress()
+		path = parent.GetPath() + "/" + name
+	}
+
+	ctx.ref = NewRef(parentAddress, path)
 	ctx.behaviorStack.Push(actor.OnReceive)
 
 	return ctx
@@ -56,6 +67,8 @@ type Context struct {
 	behaviorStack *BehaviorStack                     // 行为栈
 	mailbox       vivid.Mailbox                      // 邮箱
 	children      map[vivid.ActorPath]vivid.ActorRef // 懒加载的子 Actor 引用
+	message       vivid.Message                      // 当前 ActorContext 的消息
+	sender        vivid.ActorRef                     // 当前 ActorContext 的 sender
 }
 
 func (c *Context) System() vivid.ActorSystem {
@@ -78,13 +91,15 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) vivid
 	childCtx := NewContext(c.system, c.ref, actor, options...)
 	c.children[childCtx.Ref().GetPath()] = childCtx.Ref()
 	c.system.appendActorContext(childCtx)
+
+	c.Tell(childCtx.Ref(), messages.NewInternalMessage(messages.OnLaunchMessageType))
 	return childCtx.Ref()
 }
 
 func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
 	envelop := mailbox.NewEnvelopWithTell(message)
 	recipientCtx := c.system.findTransportActorContext(recipient.(*Ref))
-	recipientCtx.HandleEnvelop(envelop)
+	recipientCtx.DeliverEnvelop(envelop)
 }
 
 func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) (vivid.Future[vivid.Message], error) {
@@ -96,11 +111,25 @@ func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout .
 	futureIns := future.NewFuture[vivid.Message](askTimeout)
 	envelop := mailbox.NewEnvelopWithAsk(futureIns, c.Ref(), message)
 	recipientCtx := c.system.findTransportActorContext(recipient.(*Ref))
-	recipientCtx.HandleEnvelop(envelop)
+	recipientCtx.DeliverEnvelop(envelop)
 
 	return futureIns, nil
 }
 
-func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
+func (c *Context) DeliverEnvelop(envelop vivid.Envelop) {
 	c.mailbox.Enqueue(envelop)
+}
+
+func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
+	c.message = envelop.Message()
+	c.sender = envelop.Sender()
+	c.actor.OnReceive(c)
+}
+
+func (c *Context) Message() vivid.Message {
+	return c.message
+}
+
+func (c *Context) Sender() vivid.ActorRef {
+	return c.sender
 }
