@@ -12,7 +12,7 @@ type BehaviorStack struct {
 	behaviors []vivid.Behavior
 }
 
-func (s *BehaviorStack) Peak() vivid.Behavior {
+func (s *BehaviorStack) Peek() vivid.Behavior {
 	if len(s.behaviors) == 0 {
 		return nil
 	}

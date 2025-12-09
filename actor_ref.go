@@ -5,4 +5,5 @@ import "net"
 type ActorRef interface {
 	GetAddress() net.Addr
 	GetPath() ActorPath
+	Equals(other ActorRef) bool
 }

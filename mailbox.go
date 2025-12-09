@@ -5,6 +5,7 @@ type Mailbox interface {
 }
 
 type Envelop interface {
+	System() bool
 	Agent() ActorRef
 	Sender() ActorRef
 	Message() Message

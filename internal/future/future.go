@@ -33,7 +33,7 @@ type Future[T vivid.Message] struct {
 	closed  atomic.Bool   // 是否已关闭
 	err     error         // 完成时的错误
 	message T             // 完成时的消息
-	closer  func()
+	closer  func()        // Future 关闭时的回调函数
 }
 
 // DeliverEnvelop implements transparent.TransportContext.

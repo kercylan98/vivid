@@ -1,74 +1,132 @@
 package vivid
 
-import "time"
+import (
+	"time"
 
+	"github.com/kercylan98/vivid/pkg/result"
+)
+
+// ActorContext 定义了 Actor 内部行为逻辑和运行环境的上下文接口，
+// 它在每次消息处理（无论是业务消息还是系统消息）时动态生成，
+// 并作为参数注入到 Actor 的行为函数（Behavior）之中，用于支撑 Actor 的核心运行能力、子 Actor 管理等。
+// 所有操作均线程隔离，建议仅在本消息处理流程内使用。
 type ActorContext interface {
-	actorCore
+	actorBasic
+	actorRace
 
-	// System 返回当前 ActorContext 所属的 ActorSystem 实例。
+	// System 返回当前 ActorContext 所属的 ActorSystem 实例，即归属的顶级 Actor 系统入口。
+	//
+	// 使用说明：
+	//   - 可通过该实例访问 Actor 系统级别配置（如全局默认 ask 超时）、顶级 Actor 资源、注册服务等功能。
 	System() ActorSystem
 
-	// Message 返回当前 ActorContext 正在处理的消息。
+	// Message 返回当前 ActorContext 正在处理的消息实例。
+	//
+	// 特殊消息说明：
+	// 除了业务自定义消息外，Actor 系统会自动分发若干特殊的生命周期或来自 Vivid 的特定事件消息类型。
+	// 主要包括（详见 vivid/message.go）：
+	//	- *vivid.OnLaunch: Actor 启动时的第一条消息，可用于初始化场景。
+	//	- *vivid.OnKill: 当 Actor 自身被销毁请求时收到，可用于优雅停机处理。
+	//	- *vivid.OnKilled: Actor 已终止后，通知相关方做资源收尾，如清理子 Actor 等。
+	//
+	// 可通过类型断言判断和区分消息种类，设计定制化的生命周期行为。
 	Message() Message
 
-	// Sender 返回当前消息的发送者 ActorRef。
+	// Parent 返回当前 Actor 的父级 ActorRef。
+	Parent() ActorRef
+
+	// Ref 返回当前 Actor 的 ActorRef 实例。
+	Ref() ActorRef
+
+	// Sender 返回本条消息的发送者（ActorRef）。如果消息来源于系统（如 OnLaunch），则可能返回 nil。
+	//
+	// 使用案例：
+	//   - 可用于回复请求方、追溯消息链路、权限校验等场景。
 	Sender() ActorRef
 
-	// Reply 向消息的发送者回复指定消息。
+	// Reply 向当前消息的发送者（即 Sender）发送回复消息（通常用于请求-响应模式）。
+	//
+	// 参数:
+	//   - message: 希望回复发送者的消息内容（自定义或内置类型）
+	//
+	// 注意事项：
+	//   - 若 Sender() 返回 nil（如系统消息场景），Reply 操作将被安全忽略。
+	//   - 推荐仅在处理“请求-应答”业务时使用，否则无须显式回复。
 	Reply(message Message)
 
-	// Become 用新的行为替换当前行为（推入栈顶），进入新的行为状态。
+	// Become 用新的行为（Behavior）函数替换当前行为，新的行为函数会被推入行为栈顶，直至下一次切换或恢复。
+	//
+	// 场景说明：
+	//   - 可实现 Actor 状态机、行为迁移、动态消息处理能力。
+	//   - 调用后立即生效，下次收到的消息由新行为逻辑处理。
+	//
+	// 注意：
+	//   - 行为切换为堆栈管理，可嵌套调用实现复杂流程。
 	Become(behavior Behavior)
 
-	// RevertBehavior 将行为恢复到上一个（弹出栈顶），返回是否成功恢复。
-	// 如果当前行为栈为空，则返回 false。
+	// RevertBehavior 行为恢复，将行为栈弹出回退到上一个行为状态，并返回是否成功恢复。
+	//
+	// 返回：
+	//   - true  : 已成功恢复到上一个行为
+	//   - false : 当前行为为初始栈底，无法再退
+	//
+	// 说明：
+	//   - 适合在阶段性流程、状态退出等场景调用。
 	RevertBehavior() bool
 }
 
-type actorCore interface {
-	// Parent 返回父级 Actor 的 ActorRef。如果该 ActorContext 为根 Actor，则返回 nil。
-	Parent() ActorRef
-
-	// Ref 返回当前 Actor 的 ActorRef。
-	Ref() ActorRef
-
-	// ActorOf 在当前上下文下创建一个子 Actor，并返回该子 Actor 的引用（ActorRef）。
+type actorRace interface {
+	// ActorOf 在当前 ActorContext 作用域下创建一个子 Actor，并返回新子 Actor 的 ActorRef。
 	//
 	// 参数:
-	//   - actor: 子 Actor 实例，必须实现 Actor 接口
-	//   - options: 可选参数，通过可变参数形式传递（如 Actor 名称、邮箱配置等）
+	//   - actor: 待创建的子 Actor 实例（必须实现 Actor 接口）
+	//   - options: 额外配置选项，可变参数（如显式命名、邮箱容量、启动参数等）
 	//
 	// 返回值:
-	//   - ActorRef: 新创建的子 Actor 的引用
+	//   - *result.Result[ActorRef]：子 Actor 的引用及创建过程中的异常（若有）
 	//
-	// 注意：
-	//   - 该方法非并发安全，不适用于多协程并发调用。
-	//   - 一般情况下，Actor 的创建应仅由其父 ActorContext 进行，天然具备线程安全性。
-	ActorOf(actor Actor, options ...ActorOption) ActorRef
+	// 核心说明：
+	//   - 仅允许父级 ActorContext 为自己的子 Actor 创建生命周期管理，保证结构树的隔离与一致性。
+	//   - 该方法非并发安全，不支持多协程并发创建同级 Actor；一般用于串行业务流程。
+	//   - 异常场景会返回 result 错误（如重名、系统资源限制等），调用方应处理创建失败的可能。
+	ActorOf(actor Actor, options ...ActorOption) *result.Result[ActorRef]
+}
 
-	// Tell 向指定的 ActorRef 发送消息。
+// actorBasic 抽象出 Actor 基础消息操作、父节点引用与通信能力，为 ActorContext 和 ActorSystem 内部复用。
+// 不建议业务方直接实现或调用，建议通过 ActorContext 间接获得各项能力。
+type actorBasic interface {
+
+	// Tell 向指定 ActorRef 异步发送消息（单向），即 Fire-and-Forget，不关心对方回复。
 	//
 	// 参数:
 	//   - recipient: 目标 Actor 的引用（ActorRef）
-	//   - message: 待发送的消息（Message）
+	//   - message: 发送内容（任何类型，推荐结构体以增强类型安全）
 	//
-	// 说明:
-	//   - 该方法为单向消息发送（Tell/SEND），不期望回复。
-	//   - 消息会异步投递至目标 Actor 的邮箱。
+	// 行为特性：
+	//   - 消息异步派发进入目标 Actor 的邮箱，由其所在调度器排队处理。
+	//   - 永不阻塞本地调用方；不保证投递顺序（但同一发送方顺序一致）。
 	Tell(recipient ActorRef, message Message)
 
-	// Ask 向指定的 ActorRef 发送请求消息，并返回用于异步接收回复的 Future。
+	// Ask 向指定 ActorRef 发送请求型消息，并获得 Future 以便异步等待回复。
 	//
 	// 参数:
 	//   - recipient: 目标 Actor 的引用（ActorRef）
-	//   - message: 待请求的消息（Message）
-	//   - timeout: （可选）超时时间，超过该时间未收到回复则 Future 失败，使用默认超时时间可不传
+	//   - message: 请求内容（任何类型，通常为业务结构体或系统事件）
+	//   - timeout（可选）: 单次请求超时设定（不传则采用系统默认 ask 超时时间）
 	//
 	// 返回值:
-	//   - Future[Message]: 表示异步回复的 Future 实例
+	//   - Future[Message]: 表示异步应答的 Future 实例对象，可链式处理/同步等待
 	//
-	// 说明:
-	//   - 该方法为带有回复期望的消息发送（Ask/REQ）。
-	//   - 超时时间默认由系统配置，可以通过参数自定义。
+	// 行为特性：
+	//   - 支持多种超时控制与异常捕捉，超时后 Future 状态自动为失败。
+	//   - 适用于 RPC、协作、需结果确认等双向通信场景。
 	Ask(recipient ActorRef, message Message, timeout ...time.Duration) Future[Message]
+
+	// Kill 请求当前 Actor 终止运行，支持优雅停机（poison=false）或立即销毁（poison=true）。
+	//
+	// 参数:
+	//   - ref: 要终止的 Actor 的引用（ActorRef）
+	//   - poison: 是否采用毒杀模式，true 时立即销毁，不处理剩余队列，false 时常规优雅下线。
+	//   - reason: 终止原因描述，便于追踪和日志分析，多个参数时会拼接成一个字符串（使用 ", " 分隔）。
+	Kill(ref ActorRef, poison bool, reason ...string)
 }

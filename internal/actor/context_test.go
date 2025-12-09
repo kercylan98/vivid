@@ -10,7 +10,7 @@ import (
 )
 
 func TestContext_ActorOf(t *testing.T) {
-	system := actor.NewSystem()
+	system := actor.NewSystem().Unwrap()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -25,7 +25,7 @@ func TestContext_ActorOf(t *testing.T) {
 }
 
 func TestContext_Become(t *testing.T) {
-	system := actor.NewSystem()
+	system := actor.NewSystem().Unwrap()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -46,7 +46,7 @@ func TestContext_Become(t *testing.T) {
 }
 
 func TestContext_RevertBehavior(t *testing.T) {
-	system := actor.NewSystem()
+	system := actor.NewSystem().Unwrap()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -73,7 +73,7 @@ func TestContext_RevertBehavior(t *testing.T) {
 }
 
 func TestContext_Tell(t *testing.T) {
-	system := actor.NewSystem()
+	system := actor.NewSystem().Unwrap()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -82,15 +82,16 @@ func TestContext_Tell(t *testing.T) {
 		case int:
 			wg.Done()
 		}
-	}))
+	})).Unwrap()
 
 	system.Tell(ref, 1)
 	wg.Wait()
 }
 
 func BenchmarkContext_Tell(b *testing.B) {
-	system := actor.NewSystem()
-	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
+	system := actor.NewSystem().Unwrap()
+
+	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {})).Unwrap()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		system.Tell(ref, 1)
@@ -100,7 +101,7 @@ func BenchmarkContext_Tell(b *testing.B) {
 }
 
 func TestContext_Ask(t *testing.T) {
-	system := actor.NewSystem()
+	system := actor.NewSystem().Unwrap()
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -110,7 +111,7 @@ func TestContext_Ask(t *testing.T) {
 			ctx.Reply(1)
 			wg.Done()
 		}
-	}))
+	})).Unwrap()
 
 	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
@@ -120,7 +121,7 @@ func TestContext_Ask(t *testing.T) {
 			assert.Equal(t, 1, reply.(int))
 			wg.Done()
 		}
-	}))
+	})).Unwrap()
 
 	systemReply, systemErr := system.Ask(ref, 1).Result()
 	assert.Nil(t, systemErr)
@@ -130,13 +131,13 @@ func TestContext_Ask(t *testing.T) {
 }
 
 func BenchmarkContext_Ask(b *testing.B) {
-	system := actor.NewSystem()
+	system := actor.NewSystem().Unwrap()
 	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch message := ctx.Message().(type) {
 		case int:
 			ctx.Reply(message)
 		}
-	}))
+	})).Unwrap()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := system.Ask(ref, i).Result(); err != nil {
@@ -148,7 +149,7 @@ func BenchmarkContext_Ask(b *testing.B) {
 }
 
 func TestContext_Sender(t *testing.T) {
-	system := actor.NewSystem()
+	system := actor.NewSystem().Unwrap()
 	var refAHeldRefB vivid.ActorRef
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -161,16 +162,38 @@ func TestContext_Sender(t *testing.T) {
 			assert.Equal(t, refAHeldRefB.GetAddress().String()+refAHeldRefB.GetPath(), ctx.Sender().GetAddress().String()+ctx.Sender().GetPath(), "sender ref mismatch")
 			wg.Done()
 		}
-	}))
+	})).Unwrap()
 
 	refB := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case string:
 			ctx.Ask(refA, "ask-ref-b")
 		}
-	}))
+	})).Unwrap()
 
 	system.Tell(refA, refB)
 	system.Tell(refB, "start-ask")
+	wg.Wait()
+}
+
+func TestContext_Kill(t *testing.T) {
+	system := actor.NewSystem().Unwrap()
+	var wg sync.WaitGroup
+	wg.Add(4)
+	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch ctx.Message().(type) {
+		case *vivid.OnLaunch:
+			ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+				switch ctx.Message().(type) {
+				case *vivid.OnKill, *vivid.OnKilled:
+					wg.Done()
+				}
+			}))
+		case *vivid.OnKill, *vivid.OnKilled:
+			wg.Done()
+		}
+	})).Unwrap()
+
+	system.Kill(ref, false, "test kill")
 	wg.Wait()
 }

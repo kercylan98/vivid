@@ -18,7 +18,7 @@ func TestBehaviorStack_Push(t *testing.T) {
 		wg.Done()
 	})
 	assert.Equal(t, 1, stack.Len())
-	stack.Peak()(nil)
+	stack.Peek()(nil)
 	wg.Wait()
 }
 
@@ -49,8 +49,8 @@ func TestBehaviorStack_IsEmpty(t *testing.T) {
 	assert.True(t, stack.IsEmpty())
 }
 
-func TestBehaviorStack_Peak(t *testing.T) {
+func TestBehaviorStack_Peek(t *testing.T) {
 	stack := actor.NewBehaviorStack()
 	stack.Push(func(ctx vivid.ActorContext) {})
-	assert.NotNil(t, stack.Peak())
+	assert.NotNil(t, stack.Peek())
 }

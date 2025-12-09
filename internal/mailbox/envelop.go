@@ -1,19 +1,23 @@
 package mailbox
 
-import "github.com/kercylan98/vivid"
+import (
+	"github.com/kercylan98/vivid"
+)
 
 var (
 	_ vivid.Envelop = (*Envelop)(nil)
 )
 
-func NewEnvelopWithTell(message vivid.Message) *Envelop {
+func NewEnvelopWithTell(system bool, message vivid.Message) *Envelop {
 	return &Envelop{
+		system:  system,
 		message: message,
 	}
 }
 
-func NewEnvelopWithAsk(agent vivid.ActorRef, sender vivid.ActorRef, message vivid.Message) *Envelop {
+func NewEnvelopWithAsk(system bool, agent vivid.ActorRef, sender vivid.ActorRef, message vivid.Message) *Envelop {
 	return &Envelop{
+		system:  system,
 		agent:   agent,
 		sender:  sender,
 		message: message,
@@ -21,6 +25,7 @@ func NewEnvelopWithAsk(agent vivid.ActorRef, sender vivid.ActorRef, message vivi
 }
 
 type Envelop struct {
+	system  bool           // 是否为系统消息
 	agent   vivid.ActorRef // Future 的情况下为被代理的 ActorRef
 	sender  vivid.ActorRef // 消息的发送者 ActorRef
 	message vivid.Message  // 消息
@@ -36,4 +41,8 @@ func (e *Envelop) Message() vivid.Message {
 
 func (e *Envelop) Agent() vivid.ActorRef {
 	return e.agent
+}
+
+func (e *Envelop) System() bool {
+	return e.system
 }

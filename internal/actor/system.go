@@ -7,13 +7,14 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/transparent"
+	"github.com/kercylan98/vivid/pkg/result"
 )
 
 var (
-	_ vivid.ActorSystem = &System{}
+	_ vivid.ActorSystem = (*System)(nil)
 )
 
-func NewSystem(options ...vivid.ActorSystemOption) *System {
+func NewSystem(options ...vivid.ActorSystemOption) *result.Result[*System] {
 	opts := &vivid.ActorSystemOptions{
 		DefaultAskTimeout: vivid.DefaultAskTimeout,
 	}
@@ -22,31 +23,43 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 	}
 
 	system := &System{
-		options:       opts,
-		actorContexts: sync.Map{},
+		options:           opts,
+		actorContexts:     sync.Map{},
+		guardClosedSignal: make(chan struct{}),
 	}
 
-	system.Context = NewContext(system, nil, guard.NewGuardActor())
-	return system
+	var err error
+	system.Context, err = NewContext(system, nil, guard.NewActor(system.guardClosedSignal))
+	if err != nil {
+		return result.Error[*System](err)
+	}
+	return result.With(system, nil)
 }
 
 type System struct {
-	*Context      // ActorSystem 本身就表示了根 Actor
-	options       *vivid.ActorSystemOptions
-	actorContexts sync.Map // 用于加速访问的 ActorContext 缓存（含有 Future）
+	*Context          // ActorSystem 本身就表示了根 Actor
+	options           *vivid.ActorSystemOptions
+	actorContexts     sync.Map // 用于加速访问的 ActorContext 缓存（含有 Future）
+	guardClosedSignal chan struct{}
 }
 
-func (s *System) appendFuture(agentRef *agentRef, future *future.Future[vivid.Message]) {
+func (s *System) Stop() {
+	s.Context.Kill(s.Context.Ref(), true, "actor system stop")
+	<-s.guardClosedSignal
+}
+
+func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) {
 	s.actorContexts.Store(agentRef.ref.GetPath(), future)
 }
 
-func (s *System) removeFuture(agentRef *agentRef) {
+func (s *System) removeFuture(agentRef *AgentRef) {
 	s.actorContexts.Delete(agentRef.ref.GetPath())
 }
 
 // appendActorContext 用于添加指定路径的 ActorContext。
-func (s *System) appendActorContext(ctx *Context) {
-	s.actorContexts.Store(ctx.Ref().GetPath(), ctx)
+func (s *System) appendActorContext(ctx *Context) bool {
+	_, loaded := s.actorContexts.LoadOrStore(ctx.Ref().GetPath(), ctx)
+	return loaded
 }
 
 // removeActorContext 用于移除指定路径的 ActorContext。
