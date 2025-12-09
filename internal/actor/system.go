@@ -7,6 +7,7 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/transparent"
+	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/result"
 )
 
@@ -17,6 +18,7 @@ var (
 func NewSystem(options ...vivid.ActorSystemOption) *result.Result[*System] {
 	opts := &vivid.ActorSystemOptions{
 		DefaultAskTimeout: vivid.DefaultAskTimeout,
+		Logger:            log.GetDefault(),
 	}
 	for _, option := range options {
 		option(opts)
@@ -33,6 +35,7 @@ func NewSystem(options ...vivid.ActorSystemOption) *result.Result[*System] {
 	if err != nil {
 		return result.Error[*System](err)
 	}
+	system.Logger().Info("actor system", log.String("status", "started"))
 	return result.With(system, nil)
 }
 
@@ -46,6 +49,7 @@ type System struct {
 func (s *System) Stop() {
 	s.Context.Kill(s.Context.Ref(), true, "actor system stop")
 	<-s.guardClosedSignal
+	s.Logger().Info("actor system", log.String("status", "stopped"))
 }
 
 func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) {

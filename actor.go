@@ -1,6 +1,10 @@
 package vivid
 
-import "time"
+import (
+	"time"
+
+	"github.com/kercylan98/vivid/pkg/log"
+)
 
 type Actor interface {
 	OnReceive(ctx ActorContext)
@@ -17,6 +21,7 @@ type ActorOptions struct {
 	Name              string        // Actor 名称
 	Mailbox           Mailbox       // Actor 邮箱
 	DefaultAskTimeout time.Duration // Actor 默认的 Ask 超时时间
+	Logger            log.Logger    // Actor 日志记录器
 }
 
 func WithActorOptions(options ActorOptions) ActorOption {
@@ -42,5 +47,11 @@ func WithActorDefaultAskTimeout(timeout time.Duration) ActorOption {
 		if timeout > 0 {
 			opts.DefaultAskTimeout = timeout
 		}
+	}
+}
+
+func WithActorLogger(logger log.Logger) ActorOption {
+	return func(opts *ActorOptions) {
+		opts.Logger = logger
 	}
 }

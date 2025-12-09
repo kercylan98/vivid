@@ -13,6 +13,7 @@ import (
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/internal/transparent"
+	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/result"
 )
 
@@ -36,6 +37,7 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 	ctx := &Context{
 		options: &vivid.ActorOptions{
 			DefaultAskTimeout: system.options.DefaultAskTimeout, // 默认继承系统默认的 Ask 超时时间
+			Logger:            system.options.Logger,            // 默认继承系统默认的日志记录器
 		},
 		system:        system,
 		parent:        parent,
@@ -82,6 +84,10 @@ type Context struct {
 	children      map[vivid.ActorPath]vivid.ActorRef // 懒加载的子 Actor 引用
 	envelop       vivid.Envelop                      // 当前 ActorContext 的消息
 	state         int32                              // 状态
+}
+
+func (c *Context) Logger() log.Logger {
+	return c.options.Logger
 }
 
 func (c *Context) System() vivid.ActorSystem {
@@ -168,7 +174,11 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	behavior := c.behaviorStack.Peek()
 
 	switch message := c.envelop.Message().(type) {
+	case *vivid.OnLaunch:
+		c.Logger().Info("actor on launch", "actor", c.ref.GetPath())
+		behavior(c)
 	case *vivid.OnKill:
+		c.Logger().Info("actor on kill", "actor", c.ref.GetPath(), "poison", message.Poison, "reason", message.Reason)
 		c.onKill(message, behavior)
 	case *vivid.OnKilled:
 		c.onKilled(message, behavior)

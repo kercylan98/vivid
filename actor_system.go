@@ -2,6 +2,8 @@ package vivid
 
 import (
 	"time"
+
+	"github.com/kercylan98/vivid/pkg/log"
 )
 
 // ActorSystem 定义了 Actor 系统的核心接口，代表管理所有 Actor 的顶层实体。
@@ -64,6 +66,10 @@ type ActorSystemOptions struct {
 	// 若单次调用未特别指定，则将采用该超时时间，超时后会导致 Future 对象失败。
 	// 合理配置此值可防止消息“悬挂”导致资源泄漏，也可根据业务特性灵活设置。
 	DefaultAskTimeout time.Duration
+
+	// Logger 指定 ActorSystem 的日志记录器。
+	// 若未指定，则使用默认的日志记录器。
+	Logger log.Logger
 }
 
 // WithActorSystemDefaultAskTimeout 返回一个 ActorSystemOption，用于指定 ActorSystem 的默认 Ask 超时时间。
@@ -74,9 +80,6 @@ type ActorSystemOptions struct {
 //
 // 参数：
 //   - timeout: 期望设置的超时时间，仅当 timeout > 0 时生效（不允许零值或负值；零/负值时忽略该配置）。
-//
-// 返回值：
-//   - ActorSystemOption：可与其它 Option 一起传入 ActorSystem 构造函数，实现链式配置。
 func WithActorSystemDefaultAskTimeout(timeout time.Duration) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		// 仅当指定的超时时长有效（大于零）时，才设置为默认 Ask 超时时间。
@@ -84,5 +87,19 @@ func WithActorSystemDefaultAskTimeout(timeout time.Duration) ActorSystemOption {
 		if timeout > 0 {
 			opts.DefaultAskTimeout = timeout
 		}
+	}
+}
+
+// WithActorSystemLogger 返回一个 ActorSystemOption，用于指定 ActorSystem 的日志记录器。
+//
+// 用法场景：
+//   - 在构建 ActorSystem 时，通过该 Option 明确设置 ActorSystem 的日志记录器。
+//   - 支持灵活的业务需求（如部分场景需要自定义日志记录器，或测试环境下使用内存日志记录器）。
+//
+// 参数：
+//   - logger: 期望设置的日志记录器。
+func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		opts.Logger = logger
 	}
 }

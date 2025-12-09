@@ -3,6 +3,7 @@ package vivid
 import (
 	"time"
 
+	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/result"
 )
 
@@ -129,4 +130,24 @@ type actorBasic interface {
 	//   - poison: 是否采用毒杀模式，true 时立即销毁，不处理剩余队列，false 时常规优雅下线。
 	//   - reason: 终止原因描述，便于追踪和日志分析，多个参数时会拼接成一个字符串（使用 ", " 分隔）。
 	Kill(ref ActorRef, poison bool, reason ...string)
+
+	// Logger 方法用于获取当前 ActorContext 的日志记录器（log.Logger）。
+	//
+	// 功能说明：
+	//   - 当业务或框架代码需进行日志输出（如 Info、Warn、Error 日志、调试信息等）时，应通过调用本方法获取日志记录器。
+	//   - 推荐统一通过本接口进行日志处理，避免直接持有底层 Logger 实例以保障日志策略的灵活变更与隔离。
+	//
+	// 返回策略：
+	//   - 若当前 ActorContext 已显式指定专用日志记录器（通常通过 ActorOption、系统初始化参数等设置），则优先返回该日志记录器，用于实现 Actor 级别的隔离、定向输出。
+	//   - 若未配置专用日志记录器，则自动回退为 ActorSystem 的全局日志记录器，实现默认共享和整体可观测性。
+	//   - 任一场景下均保证返回非 nil 的 log.Logger 实例，调用方无需判空，直接调用各类日志方法；如均未设置，则返回系统内置的默认日志实现。
+	//
+	// 典型应用场景：
+	//   - 业务 Actor 在消息处理（Handle/Behavior）过程中，需记录业务事件、追踪上下文或输出关键日志；
+	//   - 框架内对 Actor 生命周期、异常、调度流程进行监控和埋点；
+	//   - 支持多级日志隔离（系统级、Actor级），便于定位问题与动态调整日志策略。
+	//
+	// 返回值：
+	//   - log.Logger：当前上下文（ActorContext 或 ActorSystem）可用的日志记录器实例。
+	Logger() log.Logger
 }
