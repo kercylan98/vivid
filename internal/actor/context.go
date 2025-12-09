@@ -3,6 +3,7 @@ package actor
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"sync/atomic"
 	"time"
 
@@ -47,9 +48,12 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 
 	var parentAddress net.Addr
 	var path = "/"
-	if parent != nil {
-		parentAddress = parent.GetAddress()
-		path = parent.GetPath() + "/" + name
+	if parent == nil {
+		var err error
+		path, err = url.JoinPath(path, name)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	ctx.ref = NewRef(parentAddress, path)
@@ -67,8 +71,7 @@ type Context struct {
 	behaviorStack *BehaviorStack                     // 行为栈
 	mailbox       vivid.Mailbox                      // 邮箱
 	children      map[vivid.ActorPath]vivid.ActorRef // 懒加载的子 Actor 引用
-	message       vivid.Message                      // 当前 ActorContext 的消息
-	sender        vivid.ActorRef                     // 当前 ActorContext 的 sender
+	envelop       vivid.Envelop                      // 当前 ActorContext 的消息
 }
 
 func (c *Context) System() vivid.ActorSystem {
@@ -96,24 +99,33 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) vivid
 	return childCtx.Ref()
 }
 
+func (c *Context) Reply(message vivid.Message) {
+	c.Tell(c.envelop.Sender(), message)
+}
+
 func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
 	envelop := mailbox.NewEnvelopWithTell(message)
 	recipientCtx := c.system.findTransportActorContext(recipient.(*Ref))
 	recipientCtx.DeliverEnvelop(envelop)
 }
 
-func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) (vivid.Future[vivid.Message], error) {
+func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
 	var askTimeout = c.options.DefaultAskTimeout
 	if len(timeout) > 0 {
 		askTimeout = timeout[0]
 	}
 
-	futureIns := future.NewFuture[vivid.Message](askTimeout)
-	envelop := mailbox.NewEnvelopWithAsk(futureIns, c.Ref(), message)
+	agentRef := newAgentRef(c.ref)
+	futureIns := future.NewFuture[vivid.Message](askTimeout, func() {
+		c.system.removeFuture(agentRef)
+	})
+	c.system.appendFuture(agentRef, futureIns)
+
+	envelop := mailbox.NewEnvelopWithAsk(agentRef.agent, agentRef.ref, message)
 	recipientCtx := c.system.findTransportActorContext(recipient.(*Ref))
 	recipientCtx.DeliverEnvelop(envelop)
 
-	return futureIns, nil
+	return futureIns
 }
 
 func (c *Context) DeliverEnvelop(envelop vivid.Envelop) {
@@ -121,15 +133,29 @@ func (c *Context) DeliverEnvelop(envelop vivid.Envelop) {
 }
 
 func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
-	c.message = envelop.Message()
-	c.sender = envelop.Sender()
-	c.actor.OnReceive(c)
+	c.envelop = envelop
+	c.behaviorStack.Peak()(c)
 }
 
 func (c *Context) Message() vivid.Message {
-	return c.message
+	return c.envelop.Message()
 }
 
 func (c *Context) Sender() vivid.ActorRef {
-	return c.sender
+	if agent := c.envelop.Agent(); agent != nil {
+		return agent
+	}
+	return c.envelop.Sender()
+}
+
+func (c *Context) Become(behavior vivid.Behavior) {
+	c.behaviorStack.Push(behavior)
+}
+
+func (c *Context) RevertBehavior() bool {
+	if c.behaviorStack.Len() == 1 {
+		return false
+	}
+	c.behaviorStack.Pop()
+	return true
 }

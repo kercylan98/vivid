@@ -6,17 +6,18 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/mailbox"
+	"github.com/kercylan98/vivid/internal/transparent"
 )
 
 var (
-	_ vivid.Future[vivid.Message] = (*Future[vivid.Message])(nil)
-	_ mailbox.EnvelopAgent        = (*Future[vivid.Message])(nil)
+	_ vivid.Future[vivid.Message]  = (*Future[vivid.Message])(nil)
+	_ transparent.TransportContext = (*Future[vivid.Message])(nil)
 )
 
-func NewFuture[T vivid.Message](timeout time.Duration) *Future[T] {
+func NewFuture[T vivid.Message](timeout time.Duration, closer func()) *Future[T] {
 	future := &Future[T]{
-		done: make(chan struct{}),
+		done:   make(chan struct{}),
+		closer: closer,
 	}
 
 	future.timer = time.AfterFunc(timeout, func() {
@@ -32,9 +33,15 @@ type Future[T vivid.Message] struct {
 	closed  atomic.Bool   // 是否已关闭
 	err     error         // 完成时的错误
 	message T             // 完成时的消息
+	closer  func()
 }
 
-func (f *Future[T]) Reply(message vivid.Message) {
+// DeliverEnvelop implements transparent.TransportContext.
+func (f *Future[T]) DeliverEnvelop(envelop vivid.Envelop) {
+	if !f.closed.CompareAndSwap(false, true) {
+		return
+	}
+	message := envelop.Message()
 	msg, ok := message.(T)
 	if !ok {
 		f.Close(fmt.Errorf("%w, expected %T, got %T", vivid.ErrFutureMessageTypeMismatch, f.message, message))
@@ -52,6 +59,9 @@ func (f *Future[T]) Close(err error) {
 	close(f.done)
 	if f.timer != nil {
 		f.timer.Stop()
+	}
+	if f.closer != nil {
+		f.closer()
 	}
 }
 

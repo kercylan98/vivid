@@ -4,6 +4,7 @@ import (
 	"net"
 	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/transparent"
 )
@@ -36,4 +37,16 @@ func (r *Ref) GetPath() vivid.ActorPath {
 
 func (r *Ref) GetAddress() net.Addr {
 	return r.address
+}
+
+func newAgentRef(agent vivid.ActorRef) *agentRef {
+	return &agentRef{
+		ref:   NewRef(agent.GetAddress(), agent.GetPath()+"@future@"+uuid.NewString()),
+		agent: agent,
+	}
+}
+
+type agentRef struct {
+	ref   vivid.ActorRef // 自身的 ActorRef
+	agent vivid.ActorRef // 被代理的 ActorRef
 }

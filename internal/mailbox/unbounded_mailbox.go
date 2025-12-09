@@ -13,7 +13,7 @@ var (
 
 func NewUnboundedMailbox(initialSize int64, handler vivid.EnvelopHandler) *UnboundedMailbox {
 	return &UnboundedMailbox{
-		buffer:  queues.New[vivid.Envelop](initialSize),
+		buffer:  queues.New(initialSize),
 		handler: handler,
 	}
 }
@@ -21,7 +21,7 @@ func NewUnboundedMailbox(initialSize int64, handler vivid.EnvelopHandler) *Unbou
 type UnboundedMailbox struct {
 	num     int32
 	status  uint32
-	buffer  *queues.RingQueue[vivid.Envelop]
+	buffer  *queues.RingQueue
 	handler vivid.EnvelopHandler
 }
 
@@ -38,9 +38,6 @@ func (m *UnboundedMailbox) process() {
 process:
 	m.processHandle()
 
-	// 尝试缩容（队列已空，安全时机）
-	m.buffer.Shrink()
-
 	atomic.StoreUint32(&m.status, idle)
 	user := atomic.LoadInt32(&m.num)
 	if user > 0 {
@@ -51,13 +48,13 @@ process:
 }
 
 func (m *UnboundedMailbox) processHandle() {
-	var msg vivid.Envelop
+	var msg any
 	var ok bool
 
 	for {
 		if msg, ok = m.buffer.Pop(); ok {
 			atomic.AddInt32(&m.num, -1)
-			m.handler.HandleEnvelop(msg)
+			m.handler.HandleEnvelop(msg.(vivid.Envelop))
 		} else {
 			return
 		}

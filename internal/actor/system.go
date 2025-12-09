@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/transparent"
 )
@@ -32,7 +33,15 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 type System struct {
 	*Context      // ActorSystem 本身就表示了根 Actor
 	options       *vivid.ActorSystemOptions
-	actorContexts sync.Map // 用于加速访问的 ActorContext 缓存
+	actorContexts sync.Map // 用于加速访问的 ActorContext 缓存（含有 Future）
+}
+
+func (s *System) appendFuture(agentRef *agentRef, future *future.Future[vivid.Message]) {
+	s.actorContexts.Store(agentRef.ref.GetPath(), future)
+}
+
+func (s *System) removeFuture(agentRef *agentRef) {
+	s.actorContexts.Delete(agentRef.ref.GetPath())
 }
 
 // appendActorContext 用于添加指定路径的 ActorContext。

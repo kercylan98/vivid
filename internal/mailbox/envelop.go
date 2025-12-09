@@ -12,7 +12,7 @@ func NewEnvelopWithTell(message vivid.Message) *Envelop {
 	}
 }
 
-func NewEnvelopWithAsk(agent EnvelopAgent, sender vivid.ActorRef, message vivid.Message) *Envelop {
+func NewEnvelopWithAsk(agent vivid.ActorRef, sender vivid.ActorRef, message vivid.Message) *Envelop {
 	return &Envelop{
 		agent:   agent,
 		sender:  sender,
@@ -21,9 +21,9 @@ func NewEnvelopWithAsk(agent EnvelopAgent, sender vivid.ActorRef, message vivid.
 }
 
 type Envelop struct {
-	agent   EnvelopAgent
-	sender  vivid.ActorRef
-	message vivid.Message
+	agent   vivid.ActorRef // Future 的情况下为被代理的 ActorRef
+	sender  vivid.ActorRef // 消息的发送者 ActorRef
+	message vivid.Message  // 消息
 }
 
 func (e *Envelop) Sender() vivid.ActorRef {
@@ -32,4 +32,8 @@ func (e *Envelop) Sender() vivid.ActorRef {
 
 func (e *Envelop) Message() vivid.Message {
 	return e.message
+}
+
+func (e *Envelop) Agent() vivid.ActorRef {
+	return e.agent
 }
