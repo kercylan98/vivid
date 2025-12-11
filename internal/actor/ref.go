@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/messages"
-	"github.com/kercylan98/vivid/internal/transparent"
 	"github.com/kercylan98/vivid/internal/utils"
 )
 
@@ -52,7 +51,7 @@ func NewRef(address net.Addr, path string) *Ref {
 type Ref struct {
 	address net.Addr
 	path    string
-	cache   atomic.Pointer[transparent.TransportContext]
+	cache   atomic.Pointer[vivid.Mailbox]
 }
 
 func (r *Ref) GetPath() string {

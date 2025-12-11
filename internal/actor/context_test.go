@@ -94,7 +94,7 @@ func BenchmarkContext_Tell(b *testing.B) {
 	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {})).Unwrap()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		system.Tell(ref, 1)
+		system.Tell(ref, i)
 	}
 	b.StopTimer()
 	b.ReportAllocs()
@@ -179,17 +179,19 @@ func TestContext_Sender(t *testing.T) {
 func TestContext_Kill(t *testing.T) {
 	system := actor.NewSystem().Unwrap()
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
 	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 				switch ctx.Message().(type) {
 				case *vivid.OnKill, *vivid.OnKilled:
+					// self kill, self killed
 					wg.Done()
 				}
 			}))
 		case *vivid.OnKill, *vivid.OnKilled:
+			// self kill, child killed, self killed
 			wg.Done()
 		}
 	})).Unwrap()

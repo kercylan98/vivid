@@ -12,15 +12,13 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/messages"
-	"github.com/kercylan98/vivid/internal/transparent"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/result"
 )
 
 var (
-	_ vivid.ActorContext           = (*Context)(nil)
-	_ transparent.TransportContext = (*Context)(nil)
-	_ vivid.EnvelopHandler         = (*Context)(nil)
+	_ vivid.ActorContext   = (*Context)(nil)
+	_ vivid.EnvelopHandler = (*Context)(nil)
 )
 
 var (
@@ -102,6 +100,10 @@ func (c *Context) Ref() vivid.ActorRef {
 	return c.ref
 }
 
+func (c *Context) Mailbox() vivid.Mailbox {
+	return c.mailbox
+}
+
 func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *result.Result[vivid.ActorRef] {
 	if c.children == nil {
 		c.children = make(map[vivid.ActorPath]vivid.ActorRef)
@@ -132,8 +134,8 @@ func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
 
 func (c *Context) tell(system bool, recipient vivid.ActorRef, message vivid.Message) {
 	envelop := mailbox.NewEnvelopWithTell(system, message)
-	recipientCtx := c.system.findTransportActorContext(recipient.(*Ref))
-	recipientCtx.DeliverEnvelop(envelop)
+	mailbox := c.system.findMailbox(recipient.(*Ref))
+	mailbox.Enqueue(envelop)
 }
 
 func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
@@ -153,32 +155,25 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 	c.system.appendFuture(agentRef, futureIns)
 
 	envelop := mailbox.NewEnvelopWithAsk(system, agentRef.agent, agentRef.ref, message)
-	recipientCtx := c.system.findTransportActorContext(recipient.(*Ref))
-	recipientCtx.DeliverEnvelop(envelop)
+	mailbox := c.system.findMailbox(recipient.(*Ref))
+	mailbox.Enqueue(envelop)
 
 	return futureIns
 }
 
-func (c *Context) DeliverEnvelop(envelop vivid.Envelop) {
-	// 如果当前 Actor 状态不是 running，则不处理消息
-	// TODO: 应当死信处理
+func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
+	// 如果当前 Actor 状态不是 running，则不处理消息（非系统消息）
 	if !envelop.System() && atomic.LoadInt32(&c.state) != running {
-		return
+		return // TODO: 应当死信处理
 	}
 
-	c.mailbox.Enqueue(envelop)
-}
-
-func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	c.envelop = envelop
 	behavior := c.behaviorStack.Peek()
 
 	switch message := c.envelop.Message().(type) {
 	case *vivid.OnLaunch:
-		c.Logger().Info("actor on launch", "actor", c.ref.GetPath())
 		behavior(c)
 	case *vivid.OnKill:
-		c.Logger().Info("actor on kill", "actor", c.ref.GetPath(), "poison", message.Poison, "reason", message.Reason)
 		c.onKill(message, behavior)
 	case *vivid.OnKilled:
 		c.onKilled(message, behavior)
@@ -210,13 +205,11 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 	// 处理子 Actor 死亡
 	if !message.Ref.Equals(c.ref) {
 		delete(c.children, message.Ref.GetPath())
-		if len(c.children) != 0 {
-			return
-		}
 		behavior(c)
 	}
 
-	if !atomic.CompareAndSwapInt32(&c.state, killing, killed) {
+	// 如果还有子 Actor，则不处理自身死亡
+	if len(c.children) != 0 || !atomic.CompareAndSwapInt32(&c.state, killing, killed) {
 		return
 	}
 

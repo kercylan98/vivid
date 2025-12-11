@@ -6,7 +6,6 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/guard"
-	"github.com/kercylan98/vivid/internal/transparent"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/result"
 )
@@ -35,7 +34,6 @@ func NewSystem(options ...vivid.ActorSystemOption) *result.Result[*System] {
 	if err != nil {
 		return result.Error[*System](err)
 	}
-	system.Logger().Info("actor system", log.String("status", "started"))
 	return result.With(system, nil)
 }
 
@@ -49,7 +47,6 @@ type System struct {
 func (s *System) Stop() {
 	s.Context.Kill(s.Context.Ref(), true, "actor system stop")
 	<-s.guardClosedSignal
-	s.Logger().Info("actor system", log.String("status", "stopped"))
 }
 
 func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) {
@@ -71,31 +68,32 @@ func (s *System) removeActorContext(ctx *Context) {
 	s.actorContexts.Delete(ctx.Ref().GetPath())
 }
 
-// findTransportActorContext 用于查找指定路径的透明传输 ActorContext，如果找不到则返回根 ActorContext。
-func (s *System) findTransportActorContext(ref *Ref) transparent.TransportContext {
+// findMailbox 负责根据给定的 ActorRef 查找并返回对应的邮箱（Mailbox）。
+func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 	if ref == nil {
-		return s.Context
+		// 若传入的引用为 nil，直接返回系统根 Actor 的邮箱作为兜底。
+		return s.Mailbox()
 	}
 
-	cache := ref.cache.Load()
-	if cache != nil {
-		return *cache
+	// 尝试优先从 Ref 的 cache 字段中读取 Mailbox 指针，如果存在则直接返回，减少 map 查找的开销。
+	if ptr := ref.cache.Load(); ptr != nil {
+		return *ptr
 	}
 
-	if ref.GetAddress().String() != s.Context.Ref().GetAddress().String() {
-		return newRemoteRef(s, ref)
+	// 当前仅支持本地地址查找，若 ref 非本地地址则直接 panic，待实现远程消息转发逻辑。
+	if ref.GetAddress().String() != s.Ref().GetAddress().String() {
+		panic("findMailbox: remote ref lookup not implemented")
 	}
 
-	value, ok := s.actorContexts.Load(ref.GetPath())
-	if !ok {
-		return s.Context
+	// 在 actorContexts 中查找指定路径（GetPath）对应的 Context，并尝试获取其邮箱（Mailbox）。
+	if value, ok := s.actorContexts.Load(ref.GetPath()); ok {
+		if ctx, ok := value.(*Context); ok {
+			mailbox := ctx.Mailbox()
+			// 利用 CompareAndSwap 保证仅存储一次 Mailbox 指针到 cache，提升后续命中率，防止多线程下的闭包问题。
+			ref.cache.CompareAndSwap(nil, &mailbox)
+			return mailbox
+		}
 	}
-
-	ctx, ok := value.(transparent.TransportContext)
-	if !ok {
-		return s.Context
-	}
-
-	ref.cache.Store(&ctx)
-	return ctx
+	// 若上述皆未命中，返回系统根 Actor 的 Mailbox 作为默认兜底方案，保证 Mailbox 一定可用。
+	return s.Mailbox()
 }
