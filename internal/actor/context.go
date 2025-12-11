@@ -47,7 +47,7 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 
 	ctx.mailbox = mailbox.NewUnboundedMailbox(256, ctx)
 
-	var parentAddress string
+	var parentAddress = system.options.RemotingAdvertiseAddress
 	var path = ctx.options.Name
 	if path == "" && parent != nil {
 		path = fmt.Sprintf("%d", actorIncrementId.Add(1))

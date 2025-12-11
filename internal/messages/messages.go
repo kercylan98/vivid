@@ -1,12 +1,19 @@
 package messages
 
-import "reflect"
+import (
+	"fmt"
+	"reflect"
+)
 
 var outsideMessageDesc = &MessageDesc{
 	typeOf:      nil,
 	messageName: "",
-	reader:      func(message any, reader *Reader) error { panic("outside message desc reader is not implemented") },
-	writer:      func(message any, writer *Writer) error { panic("outside message desc writer is not implemented") },
+	reader: func(message any, reader *Reader) error {
+		return fmt.Errorf("outside message desc reader is not implemented")
+	},
+	writer: func(message any, writer *Writer) error {
+		return fmt.Errorf("outside message desc writer is not implemented")
+	},
 }
 
 type MessageDesc struct {
@@ -56,17 +63,17 @@ func RegisterInternalMessage[T any](messageName string, reader InternalMessageRe
 
 func QueryMessageDesc(message any) *MessageDesc {
 	tof := reflect.TypeOf(message)
-	_, ok := internalMessageTypeOfDesc[tof]
-	if !ok {
-		return nil
+	desc, ok := internalMessageTypeOfDesc[tof]
+	if ok {
+		return desc
 	}
 	return outsideMessageDesc
 }
 
 func QueryMessageDescByName(messageName string) *MessageDesc {
-	_, ok := internalMessageNameOfDesc[messageName]
-	if !ok {
-		return nil
+	desc, ok := internalMessageNameOfDesc[messageName]
+	if ok {
+		return desc
 	}
 	return outsideMessageDesc
 }

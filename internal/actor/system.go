@@ -113,7 +113,7 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 	// 检查是否为远程地址
 	if ref.GetAddress() != s.Ref().GetAddress() {
 		// 远程地址，使用远程邮箱
-		return s.getOrCreateRemoteMailbox(ref.GetAddress())
+		return s.getOrCreateRemoteMailbox(s.options.RemotingAdvertiseAddress)
 	}
 
 	// 在 actorContexts 中查找指定路径（GetPath）对应的 Context，并尝试获取其邮箱（Mailbox）。

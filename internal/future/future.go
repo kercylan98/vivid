@@ -35,7 +35,7 @@ type Future[T vivid.Message] struct {
 	closer  func()        // Future 关闭时的回调函数
 }
 
-// Enqueue implements vivid.Mailbox.
+// Enqueue 实现 Mailbox 的入列接口，用于 Future 接收消息响应
 func (f *Future[T]) Enqueue(envelop vivid.Envelop) {
 	if !f.closed.CompareAndSwap(false, true) {
 		return

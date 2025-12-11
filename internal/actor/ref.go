@@ -36,6 +36,10 @@ func (r *Ref) Equals(other vivid.ActorRef) bool {
 	return r.GetAddress() == other.GetAddress() && r.GetPath() == other.GetPath()
 }
 
+func (r *Ref) Clone() vivid.ActorRef {
+	return NewRef(r.GetAddress(), r.GetPath())
+}
+
 func NewAgentRef(agent *Ref) *AgentRef {
 	return &AgentRef{
 		ref:   NewRef(agent.GetAddress(), agent.GetPath()+"@future@"+uuid.NewString()),

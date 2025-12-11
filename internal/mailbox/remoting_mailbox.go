@@ -38,18 +38,20 @@ func (m *RemotingMailbox) Enqueue(envelop vivid.Envelop) {
 	// 获取连接
 	conn, err := pool.GetConnection(senderKey)
 	if err != nil {
-		// 连接失败，记录错误但继续（实际应该重试或使用错误处理机制）
+		// TODO: 连接失败时应该重试或使用错误处理机制
 		return
 	}
 
 	// 序列化 Envelop
 	data, err := serialize.SerializeEnvelopWithRemoting(envelop)
 	if err != nil {
-		// 序列化失败
+		// TODO: 序列化失败时应该有错误处理逻辑
 		return
 	}
 
 	// 获取传输层并发送数据
 	transport := remoting.GetTransport()
-	_ = transport.Send(conn, data)
+	if err := transport.Send(conn, data); err != nil {
+		// TODO: 发送失败时应该有错误处理逻辑
+	}
 }

@@ -40,9 +40,7 @@ func (cpm *ConnectionPoolManager) GetOrCreatePool(advertiseAddr string) *Connect
 	}
 
 	transport := GetTransport()
-	cpm.mu.RLock()
 	clientAddr := cpm.clientAdvertiseAddr
-	cpm.mu.RUnlock()
 	pool = NewConnectionPool(advertiseAddr, transport, clientAddr)
 	cpm.pools[advertiseAddr] = pool
 	return pool
