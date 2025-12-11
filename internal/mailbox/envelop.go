@@ -8,6 +8,19 @@ var (
 	_ vivid.Envelop = (*Envelop)(nil)
 )
 
+var EnvelopProvider = vivid.EnvelopProviderFN(func(system bool, agent, sender vivid.ActorRef, message any) vivid.Envelop {
+	return NewEnvelop(system, agent, sender, message)
+})
+
+func NewEnvelop(system bool, agent, sender vivid.ActorRef, message vivid.Message) *Envelop {
+	return &Envelop{
+		system:  system,
+		agent:   agent,
+		sender:  sender,
+		message: message,
+	}
+}
+
 func NewEnvelopWithTell(system bool, message vivid.Message) *Envelop {
 	return &Envelop{
 		system:  system,

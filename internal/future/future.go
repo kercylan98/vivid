@@ -6,12 +6,11 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/transparent"
 )
 
 var (
-	_ vivid.Future[vivid.Message]  = (*Future[vivid.Message])(nil)
-	_ transparent.TransportContext = (*Future[vivid.Message])(nil)
+	_ vivid.Future[vivid.Message] = (*Future[vivid.Message])(nil)
+	_ vivid.Mailbox               = (*Future[vivid.Message])(nil)
 )
 
 func NewFuture[T vivid.Message](timeout time.Duration, closer func()) *Future[T] {
@@ -36,8 +35,8 @@ type Future[T vivid.Message] struct {
 	closer  func()        // Future 关闭时的回调函数
 }
 
-// DeliverEnvelop implements transparent.TransportContext.
-func (f *Future[T]) DeliverEnvelop(envelop vivid.Envelop) {
+// Enqueue implements vivid.Mailbox.
+func (f *Future[T]) Enqueue(envelop vivid.Envelop) {
 	if !f.closed.CompareAndSwap(false, true) {
 		return
 	}

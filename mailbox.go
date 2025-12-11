@@ -30,3 +30,13 @@ type EnvelopHandler interface {
 	// 参数 envelop 是实现了 Envelop 接口的消息信封。
 	HandleEnvelop(envelop Envelop)
 }
+
+type EnvelopProvider interface {
+	Provide(system bool, agent ActorRef, sender ActorRef, message any) Envelop
+}
+
+type EnvelopProviderFN func(system bool, agent ActorRef, sender ActorRef, message any) Envelop
+
+func (fn EnvelopProviderFN) Provide(system bool, agent ActorRef, sender ActorRef, message any) Envelop {
+	return fn(system, agent, sender, message)
+}

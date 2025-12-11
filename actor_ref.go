@@ -1,9 +1,7 @@
 package vivid
 
-import "net"
-
 type ActorRef interface {
-	GetAddress() net.Addr
+	GetAddress() string
 	GetPath() ActorPath
 	Equals(other ActorRef) bool
 }

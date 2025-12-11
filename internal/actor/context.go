@@ -2,7 +2,6 @@ package actor
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -11,7 +10,6 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
-	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/result"
 )
@@ -49,7 +47,7 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 
 	ctx.mailbox = mailbox.NewUnboundedMailbox(256, ctx)
 
-	var parentAddress net.Addr
+	var parentAddress string
 	var path = ctx.options.Name
 	if path == "" && parent != nil {
 		path = fmt.Sprintf("%d", actorIncrementId.Add(1))
@@ -120,7 +118,7 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *resu
 
 	c.children[childCtx.Ref().GetPath()] = childCtx.Ref()
 
-	c.tell(true, childCtx.Ref(), messages.NewInternalMessage(messages.OnLaunchMessageType))
+	c.tell(true, childCtx.Ref(), new(vivid.OnLaunch))
 	return result.With(childCtx.Ref(), nil)
 }
 

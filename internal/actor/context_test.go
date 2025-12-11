@@ -159,7 +159,7 @@ func TestContext_Sender(t *testing.T) {
 		case vivid.ActorRef:
 			refAHeldRefB = m
 		case string:
-			assert.Equal(t, refAHeldRefB.GetAddress().String()+refAHeldRefB.GetPath(), ctx.Sender().GetAddress().String()+ctx.Sender().GetPath(), "sender ref mismatch")
+			assert.Equal(t, refAHeldRefB.GetAddress()+refAHeldRefB.GetPath(), ctx.Sender().GetAddress()+ctx.Sender().GetPath(), "sender ref mismatch")
 			wg.Done()
 		}
 	})).Unwrap()

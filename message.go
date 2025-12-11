@@ -1,19 +1,11 @@
 package vivid
 
-import (
-	"github.com/kercylan98/vivid/internal/messages"
-	"github.com/kercylan98/vivid/internal/utils"
-)
+import "github.com/kercylan98/vivid/internal/messages"
 
 func init() {
-	var (
-		onLaunch = &OnLaunch{}
-		onKill   = &OnKill{}
-		onKilled = &OnKilled{}
-	)
-	messages.RegisterInternalMessage(messages.OnLaunchMessageType, func() any { return new(OnLaunch) }, onLaunch.reader, onLaunch.writer)
-	messages.RegisterInternalMessage(messages.OnKillMessageType, func() any { return new(OnKill) }, onKill.reader, onKill.writer)
-	messages.RegisterInternalMessage(messages.OnKilledMessageType, func() any { return new(OnKilled) }, onKilled.reader, onKilled.writer)
+	messages.RegisterInternalMessage[*OnLaunch]("OnLaunch", onLaunchReader, onLaunchWriter)
+	messages.RegisterInternalMessage[*OnKill]("OnKill", onKillReader, onKillWriter)
+	messages.RegisterInternalMessage[*OnKilled]("OnKilled", onKilledReader, onKilledWriter)
 }
 
 // Message 表示可被 Actor 系统传递和处理的消息类型。
@@ -27,11 +19,11 @@ type Message = any
 // 此结构体无字段，仅用于启动事件的识别。
 type OnLaunch struct{}
 
-func (m *OnLaunch) reader(actorRefFactory messages.ActorRefFactory, message any, reader *messages.Reader) error {
+func onLaunchReader(message any, reader *messages.Reader) error {
 	return nil
 }
 
-func (m *OnLaunch) writer(actorRefFactory messages.ActorRefFactory, message any, writer *messages.Writer) error {
+func onLaunchWriter(message any, writer *messages.Writer) error {
 	return nil
 }
 
@@ -43,21 +35,14 @@ type OnKill struct {
 	Poison bool     // 是否采用毒杀模式，true 时立即销毁，不处理剩余队列，false 时常规优雅下线。
 }
 
-func (m *OnKill) reader(actorRefFactory messages.ActorRefFactory, message any, reader *messages.Reader) error {
-	var network, address, path string
-	if err := reader.ReadInto(&network, &address, &path, &m.Reason, &m.Poison); err != nil {
-		return err
-	}
-	netAddr, err := utils.ResolveNetAddr(network, address)
-	if err != nil {
-		return err
-	}
-	m.Killer = actorRefFactory(netAddr, path).(ActorRef)
-	return nil
+func onKillReader(message any, reader *messages.Reader) error {
+	m := message.(*OnKill)
+	return reader.ReadInto(&m.Killer, &m.Reason, &m.Poison)
 }
 
-func (m *OnKill) writer(actorRefFactory messages.ActorRefFactory, message any, writer *messages.Writer) error {
-	return writer.WriteFrom(m.Killer.GetAddress().Network(), m.Killer.GetAddress().String(), m.Killer.GetPath(), m.Reason, m.Poison)
+func onKillWriter(message any, writer *messages.Writer) error {
+	m := message.(*OnKill)
+	return writer.WriteFrom(m.Killer, m.Reason, m.Poison)
 }
 
 // OnKilled 表示 Actor 已被终止后的系统事件通知。
@@ -67,21 +52,12 @@ type OnKilled struct {
 	Ref ActorRef // 被终止的 ActorRef
 }
 
-func (m *OnKilled) reader(actorRefFactory messages.ActorRefFactory, message any, reader *messages.Reader) error {
-	var network string
-	var address string
-	var path string
-	if err := reader.ReadInto(&network, &address, &path); err != nil {
-		return err
-	}
-	netAddr, err := utils.ResolveNetAddr(network, address)
-	if err != nil {
-		return err
-	}
-	m.Ref = actorRefFactory(netAddr, path).(ActorRef)
-	return nil
+func onKilledReader(message any, reader *messages.Reader) error {
+	m := message.(*OnKilled)
+	return reader.ReadInto(&m.Ref)
 }
 
-func (m *OnKilled) writer(actorRefFactory messages.ActorRefFactory, message any, writer *messages.Writer) error {
-	return writer.WriteFrom(m.Ref.GetAddress().Network(), m.Ref.GetAddress().String(), m.Ref.GetPath())
+func onKilledWriter(message any, writer *messages.Writer) error {
+	m := message.(*OnKilled)
+	return writer.WriteFrom(m.Ref)
 }

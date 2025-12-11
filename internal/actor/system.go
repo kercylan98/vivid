@@ -6,7 +6,8 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/guard"
-	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/internal/mailbox"
+	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/pkg/result"
 )
 
@@ -15,18 +16,13 @@ var (
 )
 
 func NewSystem(options ...vivid.ActorSystemOption) *result.Result[*System] {
-	opts := &vivid.ActorSystemOptions{
-		DefaultAskTimeout: vivid.DefaultAskTimeout,
-		Logger:            log.GetDefault(),
-	}
-	for _, option := range options {
-		option(opts)
-	}
+	opts := vivid.NewActorSystemOptions(options...)
 
 	system := &System{
 		options:           opts,
 		actorContexts:     sync.Map{},
 		guardClosedSignal: make(chan struct{}),
+		poolManager:       remoting.NewConnectionPoolManager(opts.RemotingAdvertiseAddress),
 	}
 
 	var err error
@@ -34,6 +30,22 @@ func NewSystem(options ...vivid.ActorSystemOption) *result.Result[*System] {
 	if err != nil {
 		return result.Error[*System](err)
 	}
+
+	// 初始化远程服务器（如果配置了）
+	if opts.RemotingBindAddress != "" && opts.RemotingAdvertiseAddress != "" {
+		system.server = remoting.NewServer(
+			opts.RemotingBindAddress,
+			opts.RemotingAdvertiseAddress,
+			system.poolManager,
+			system,
+			mailbox.EnvelopProvider,
+		)
+
+		if err := system.server.Start(); err != nil {
+			return result.Error[*System](err)
+		}
+	}
+
 	return result.With(system, nil)
 }
 
@@ -42,9 +54,27 @@ type System struct {
 	options           *vivid.ActorSystemOptions
 	actorContexts     sync.Map // 用于加速访问的 ActorContext 缓存（含有 Future）
 	guardClosedSignal chan struct{}
+	poolManager       *remoting.ConnectionPoolManager
+	server            *remoting.Server
+	remoteMailboxes   sync.Map // 远程邮箱缓存，key: address.String()
+}
+
+func (s *System) HandleEnvelop(envelop vivid.Envelop) {
+	receiverMailbox := s.findMailbox(envelop.Sender().(*Ref))
+	receiverMailbox.Enqueue(envelop)
 }
 
 func (s *System) Stop() {
+	// 停止远程服务器
+	if s.server != nil {
+		_ = s.server.Stop()
+	}
+
+	// 关闭所有连接池
+	if s.poolManager != nil {
+		_ = s.poolManager.Close()
+	}
+
 	s.Context.Kill(s.Context.Ref(), true, "actor system stop")
 	<-s.guardClosedSignal
 }
@@ -80,20 +110,41 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 		return *ptr
 	}
 
-	// 当前仅支持本地地址查找，若 ref 非本地地址则直接 panic，待实现远程消息转发逻辑。
-	if ref.GetAddress().String() != s.Ref().GetAddress().String() {
-		panic("findMailbox: remote ref lookup not implemented")
+	// 检查是否为远程地址
+	if ref.GetAddress() != s.Ref().GetAddress() {
+		// 远程地址，使用远程邮箱
+		return s.getOrCreateRemoteMailbox(ref.GetAddress())
 	}
 
 	// 在 actorContexts 中查找指定路径（GetPath）对应的 Context，并尝试获取其邮箱（Mailbox）。
 	if value, ok := s.actorContexts.Load(ref.GetPath()); ok {
-		if ctx, ok := value.(*Context); ok {
-			mailbox := ctx.Mailbox()
+		switch v := value.(type) {
+		case *Context:
+			mailbox := v.Mailbox()
 			// 利用 CompareAndSwap 保证仅存储一次 Mailbox 指针到 cache，提升后续命中率，防止多线程下的闭包问题。
 			ref.cache.CompareAndSwap(nil, &mailbox)
 			return mailbox
+		case *future.Future[vivid.Message]:
+			return v
 		}
 	}
 	// 若上述皆未命中，返回系统根 Actor 的 Mailbox 作为默认兜底方案，保证 Mailbox 一定可用。
 	return s.Mailbox()
+}
+
+// getOrCreateRemoteMailbox 获取或创建远程邮箱
+func (s *System) getOrCreateRemoteMailbox(advertiseAddr string) vivid.Mailbox {
+	// 尝试从缓存获取
+	if value, ok := s.remoteMailboxes.Load(advertiseAddr); ok {
+		if mailbox, ok := value.(vivid.Mailbox); ok {
+			return mailbox
+		}
+	}
+
+	// 需要创建新邮箱
+	mailbox := mailbox.NewRemotingMailbox(advertiseAddr, s.poolManager)
+
+	// 存储到缓存
+	s.remoteMailboxes.Store(advertiseAddr, mailbox)
+	return mailbox
 }

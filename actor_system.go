@@ -58,6 +58,24 @@ type PrimaryActorSystem interface {
 // 每个配置项均以函数方式实现，通过修改 ActorSystemOptions 结构体中的对应字段来生效。
 type ActorSystemOption = func(options *ActorSystemOptions)
 
+func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
+	opts := &ActorSystemOptions{
+		DefaultAskTimeout: DefaultAskTimeout,
+		Logger:            log.GetDefault(),
+	}
+
+	// 适配默认 AdvertiseAddress 为 BindAddress 的场景
+	if opts.RemotingBindAddress != "" && opts.RemotingAdvertiseAddress == "" {
+		opts.RemotingAdvertiseAddress = opts.RemotingBindAddress
+	}
+
+	for _, option := range options {
+		option(opts)
+	}
+
+	return opts
+}
+
 // ActorSystemOptions 封装了 ActorSystem 初始化和运行时的核心配置参数。
 // 该结构体随着 ActorSystem 的创建流程被逐步填充，所有配置项均应通过 ActorSystemOption 配置函数进行设置。
 // 增加新配置时，只需在此结构体内扩展字段，能够保证向后兼容与良好的扩展性。
@@ -70,6 +88,15 @@ type ActorSystemOptions struct {
 	// Logger 指定 ActorSystem 的日志记录器。
 	// 若未指定，则使用默认的日志记录器。
 	Logger log.Logger
+
+	// RemotingBindAddress 指定远程通信的绑定地址。
+	// 框架将在此地址上启动Listener接收连接。
+	RemotingBindAddress string
+
+	// RemotingAdvertiseAddress 指定远程通信的广告地址。
+	// 用于标识本系统的网络地址，供其他系统连接。
+	// TCP和UDP将复用同一端口。
+	RemotingAdvertiseAddress string
 }
 
 // WithActorSystemDefaultAskTimeout 返回一个 ActorSystemOption，用于指定 ActorSystem 的默认 Ask 超时时间。
@@ -101,5 +128,29 @@ func WithActorSystemDefaultAskTimeout(timeout time.Duration) ActorSystemOption {
 func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		opts.Logger = logger
+	}
+}
+
+// WithRemoting 提供 ActorSystemOption 用于配置远程通信组件的监听及广告地址。
+//
+// 本方法可在创建 ActorSystem 实例时通过可选参数进行远程通信地址的专业配置，涵盖以下用途：
+//  1. 指定系统用于侦听远程连接的网络绑定地址（bindAddr），系统内部会基于该地址自动初始化和管理 Listener 生命周期，调用方无需自行管理 Listener 资源。
+//  2. 可选地设置对外公布（广告）的网络地址（advertiseAddr），主要用于分布式集群环境下节点间互相通信时的地址发现与解析，支持 NAT、端口映射或多网卡场景。若未显式指定，则默认采用绑定地址（bindAddr）作为对外广告地址。
+//
+// 参数说明：
+//   - bindAddr: string，必选，指定远程 Listener 的实际网络绑定地址，通常为 TCP 或 UDP 地址，决定服务器侦听的本地端口与网卡。
+//   - advertiseAddr: ...string，变长可选参数，首个参数若给定，则作为对外节点地址广告给外部 ActorSystem 使用，否则以 bindAddr 作为默认广告地址。
+//
+// 使用建议：
+//   - 当服务部署在 Cloud、Docker、Kubernetes、NAT 或复杂多地址网络环境时，推荐同时显式设置两者以确保外部系统或节点正常发现与通信。
+//   - 如本地直连或单一地址情境下，可仅配置 bindAddr，系统将自动设置广告地址一致。
+func WithRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		opts.RemotingBindAddress = bindAddr
+		if len(advertiseAddr) > 0 {
+			opts.RemotingAdvertiseAddress = advertiseAddr[0]
+		} else {
+			opts.RemotingAdvertiseAddress = bindAddr
+		}
 	}
 }

@@ -1,34 +1,85 @@
 package messages
 
-import (
-	"net"
-)
+import "reflect"
+
+var outsideMessageDesc = &MessageDesc{
+	typeOf:      nil,
+	messageName: "",
+	reader:      func(message any, reader *Reader) error { panic("outside message desc reader is not implemented") },
+	writer:      func(message any, writer *Writer) error { panic("outside message desc writer is not implemented") },
+}
+
+type MessageDesc struct {
+	typeOf      reflect.Type
+	messageName string
+	reader      InternalMessageReader
+	writer      InternalMessageWriter
+}
+
+func (desc *MessageDesc) MessageName() string {
+	return desc.messageName
+}
+
+func (desc *MessageDesc) MessageTypeOf() reflect.Type {
+	return desc.typeOf
+}
+
+func (desc *MessageDesc) IsOutside() bool {
+	return desc.typeOf == nil || desc.messageName == ""
+}
+
+func (desc *MessageDesc) Instance() any {
+	return reflect.New(desc.typeOf).Interface()
+}
 
 var (
-	internalMessageFactory = make(map[uint32]InternalMessageFactory)
-	actorRefFactory        ActorRefFactory
+	internalMessageTypeOfDesc = make(map[reflect.Type]*MessageDesc)
+	internalMessageNameOfDesc = make(map[string]*MessageDesc)
 )
 
-func SetActorRefFactory(factory ActorRefFactory) {
-	actorRefFactory = factory
-}
-
-const (
-	RefMessageType uint32 = iota + 1
-	OnLaunchMessageType
-	OnKillMessageType
-	OnKilledMessageType
+type (
+	InternalMessageReader = func(message any, reader *Reader) error
+	InternalMessageWriter = func(message any, writer *Writer) error
 )
 
-type InternalMessageFactory = func() any
-type InternalMessageReader = func(actorRefFactory ActorRefFactory, message any, reader *Reader) error
-type InternalMessageWriter = func(actorRefFactory ActorRefFactory, message any, writer *Writer) error
-type ActorRefFactory = func(address net.Addr, path string) any // 用于创建 ActorRef 的工厂函数
-
-func RegisterInternalMessage(messageType uint32, factory InternalMessageFactory, reader InternalMessageReader, writer InternalMessageWriter) {
-	internalMessageFactory[messageType] = factory
+func RegisterInternalMessage[T any](messageName string, reader InternalMessageReader, writer InternalMessageWriter) {
+	tof := reflect.TypeOf((*T)(nil)).Elem()
+	desc := &MessageDesc{
+		typeOf:      tof,
+		messageName: messageName,
+		reader:      reader,
+		writer:      writer,
+	}
+	internalMessageTypeOfDesc[tof] = desc
+	internalMessageNameOfDesc[messageName] = desc
 }
 
-func NewInternalMessage(messageType uint32) any {
-	return internalMessageFactory[messageType]()
+func QueryMessageDesc(message any) *MessageDesc {
+	tof := reflect.TypeOf(message)
+	_, ok := internalMessageTypeOfDesc[tof]
+	if !ok {
+		return nil
+	}
+	return outsideMessageDesc
+}
+
+func QueryMessageDescByName(messageName string) *MessageDesc {
+	_, ok := internalMessageNameOfDesc[messageName]
+	if !ok {
+		return nil
+	}
+	return outsideMessageDesc
+}
+
+func SerializeRemotingMessage(writer *Writer, desc *MessageDesc, message any) error {
+	return desc.writer(message, writer)
+}
+
+func DeserializeRemotingMessage(reader *Reader, desc *MessageDesc) (any, error) {
+	message := desc.Instance()
+	err := desc.reader(message, reader)
+	if err != nil {
+		return nil, err
+	}
+	return message, nil
 }
