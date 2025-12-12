@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid/pkg/log"
-	"github.com/kercylan98/vivid/pkg/result"
+	"github.com/kercylan98/vivid/pkg/sugar"
 )
 
 // ActorContext 定义了 Actor 内部行为逻辑和运行环境的上下文接口，
@@ -74,6 +74,12 @@ type ActorContext interface {
 	// 说明：
 	//   - 适合在阶段性流程、状态退出等场景调用。
 	RevertBehavior() bool
+
+	// TellSelf 向当前 ActorContext 发送消息，通常用于在当前 ActorContext 内部进行消息传递或促进事件循环。
+	// 该函数等同于 Tell(ctx.Ref(), message) 的快捷方式。
+	//
+	// 由于是投递给自己，无需再次寻找邮箱，因此性能优于 Tell(ctx.Ref(), message)。
+	TellSelf(message Message)
 }
 
 type actorRace interface {
@@ -84,13 +90,13 @@ type actorRace interface {
 	//   - options: 额外配置选项，可变参数（如显式命名、邮箱容量、启动参数等）
 	//
 	// 返回值:
-	//   - *result.Result[ActorRef]：子 Actor 的引用及创建过程中的异常（若有）
+	//   - *sugar.Result[ActorRef]：子 Actor 的引用及创建过程中的异常（若有）
 	//
 	// 核心说明：
 	//   - 仅允许父级 ActorContext 为自己的子 Actor 创建生命周期管理，保证结构树的隔离与一致性。
 	//   - 该方法非并发安全，不支持多协程并发创建同级 Actor；一般用于串行业务流程。
-	//   - 异常场景会返回 result 错误（如重名、系统资源限制等），调用方应处理创建失败的可能。
-	ActorOf(actor Actor, options ...ActorOption) *result.Result[ActorRef]
+	//   - 异常场景会返回 sugar 错误（如重名、系统资源限制等），调用方应处理创建失败的可能。
+	ActorOf(actor Actor, options ...ActorOption) *sugar.Result[ActorRef]
 }
 
 // actorBasic 抽象出 Actor 基础消息操作、父节点引用与通信能力，为 ActorContext 和 ActorSystem 内部复用。
@@ -134,7 +140,7 @@ type actorBasic interface {
 	// Logger 方法用于获取当前 ActorContext 的日志记录器（log.Logger）。
 	//
 	// 功能说明：
-	//   - 当业务或框架代码需进行日志输出（如 Info、Warn、Error 日志、调试信息等）时，应通过调用本方法获取日志记录器。
+	//   - 当业务或框架代码需进行日志输出（如 Info、Warn、Err 日志、调试信息等）时，应通过调用本方法获取日志记录器。
 	//   - 推荐统一通过本接口进行日志处理，避免直接持有底层 Logger 实例以保障日志策略的灵活变更与隔离。
 	//
 	// 返回策略：

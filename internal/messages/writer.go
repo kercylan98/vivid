@@ -518,7 +518,7 @@ func (w *Writer) WriteFrom(vals ...interface{}) error {
 // 返回的切片直接引用内部缓冲区，修改它可能会影响 Writer 的行为
 // 如果需要修改返回的数据，应该先复制一份
 func (w *Writer) Bytes() []byte {
-	return w.buf
+	return w.buf[:]
 }
 
 // Len 返回已写入数据的字节数

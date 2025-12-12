@@ -21,10 +21,11 @@ func NewEnvelop(system bool, agent, sender vivid.ActorRef, message vivid.Message
 	}
 }
 
-func NewEnvelopWithTell(system bool, message vivid.Message) *Envelop {
+func NewEnvelopWithTell(system bool, sender vivid.ActorRef, message vivid.Message) *Envelop {
 	return &Envelop{
 		system:  system,
 		message: message,
+		sender:  sender,
 	}
 }
 

@@ -15,7 +15,7 @@ import (
 //
 // 典型用法：
 //   - 应用启动时创建唯一的 ActorSystem 实例，通过该实例衍生、管理其子 Actor。
-//   - 推荐通过 NewActorSystem（见 bootstrap 包）工厂方法创建实例，并使用泛型 result.Result 进行错误处理与解包。
+//   - 推荐通过 NewActorSystem（见 bootstrap 包）工厂方法创建实例，并使用泛型 sugar.Result 进行错误处理与解包。
 //
 // 注意事项：
 //   - ActorSystem 实例设计为轻量且线程安全，避免作为全局变量暴露在多线程环境下共享。

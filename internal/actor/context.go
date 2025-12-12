@@ -11,7 +11,7 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/pkg/log"
-	"github.com/kercylan98/vivid/pkg/result"
+	"github.com/kercylan98/vivid/pkg/sugar"
 )
 
 var (
@@ -102,28 +102,39 @@ func (c *Context) Mailbox() vivid.Mailbox {
 	return c.mailbox
 }
 
-func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *result.Result[vivid.ActorRef] {
+func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *sugar.Result[vivid.ActorRef] {
+	var result sugar.ResultContainer[vivid.ActorRef]
+	if preLaunchActor, ok := actor.(vivid.PrelaunchActor); ok {
+		if err := preLaunchActor.OnPrelaunch(); err != nil {
+			return result.Error(err)
+		}
+	}
+
 	if c.children == nil {
 		c.children = make(map[vivid.ActorPath]vivid.ActorRef)
 	}
 
 	childCtx, err := NewContext(c.system, c.ref, actor, options...)
 	if err != nil {
-		return result.With[vivid.ActorRef](nil, err)
+		return sugar.With[vivid.ActorRef](nil, err)
 	}
 
 	if c.system.appendActorContext(childCtx) {
-		return result.With[vivid.ActorRef](nil, fmt.Errorf("already exists"))
+		return sugar.With[vivid.ActorRef](nil, fmt.Errorf("already exists"))
 	}
 
 	c.children[childCtx.Ref().GetPath()] = childCtx.Ref()
 
 	c.tell(true, childCtx.Ref(), new(vivid.OnLaunch))
-	return result.With(childCtx.Ref(), nil)
+	return sugar.With(childCtx.Ref(), nil)
 }
 
 func (c *Context) Reply(message vivid.Message) {
 	c.Tell(c.envelop.Sender(), message)
+}
+
+func (c *Context) TellSelf(message vivid.Message) {
+	c.mailbox.Enqueue(mailbox.NewEnvelopWithTell(false, c.ref, message))
 }
 
 func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
@@ -131,9 +142,9 @@ func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
 }
 
 func (c *Context) tell(system bool, recipient vivid.ActorRef, message vivid.Message) {
-	envelop := mailbox.NewEnvelopWithTell(system, message)
-	mailbox := c.system.findMailbox(recipient.(*Ref))
-	mailbox.Enqueue(envelop)
+	envelop := mailbox.NewEnvelopWithTell(system, c.ref, message)
+	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
+	receiverMailbox.Enqueue(envelop)
 }
 
 func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
@@ -153,8 +164,8 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 	c.system.appendFuture(agentRef, futureIns)
 
 	envelop := mailbox.NewEnvelopWithAsk(system, agentRef.agent, agentRef.ref, message)
-	mailbox := c.system.findMailbox(recipient.(*Ref))
-	mailbox.Enqueue(envelop)
+	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
+	receiverMailbox.Enqueue(envelop)
 
 	return futureIns
 }
@@ -212,7 +223,7 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 	}
 
 	selfKilledMessage := &vivid.OnKilled{Ref: c.ref}
-	c.envelop = mailbox.NewEnvelopWithTell(true, selfKilledMessage)
+	c.envelop = mailbox.NewEnvelopWithTell(true, c.Sender(), selfKilledMessage)
 	behavior(c)
 
 	// 宣告父节点自身死亡

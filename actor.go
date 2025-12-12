@@ -10,6 +10,11 @@ type Actor interface {
 	OnReceive(ctx ActorContext)
 }
 
+type PrelaunchActor interface {
+	Actor
+	OnPrelaunch() error
+}
+
 type ActorFN func(ctx ActorContext)
 
 func (fn ActorFN) OnReceive(ctx ActorContext) {

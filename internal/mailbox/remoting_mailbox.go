@@ -1,57 +1,85 @@
 package mailbox
 
 import (
+	"fmt"
+	"net"
+	"sync"
+
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/internal/remoting/serialize"
+	"github.com/kercylan98/vivid/internal/utils"
+	"golang.org/x/sync/singleflight"
+)
+
+const (
+	poolSize = 10
 )
 
 var (
 	_ vivid.Mailbox = &RemotingMailbox{}
 )
 
-func NewRemotingMailbox(advertiseAddress string, poolManager *remoting.ConnectionPoolManager) *RemotingMailbox {
+func NewRemotingMailbox(advertiseAddress string) *RemotingMailbox {
 	return &RemotingMailbox{
 		advertiseAddress: advertiseAddress,
-		poolManager:      poolManager,
+		singleflight:     &singleflight.Group{},
 	}
 }
 
 type RemotingMailbox struct {
 	advertiseAddress string
-	poolManager      *remoting.ConnectionPoolManager
+	connections      [poolSize]net.Conn
+	connectionLock   sync.RWMutex
+	singleflight     *singleflight.Group
 }
 
 func (m *RemotingMailbox) Enqueue(envelop vivid.Envelop) {
-	// 获取或创建连接池
-	pool := m.poolManager.GetOrCreatePool(m.advertiseAddress)
+	sender := envelop.Sender()
+	slot := utils.Fnv32aHash(sender.GetPath()) % poolSize
 
-	// 使用Sender作为key进行一致性哈希路由
-	senderKey := ""
-	if sender := envelop.Sender(); sender != nil {
-		senderKey = sender.GetAddress() + "@" + sender.GetPath()
-	} else {
-		// 如果没有Sender，使用目标地址
-		senderKey = m.advertiseAddress
+	// 获取连接，如果没有则创建一个
+	m.connectionLock.RLock()
+	conn := m.connections[slot]
+	m.connectionLock.RUnlock()
+	if conn == nil {
+		conn, err, _ := m.singleflight.Do(fmt.Sprint(slot), func() (any, error) {
+			m.connectionLock.Lock()
+			defer m.connectionLock.Unlock()
+
+			conn, err := net.Dial("tcp", m.advertiseAddress)
+			if err != nil {
+				return nil, err
+			}
+
+			// 发送客户端握手协议
+			handshakeProtocol := &Handshake{
+				AdvertiseAddr: m.advertiseAddress,
+			}
+			if err := handshakeProtocol.Send(conn); err != nil {
+				return nil, err
+			}
+
+			// 等待服务端握手协议
+			if err := handshakeProtocol.Wait(conn); err != nil {
+				return nil, err
+			}
+
+			m.connections[slot] = conn
+			return conn, nil
+		})
+		if err != nil {
+			panic(err)
+		}
+		conn = conn.(net.Conn)
 	}
 
-	// 获取连接
-	conn, err := pool.GetConnection(senderKey)
-	if err != nil {
-		// TODO: 连接失败时应该重试或使用错误处理机制
-		return
-	}
-
-	// 序列化 Envelop
+	// 发送消息
 	data, err := serialize.SerializeEnvelopWithRemoting(envelop)
 	if err != nil {
-		// TODO: 序列化失败时应该有错误处理逻辑
-		return
+		panic(err)
 	}
-
-	// 获取传输层并发送数据
-	transport := remoting.GetTransport()
-	if err := transport.Send(conn, data); err != nil {
-		// TODO: 发送失败时应该有错误处理逻辑
+	_, err = conn.Write(data)
+	if err != nil {
+		panic(err)
 	}
 }
