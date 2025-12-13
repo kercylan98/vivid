@@ -3,11 +3,29 @@ package actor_test
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/actor"
+	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/stretchr/testify/assert"
 )
+
+type TestInternalMessage struct {
+	text string
+}
+
+func init() {
+	messages.RegisterInternalMessage[*TestInternalMessage]("test_message",
+		func(message any, reader *messages.Reader) error {
+			m := message.(*TestInternalMessage)
+			return reader.ReadInto(&m.text)
+		},
+		func(message any, writer *messages.Writer) error {
+			m := message.(*TestInternalMessage)
+			return writer.WriteFrom(m.text)
+		})
+}
 
 func TestSystem_Stop(t *testing.T) {
 	system := actor.NewSystem().Unwrap()
@@ -27,18 +45,15 @@ func TestSystem_Stop(t *testing.T) {
 	wg.Wait()
 }
 
-// TODO: 当前跨网络暂无法发出，待修复
+// TODO: Stop 时候 accept Actor无法处理 OnKill
 func TestSystem_RemotingAsk(t *testing.T) {
 	system1 := actor.NewSystem(vivid.WithRemoting("127.0.0.1:8080")).Unwrap()
 	system2 := actor.NewSystem(vivid.WithRemoting("127.0.0.1:8081")).Unwrap()
 
 	ref := system1.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-		switch ctx.Message().(type) {
-		case *vivid.OnLaunch:
-			if ctx.Sender() != nil {
-				ctx.Reply(&vivid.OnLaunch{})
-				return
-			}
+		switch v := ctx.Message().(type) {
+		case *TestInternalMessage:
+			ctx.Reply(v)
 		}
 	})).Unwrap()
 	ref = ref.Clone()
@@ -48,11 +63,12 @@ func TestSystem_RemotingAsk(t *testing.T) {
 	system2.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
-			f := ctx.Ask(ref, &vivid.OnLaunch{})
+			f := ctx.Ask(ref, &TestInternalMessage{text: "hello"}, time.Second*5)
 			reply, err := f.Result()
 			assert.Nil(t, err)
-			_, ok := reply.(*vivid.OnLaunch)
+			m, ok := reply.(*TestInternalMessage)
 			assert.True(t, ok)
+			assert.True(t, m.text == "hello")
 			wg.Done()
 		}
 	}))

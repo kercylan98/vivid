@@ -1,4 +1,4 @@
-package mailbox
+package remoting
 
 import (
 	"net"
@@ -16,6 +16,7 @@ func (h *Handshake) Send(conn net.Conn) error {
 		return err
 	}
 	data := writer.Bytes()
+
 	messages.ReleaseWriterToPool(writer)
 	_, err := conn.Write(data)
 	return err

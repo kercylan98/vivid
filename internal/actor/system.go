@@ -1,17 +1,23 @@
 package actor
 
 import (
+	"context"
 	"sync"
+	"time"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/guard"
+	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/remoting"
+	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/sugar"
 )
 
 var (
-	_ vivid.ActorSystem = (*System)(nil)
+	_ vivid.ActorSystem              = (*System)(nil)
+	_ vivid.EnvelopHandler           = (*System)(nil)
+	_ remoting.NetworkEnvelopHandler = (*System)(nil)
 )
 
 func NewSystem(options ...vivid.ActorSystemOption) *sugar.Result[*System] {
@@ -24,6 +30,7 @@ func NewSystem(options ...vivid.ActorSystemOption) *sugar.Result[*System] {
 	}
 
 	var err error
+	var logAttrs []any
 	system.Context, err = NewContext(system, nil, guard.NewActor(system.guardClosedSignal))
 	if err != nil {
 		return sugar.Err[*System](err)
@@ -31,19 +38,40 @@ func NewSystem(options ...vivid.ActorSystemOption) *sugar.Result[*System] {
 
 	// 初始化远程服务器 Actor
 	if opts.RemotingBindAddress != "" && opts.RemotingAdvertiseAddress != "" {
-		system.ActorOf(remoting.NewServerActor(opts.RemotingBindAddress, opts.RemotingAdvertiseAddress),
-			vivid.WithActorName("@remoting"),
-		)
+		system.options.Logger = system.options.Logger.WithGroup(opts.RemotingAdvertiseAddress)
+		logAttrs = append(logAttrs, log.String("bind_address", opts.RemotingBindAddress))
+		logAttrs = append(logAttrs, log.String("advertise_address", opts.RemotingAdvertiseAddress))
+
+		system.remotingServer = remoting.NewServerActor(opts.RemotingBindAddress, opts.RemotingAdvertiseAddress, system)
+		result := system.ActorOf(system.remotingServer, vivid.WithActorName("@remoting"))
+		if result.IsErr() {
+			return sugar.Err[*System](result.Err())
+		}
 	}
 
+	system.Logger().Debug("actor system initialized", logAttrs...)
 	return sugar.With(system, nil)
 }
 
 type System struct {
-	*Context          // ActorSystem 本身就表示了根 Actor
-	options           *vivid.ActorSystemOptions
-	actorContexts     sync.Map // 用于加速访问的 ActorContext 缓存（含有 Future）
-	guardClosedSignal chan struct{}
+	*Context                                    // ActorSystem 本身就表示了根 Actor
+	options           *vivid.ActorSystemOptions // 系统选项
+	actorContexts     sync.Map                  // 用于加速访问的 ActorContext 缓存（含有 Future）
+	guardClosedSignal chan struct{}             // 用于通知系统关闭的信号
+	remotingServer    *remoting.ServerActor     // 远程服务器
+}
+
+// HandleRemotingEnvelop implements remoting.NetworkEnvelopHandler.
+func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath string, messageInstance any) {
+	var agent, sender, receiver *Ref
+	if agentAddr != "" {
+		// Addr 不为空就一定存在 Path
+		agent = NewRef(agentAddr, agentPath)
+	}
+	sender = NewRef(senderAddr, senderPath)
+	receiver = NewRef(receiverAddr, receiverPath)
+	receiverMailbox := s.findMailbox(receiver)
+	receiverMailbox.Enqueue(mailbox.NewEnvelop(system, agent, sender, receiver, messageInstance))
 }
 
 func (s *System) HandleEnvelop(envelop vivid.Envelop) {
@@ -52,8 +80,21 @@ func (s *System) HandleEnvelop(envelop vivid.Envelop) {
 }
 
 func (s *System) Stop() {
+	s.Logger().Debug("actor system stopping")
 	s.Context.Kill(s.Context.Ref(), true, "actor system stop")
-	<-s.guardClosedSignal
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*1111115)
+	defer cancel()
+	select {
+	case <-s.guardClosedSignal:
+		cancel()
+	case <-ctx.Done():
+		s.actorContexts.Range(func(key, value any) bool {
+			return true
+		})
+		panic("dead lock")
+	}
+
+	s.Logger().Info("actor system stopped")
 }
 
 func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) {
@@ -89,7 +130,7 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 
 	// 检查是否为远程地址，使用远程邮箱
 	if ref.GetAddress() != s.Ref().GetAddress() {
-		return s.getOrCreateRemoteMailbox(ref.address)
+		return s.remotingServer.GetRemotingMailboxCentral().GetOrCreate(ref.address, s)
 	}
 
 	// 在 actorContexts 中查找指定路径（GetPath）对应的 Context，并尝试获取其邮箱（Mailbox）。
@@ -106,9 +147,4 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 	}
 	// 若上述皆未命中，返回系统根 Actor 的 Mailbox 作为默认兜底方案，保证 Mailbox 一定可用。
 	return s.Mailbox()
-}
-
-// getOrCreateRemoteMailbox 获取或创建远程邮箱
-func (s *System) getOrCreateRemoteMailbox(advertiseAddr string) vivid.Mailbox {
-	return nil
 }

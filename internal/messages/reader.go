@@ -509,9 +509,9 @@ func (r *Reader) readReflect(v interface{}) error {
 // vals 是要读取的变量指针列表，按顺序依次读取
 // 如果任何读取操作失败，会立即返回错误
 func (r *Reader) ReadInto(vals ...interface{}) error {
-	for _, v := range vals {
+	for i, v := range vals {
 		if err := r.Read(v); err != nil {
-			return err
+			return fmt.Errorf("read index %d failed: %w", i, err)
 		}
 	}
 	return nil

@@ -37,24 +37,26 @@ type Future[T vivid.Message] struct {
 
 // Enqueue 实现 Mailbox 的入列接口，用于 Future 接收消息响应
 func (f *Future[T]) Enqueue(envelop vivid.Envelop) {
-	if !f.closed.CompareAndSwap(false, true) {
-		return
-	}
-	message := envelop.Message()
-	msg, ok := message.(T)
-	if !ok {
-		f.Close(fmt.Errorf("%w, expected %T, got %T", vivid.ErrFutureMessageTypeMismatch, f.message, message))
-		return
-	}
-	f.message = msg
-	close(f.done)
+	f.close(envelop.Message())
 }
 
 func (f *Future[T]) Close(err error) {
+	f.close(err)
+}
+
+func (f *Future[T]) close(v any) {
 	if !f.closed.CompareAndSwap(false, true) {
 		return
 	}
-	f.err = err
+	switch val := v.(type) {
+	case error:
+		f.err = val
+	case T:
+		f.message = val
+	case nil:
+	default:
+		f.err = fmt.Errorf("%w, expected %T, got %T", vivid.ErrFutureMessageTypeMismatch, f.message, val)
+	}
 	close(f.done)
 	if f.timer != nil {
 		f.timer.Stop()
@@ -70,6 +72,7 @@ func (f *Future[T]) Result() (T, error) {
 }
 
 func (f *Future[T]) Wait() error {
-	<-f.done
+	v := <-f.done
+	_ = v
 	return f.err
 }

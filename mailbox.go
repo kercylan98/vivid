@@ -21,6 +21,8 @@ type Envelop interface {
 	Sender() ActorRef
 	// Message 返回消息体。
 	Message() Message
+	// Receiver 接收人
+	Receiver() ActorRef
 }
 
 // EnvelopHandler 定义了处理消息信封的接口。
@@ -29,14 +31,4 @@ type EnvelopHandler interface {
 	// HandleEnvelop 用于处理传入的消息信封。
 	// 参数 envelop 是实现了 Envelop 接口的消息信封。
 	HandleEnvelop(envelop Envelop)
-}
-
-type EnvelopProvider interface {
-	Provide(system bool, agent ActorRef, sender ActorRef, message any) Envelop
-}
-
-type EnvelopProviderFN func(system bool, agent ActorRef, sender ActorRef, message any) Envelop
-
-func (fn EnvelopProviderFN) Provide(system bool, agent ActorRef, sender ActorRef, message any) Envelop {
-	return fn(system, agent, sender, message)
 }

@@ -102,8 +102,16 @@ func (c *Context) Mailbox() vivid.Mailbox {
 	return c.mailbox
 }
 
+func (c *Context) Name() string {
+	return c.options.Name
+}
+
 func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *sugar.Result[vivid.ActorRef] {
 	var result sugar.ResultContainer[vivid.ActorRef]
+	var status = atomic.LoadInt32(&c.state)
+	if status == killed {
+		return result.Error(fmt.Errorf("actor killed"))
+	}
 	if preLaunchActor, ok := actor.(vivid.PrelaunchActor); ok {
 		if err := preLaunchActor.OnPrelaunch(); err != nil {
 			return result.Error(err)
@@ -126,6 +134,11 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *suga
 	c.children[childCtx.Ref().GetPath()] = childCtx.Ref()
 
 	c.tell(true, childCtx.Ref(), new(vivid.OnLaunch))
+	c.Logger().Debug("actor spawned", log.String("path", childCtx.Ref().GetPath()))
+
+	if status == killing {
+		c.Kill(childCtx.ref, false, "parent killed")
+	}
 	return sugar.With(childCtx.Ref(), nil)
 }
 
@@ -134,7 +147,7 @@ func (c *Context) Reply(message vivid.Message) {
 }
 
 func (c *Context) TellSelf(message vivid.Message) {
-	c.mailbox.Enqueue(mailbox.NewEnvelopWithTell(false, c.ref, message))
+	c.mailbox.Enqueue(mailbox.NewEnvelopWithTell(false, c.ref, c.ref, message))
 }
 
 func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
@@ -142,7 +155,7 @@ func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
 }
 
 func (c *Context) tell(system bool, recipient vivid.ActorRef, message vivid.Message) {
-	envelop := mailbox.NewEnvelopWithTell(system, c.ref, message)
+	envelop := mailbox.NewEnvelopWithTell(system, c.ref, recipient, message)
 	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
 	receiverMailbox.Enqueue(envelop)
 }
@@ -163,7 +176,7 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 	})
 	c.system.appendFuture(agentRef, futureIns)
 
-	envelop := mailbox.NewEnvelopWithAsk(system, agentRef.agent, agentRef.ref, message)
+	envelop := mailbox.NewEnvelopWithAsk(system, agentRef.agent, agentRef.ref, recipient, message)
 	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
 	receiverMailbox.Enqueue(envelop)
 
@@ -197,6 +210,7 @@ func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
 		return
 	}
 
+	c.Logger().Debug("receive kill", log.String("path", c.ref.path))
 	// 等待所有子 Actor 结束
 	for _, child := range c.children {
 		c.Kill(child, message.Poison, message.Reason)
@@ -223,7 +237,7 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 	}
 
 	selfKilledMessage := &vivid.OnKilled{Ref: c.ref}
-	c.envelop = mailbox.NewEnvelopWithTell(true, c.Sender(), selfKilledMessage)
+	c.envelop = mailbox.NewEnvelopWithTell(true, c.Sender(), c.ref, selfKilledMessage)
 	behavior(c)
 
 	// 宣告父节点自身死亡
@@ -232,6 +246,7 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 		c.tell(true, c.parent, selfKilledMessage)
 	}
 
+	c.Logger().Debug("actor killed", log.String("path", c.ref.GetPath()))
 }
 
 func (c *Context) Message() vivid.Message {

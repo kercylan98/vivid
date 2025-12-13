@@ -50,7 +50,7 @@ type (
 )
 
 func RegisterInternalMessage[T any](messageName string, reader InternalMessageReader, writer InternalMessageWriter) {
-	tof := reflect.TypeOf((*T)(nil)).Elem()
+	tof := reflect.TypeOf((*T)(nil)).Elem().Elem()
 	desc := &MessageDesc{
 		typeOf:      tof,
 		messageName: messageName,
@@ -62,7 +62,7 @@ func RegisterInternalMessage[T any](messageName string, reader InternalMessageRe
 }
 
 func QueryMessageDesc(message any) *MessageDesc {
-	tof := reflect.TypeOf(message)
+	tof := reflect.TypeOf(message).Elem()
 	desc, ok := internalMessageTypeOfDesc[tof]
 	if ok {
 		return desc
@@ -79,7 +79,14 @@ func QueryMessageDescByName(messageName string) *MessageDesc {
 }
 
 func SerializeRemotingMessage(writer *Writer, desc *MessageDesc, message any) error {
-	return desc.writer(message, writer)
+	dw := NewWriterFromPool()
+	defer ReleaseWriterToPool(dw)
+	if err := desc.writer(message, dw); err != nil {
+		return err
+	}
+	// 写入包含长度的数据
+	writer.WriteBytesWithLength(dw.Bytes(), 4)
+	return nil
 }
 
 func DeserializeRemotingMessage(reader *Reader, desc *MessageDesc) (any, error) {

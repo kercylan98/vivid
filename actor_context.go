@@ -80,6 +80,9 @@ type ActorContext interface {
 	//
 	// 由于是投递给自己，无需再次寻找邮箱，因此性能优于 Tell(ctx.Ref(), message)。
 	TellSelf(message Message)
+
+	// Name 返回当前 Actor 的名称。
+	Name() string
 }
 
 type actorRace interface {
@@ -102,32 +105,7 @@ type actorRace interface {
 // actorBasic 抽象出 Actor 基础消息操作、父节点引用与通信能力，为 ActorContext 和 ActorSystem 内部复用。
 // 不建议业务方直接实现或调用，建议通过 ActorContext 间接获得各项能力。
 type actorBasic interface {
-
-	// Tell 向指定 ActorRef 异步发送消息（单向），即 Fire-and-Forget，不关心对方回复。
-	//
-	// 参数:
-	//   - recipient: 目标 Actor 的引用（ActorRef）
-	//   - message: 发送内容（任何类型，推荐结构体以增强类型安全）
-	//
-	// 行为特性：
-	//   - 消息异步派发进入目标 Actor 的邮箱，由其所在调度器排队处理。
-	//   - 永不阻塞本地调用方；不保证投递顺序（但同一发送方顺序一致）。
-	Tell(recipient ActorRef, message Message)
-
-	// Ask 向指定 ActorRef 发送请求型消息，并获得 Future 以便异步等待回复。
-	//
-	// 参数:
-	//   - recipient: 目标 Actor 的引用（ActorRef）
-	//   - message: 请求内容（任何类型，通常为业务结构体或系统事件）
-	//   - timeout（可选）: 单次请求超时设定（不传则采用系统默认 ask 超时时间）
-	//
-	// 返回值:
-	//   - Future[Message]: 表示异步应答的 Future 实例对象，可链式处理/同步等待
-	//
-	// 行为特性：
-	//   - 支持多种超时控制与异常捕捉，超时后 Future 状态自动为失败。
-	//   - 适用于 RPC、协作、需结果确认等双向通信场景。
-	Ask(recipient ActorRef, message Message, timeout ...time.Duration) Future[Message]
+	ActorLiaison
 
 	// Kill 请求当前 Actor 终止运行，支持优雅停机（poison=false）或立即销毁（poison=true）。
 	//
@@ -156,4 +134,32 @@ type actorBasic interface {
 	// 返回值：
 	//   - log.Logger：当前上下文（ActorContext 或 ActorSystem）可用的日志记录器实例。
 	Logger() log.Logger
+}
+
+type ActorLiaison interface {
+	// Tell 向指定 ActorRef 异步发送消息（单向），即 Fire-and-Forget，不关心对方回复。
+	//
+	// 参数:
+	//   - recipient: 目标 Actor 的引用（ActorRef）
+	//   - message: 发送内容（任何类型，推荐结构体以增强类型安全）
+	//
+	// 行为特性：
+	//   - 消息异步派发进入目标 Actor 的邮箱，由其所在调度器排队处理。
+	//   - 永不阻塞本地调用方；不保证投递顺序（但同一发送方顺序一致）。
+	Tell(recipient ActorRef, message Message)
+
+	// Ask 向指定 ActorRef 发送请求型消息，并获得 Future 以便异步等待回复。
+	//
+	// 参数:
+	//   - recipient: 目标 Actor 的引用（ActorRef）
+	//   - message: 请求内容（任何类型，通常为业务结构体或系统事件）
+	//   - timeout（可选）: 单次请求超时设定（不传则采用系统默认 ask 超时时间）
+	//
+	// 返回值:
+	//   - Future[Message]: 表示异步应答的 Future 实例对象，可链式处理/同步等待
+	//
+	// 行为特性：
+	//   - 支持多种超时控制与异常捕捉，超时后 Future 状态自动为失败。
+	//   - 适用于 RPC、协作、需结果确认等双向通信场景。
+	Ask(recipient ActorRef, message Message, timeout ...time.Duration) Future[Message]
 }
