@@ -34,6 +34,7 @@ func NewActorSystemConfiguration(options ...ActorSystemOption) *ActorSystemConfi
 		})),
 		FutureDefaultTimeout: time.Second,
 		HTW:                  *DefaultHtwConfig(),
+		HTWEnabled:           true, // 默认启用
 	}
 	for _, option := range options {
 		option(c)
@@ -70,6 +71,7 @@ type (
 		Metrics              bool // 是否启用指标采集
 		Network              ActorSystemNetworkConfiguration
 		HTW                  HtwConfig
+		HTWEnabled           bool // 是否启用层级时间轮（HTW），默认 true
 	}
 
 	ActorSystemNetworkConfigurator   = configurator.Configurator[*ActorSystemNetworkConfiguration]
@@ -264,4 +266,18 @@ func WithActorSystemHookProviders(hookProviders ...HookProvider) ActorSystemOpti
 func (c *ActorSystemConfiguration) WithMetrics(enable bool) *ActorSystemConfiguration {
 	c.Metrics = enable
 	return c
+}
+
+// WithHTWEnabled 设置是否启用层级时间轮（HTW）
+// 如果禁用，Schedule 相关方法将不会工作，但可以节省 CPU 资源
+func (c *ActorSystemConfiguration) WithHTWEnabled(enabled bool) *ActorSystemConfiguration {
+	c.HTWEnabled = enabled
+	return c
+}
+
+// WithActorSystemHTWEnabled 设置是否启用层级时间轮（HTW）
+func WithActorSystemHTWEnabled(enabled bool) ActorSystemOption {
+	return func(c *ActorSystemConfiguration) {
+		c.WithHTWEnabled(enabled)
+	}
 }

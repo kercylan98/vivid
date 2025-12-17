@@ -111,7 +111,10 @@ func NewActorSystemFromConfig(config *ActorSystemConfiguration) ActorSystem {
 	sys.actorContext = ctx
 
 	// 启动层级时间轮（系统负责生命周期）
-	sys.htwRef = ctx.SpawnOf(ActorProviderFN(func() Actor { return newHtwActor(config.HTW) }))
+	// 如果禁用了 HTW，则不创建 htwActor，节省 CPU 资源
+	if config.HTWEnabled {
+		sys.htwRef = ctx.SpawnOf(ActorProviderFN(func() Actor { return newHtwActor(config.HTW) }))
+	}
 
 	if rpc {
 		if err := sys.registry.StartRPCServer(); err != nil {

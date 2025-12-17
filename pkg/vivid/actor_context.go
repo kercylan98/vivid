@@ -347,18 +347,34 @@ func (ctx *actorContext) Children() []ActorRef {
 
 // ---- 调度 API 实现 ----
 func (ctx *actorContext) ScheduleOnce(name string, delay time.Duration, to ActorRef, payload Message) {
+	if ctx.system.htwRef == nil {
+		ctx.Logger().Warn("ScheduleOnce called but HTW is disabled, ignoring")
+		return
+	}
 	ctx.Tell(ctx.system.htwRef, &scheduleOnce{Name: name, Delay: delay, To: to, Payload: payload})
 }
 
 func (ctx *actorContext) ScheduleInterval(name string, initialDelay, period time.Duration, to ActorRef, payload Message) {
+	if ctx.system.htwRef == nil {
+		ctx.Logger().Warn("ScheduleInterval called but HTW is disabled, ignoring")
+		return
+	}
 	ctx.Tell(ctx.system.htwRef, &scheduleInterval{Name: name, InitialDelay: initialDelay, Period: period, To: to, Payload: payload})
 }
 
 func (ctx *actorContext) ScheduleCron(name string, spec string, to ActorRef, payload Message) {
+	if ctx.system.htwRef == nil {
+		ctx.Logger().Warn("ScheduleCron called but HTW is disabled, ignoring")
+		return
+	}
 	ctx.Tell(ctx.system.htwRef, &scheduleCron{Name: name, Spec: spec, To: to, Payload: payload})
 }
 
 func (ctx *actorContext) CancelSchedule(name string) {
+	if ctx.system.htwRef == nil {
+		ctx.Logger().Warn("CancelSchedule called but HTW is disabled, ignoring")
+		return
+	}
 	ctx.Tell(ctx.system.htwRef, &cancelSchedule{Name: name})
 }
 
