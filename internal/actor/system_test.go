@@ -45,7 +45,6 @@ func TestSystem_Stop(t *testing.T) {
 	wg.Wait()
 }
 
-// TODO: Stop 时候 accept Actor无法处理 OnKill
 func TestSystem_RemotingAsk(t *testing.T) {
 	system1 := actor.NewSystem(vivid.WithRemoting("127.0.0.1:8080")).Unwrap()
 	system2 := actor.NewSystem(vivid.WithRemoting("127.0.0.1:8081")).Unwrap()

@@ -213,6 +213,7 @@ func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
 	c.Logger().Debug("receive kill", log.String("path", c.ref.path))
 	// 等待所有子 Actor 结束
 	for _, child := range c.children {
+		c.Logger().Debug("notify child kill", log.String("path", child.GetPath()))
 		c.Kill(child, message.Poison, message.Reason)
 	}
 

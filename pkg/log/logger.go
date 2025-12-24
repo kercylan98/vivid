@@ -12,7 +12,7 @@ var (
 
 func init() {
 	logger := NewSLogLogger(slog.Default())
-	defaultLogger.Store(&logger)
+	SetDefault(logger)
 }
 
 // Logger 定义了日志记录器的抽象接口，约束了日志系统的通用操作方法规范。
