@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/pkg/log"
 )
 
 func newMailboxCentral(remotingServerRef vivid.ActorRef, actorLiaison vivid.ActorLiaison, codec vivid.Codec) *MailboxCentral {
@@ -31,7 +32,9 @@ func (rmc *MailboxCentral) Close() {
 		mailbox.connectionLock.Lock()
 		for _, connection := range mailbox.connections {
 			if connection != nil {
-				connection.Close()
+				if err := connection.Close(); err != nil {
+					rmc.actorLiaison.Logger().Warn("close Remoting connection failed", log.String("advertise_addr", connection.advertiseAddr), log.Any("err", err))
+				}
 			}
 		}
 		mailbox.connectionLock.Unlock()

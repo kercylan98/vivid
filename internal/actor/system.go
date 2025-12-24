@@ -143,10 +143,10 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 	if value, ok := s.actorContexts.Load(ref.GetPath()); ok {
 		switch v := value.(type) {
 		case *Context:
-			mailbox := v.Mailbox()
 			// 利用 CompareAndSwap 保证仅存储一次 Mailbox 指针到 cache，提升后续命中率，防止多线程下的闭包问题。
-			ref.cache.CompareAndSwap(nil, &mailbox)
-			return mailbox
+			m := v.Mailbox()
+			ref.cache.CompareAndSwap(nil, &m)
+			return m
 		case *future.Future[vivid.Message]:
 			return v
 		}

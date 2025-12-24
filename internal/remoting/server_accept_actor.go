@@ -1,9 +1,11 @@
 package remoting
 
 import (
+	"fmt"
 	"net"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/pkg/log"
 )
 
 var (
@@ -48,8 +50,13 @@ func (a *serverAcceptActor) onAccept(ctx vivid.ActorContext) {
 
 	// 由 ServerActor 负责管理连接
 	connActor := newTCPConnectionActor(false, conn, a.advertiseAddr, a.codec, a.envelopHandler)
-	if err = ctx.Ask(ctx.Parent(), connActor).Wait(); err != nil {
-		// 连接失败，关闭连接
-		conn.Close()
-	}
+	// 此处存在 GOLAND 误报，必须使用 defer 或匿名函数处理，否则将提示：Potential resource leak: ensure the resource is closed on all execution paths
+	func(connActor *tcpConnectionActor) {
+		if err = ctx.Ask(ctx.Parent(), connActor).Wait(); err != nil {
+			// 连接失败，关闭连接
+			if closeErr := connActor.Close(); closeErr != nil {
+				ctx.Logger().Warn("close accept connection failed", log.String("advertise_addr", a.advertiseAddr), log.Any("err", fmt.Errorf("%w: %s", err, closeErr)))
+			}
+		}
+	}(connActor)
 }

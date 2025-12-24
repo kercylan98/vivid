@@ -162,4 +162,7 @@ type ActorLiaison interface {
 	//   - 支持多种超时控制与异常捕捉，超时后 Future 状态自动为失败。
 	//   - 适用于 RPC、协作、需结果确认等双向通信场景。
 	Ask(recipient ActorRef, message Message, timeout ...time.Duration) Future[Message]
+
+	// Logger 返回日志记录器。
+	Logger() log.Logger
 }

@@ -60,10 +60,12 @@ type PrimaryActorSystem interface {
 type ActorSystemOption = func(options *ActorSystemOptions)
 
 func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
-	opts := &ActorSystemOptions{
-		DefaultAskTimeout: DefaultAskTimeout,
-		Logger:            log.GetDefault(),
-	}
+	options = append([]ActorSystemOption{
+		WithActorSystemDefaultAskTimeout(DefaultAskTimeout),
+		WithActorSystemLogger(log.GetDefault()),
+	}, options...)
+
+	opts := &ActorSystemOptions{}
 
 	// 适配默认 AdvertiseAddress 为 BindAddress 的场景
 	if opts.RemotingBindAddress != "" && opts.RemotingAdvertiseAddress == "" {
