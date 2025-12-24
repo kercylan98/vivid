@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"encoding/gob"
 	"fmt"
 	"reflect"
 )
@@ -12,6 +13,8 @@ var outsideMessageDesc = &MessageDesc{
 		return fmt.Errorf("outside message desc reader is not implemented")
 	},
 	writer: func(message any, writer *Writer) error {
+		messageType := reflect.TypeOf(message).Elem()
+		gob.RegisterName(messageType.Name(), message)
 		return fmt.Errorf("outside message desc writer is not implemented")
 	},
 }

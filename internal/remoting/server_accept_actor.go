@@ -15,6 +15,7 @@ func newServerAcceptActor(serverActor *ServerActor) *serverAcceptActor {
 		listener:       serverActor.listener,
 		advertiseAddr:  serverActor.advertiseAddr,
 		envelopHandler: serverActor.envelopHandler,
+		codec:          serverActor.codec,
 	}
 }
 
@@ -23,6 +24,7 @@ type serverAcceptActor struct {
 	listener       net.Listener
 	advertiseAddr  string
 	envelopHandler NetworkEnvelopHandler
+	codec          vivid.Codec
 }
 
 func (a *serverAcceptActor) OnReceive(ctx vivid.ActorContext) {
@@ -45,7 +47,7 @@ func (a *serverAcceptActor) onAccept(ctx vivid.ActorContext) {
 	}
 
 	// 由 ServerActor 负责管理连接
-	connActor := newTCPConnectionActor(false, conn, a.advertiseAddr, a.envelopHandler)
+	connActor := newTCPConnectionActor(false, conn, a.advertiseAddr, a.codec, a.envelopHandler)
 	if err = ctx.Ask(ctx.Parent(), connActor).Wait(); err != nil {
 		// 连接失败，关闭连接
 		conn.Close()

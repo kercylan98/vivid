@@ -5,13 +5,23 @@ import (
 	"github.com/kercylan98/vivid/internal/messages"
 )
 
-func EncodeEnvelopWithRemoting(envelop vivid.Envelop) (data []byte, err error) {
+func EncodeEnvelopWithRemoting(codec vivid.Codec, envelop vivid.Envelop) (data []byte, err error) {
+	var messageDesc = messages.QueryMessageDesc(envelop.Message())
 	var writer = messages.NewWriterFromPool()
 	defer messages.ReleaseWriterToPool(writer)
-	messageDesc := messages.QueryMessageDesc(envelop.Message())
-	err = messages.SerializeRemotingMessage(writer, messageDesc, envelop.Message())
-	if err != nil {
-		return nil, err
+	if messageDesc.IsOutside() {
+		// 外部消息序列化
+		data, err = codec.Encode(envelop.Message())
+		if err != nil {
+			return nil, err
+		}
+		writer.WriteBytesWithLength(data, 4)
+	} else {
+		// 内部消息序列化
+		err = messages.SerializeRemotingMessage(writer, messageDesc, envelop.Message())
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var agentAddr, agentPath string
@@ -35,7 +45,7 @@ func EncodeEnvelopWithRemoting(envelop vivid.Envelop) (data []byte, err error) {
 	return writer.Bytes(), nil
 }
 
-func DecodeEnvelopWithRemoting(data []byte) (
+func DecodeEnvelopWithRemoting(codec vivid.Codec, data []byte) (
 	system bool,
 	agentAddr, agentPath string,
 	senderAddr, senderPath string,
@@ -55,8 +65,15 @@ func DecodeEnvelopWithRemoting(data []byte) (
 	}
 
 	if messageDesc := messages.QueryMessageDescByName(messageName); !messageDesc.IsOutside() {
+		// 内部消息反序列化
 		reader.Reset(messageData)
 		messageInstance, err = messages.DeserializeRemotingMessage(reader, messageDesc)
+		if err != nil {
+			return
+		}
+	} else {
+		// 外部消息反序列化
+		messageInstance, err = codec.Decode(messageData)
 		if err != nil {
 			return
 		}

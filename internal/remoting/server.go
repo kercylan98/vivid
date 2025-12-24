@@ -15,10 +15,11 @@ var (
 )
 
 // NewServerActor 创建新的服务器
-func NewServerActor(bindAddr string, advertiseAddr string, envelopHandler NetworkEnvelopHandler) *ServerActor {
+func NewServerActor(bindAddr string, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler) *ServerActor {
 	sa := &ServerActor{
 		bindAddr:          bindAddr,
 		advertiseAddr:     advertiseAddr,
+		codec:             codec,
 		envelopHandler:    envelopHandler,
 		acceptConnections: make(map[string]*tcpConnectionActor),
 	}
@@ -31,6 +32,7 @@ type ServerActor struct {
 	bindAddr                   string
 	advertiseAddr              string
 	listener                   net.Listener
+	codec                      vivid.Codec
 	envelopHandler             NetworkEnvelopHandler
 	remotingMailboxCentral     *MailboxCentral
 	remotingMailboxCentralWait sync.WaitGroup
@@ -65,7 +67,7 @@ func (s *ServerActor) OnReceive(ctx vivid.ActorContext) {
 }
 
 func (s *ServerActor) onLaunch(ctx vivid.ActorContext) {
-	s.remotingMailboxCentral = newMailboxCentral(ctx.Ref(), ctx)
+	s.remotingMailboxCentral = newMailboxCentral(ctx.Ref(), ctx, s.codec)
 	s.remotingMailboxCentralWait.Done()
 
 	serverAcceptActor := newServerAcceptActor(s)

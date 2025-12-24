@@ -20,13 +20,14 @@ var (
 	_ vivid.Mailbox = &Mailbox{}
 )
 
-func newMailbox(advertiseAddress string, envelopHandler NetworkEnvelopHandler, actorLiaison vivid.ActorLiaison, remotingServerRef vivid.ActorRef) *Mailbox {
+func newMailbox(advertiseAddress string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, actorLiaison vivid.ActorLiaison, remotingServerRef vivid.ActorRef) *Mailbox {
 	return &Mailbox{
 		advertiseAddress:  advertiseAddress,
 		sf:                &singleflight.Group{},
 		envelopHandler:    envelopHandler,
 		actorLiaison:      actorLiaison,
 		remotingServerRef: remotingServerRef,
+		codec:             codec,
 	}
 }
 
@@ -38,6 +39,7 @@ type Mailbox struct {
 	envelopHandler    NetworkEnvelopHandler
 	actorLiaison      vivid.ActorLiaison
 	remotingServerRef vivid.ActorRef
+	codec             vivid.Codec
 }
 
 func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
@@ -58,7 +60,7 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 				return nil, err
 			}
 
-			tcpConn := newTCPConnectionActor(true, conn, m.advertiseAddress, m.envelopHandler)
+			tcpConn := newTCPConnectionActor(true, conn, m.advertiseAddress, m.codec, m.envelopHandler)
 			if err = m.actorLiaison.Ask(m.remotingServerRef, tcpConn).Wait(); err != nil {
 				closeErr := tcpConn.Close()
 				if closeErr != nil {
@@ -77,7 +79,7 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 	}
 
 	// 序列化消息
-	data, err := serialize.EncodeEnvelopWithRemoting(envelop)
+	data, err := serialize.EncodeEnvelopWithRemoting(m.codec, envelop)
 	if err != nil {
 		panic(err)
 	}

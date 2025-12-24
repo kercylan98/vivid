@@ -30,11 +30,12 @@ type ActorSystem interface {
 	//   - 方法实现采用同步阻塞（blocking）方式，调用者会被挂起，直到所有 Actor 确认终止、资源完全释放并安全退出后才会返回。
 	//   - 停止流程包括向所有活跃 Actor 派发终止信号（如 Poison Pill/FSM 终止），并确保子 Actor 优先于父 Actor 停止，递归释放所有托管的上下文与资源。
 	//   - 用于应用生命周期管理，可保障关闭前所有未处理消息与状态持久化等任务优雅完成，防止资源泄漏及并发冲突。
+	//   - 支持可选的超时参数，用于控制停止过程的时间限制。若超时，系统会立即终止并返回错误。
 	//
 	// 注意事项：
 	//   - 多次调用 Stop() 并无额外副作用，仅首个调用会触发实际终止流程，其余调用会在等待终止完成后直接返回。
 	//   - 停止操作一经触发，不可逆转，系统不可再用于消息接收、Actor 创建等操作。
-	Stop()
+	Stop(timeout ...time.Duration)
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。
@@ -97,6 +98,9 @@ type ActorSystemOptions struct {
 	// 用于标识本系统的网络地址，供其他系统连接。
 	// TCP和UDP将复用同一端口。
 	RemotingAdvertiseAddress string
+
+	// RemotingCodec 指定用于远程通讯的消息编解码器。
+	RemotingCodec Codec
 }
 
 // WithActorSystemDefaultAskTimeout 返回一个 ActorSystemOption，用于指定 ActorSystem 的默认 Ask 超时时间。
@@ -144,8 +148,13 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 // 使用建议：
 //   - 当服务部署在 Cloud、Docker、Kubernetes、NAT 或复杂多地址网络环境时，推荐同时显式设置两者以确保外部系统或节点正常发现与通信。
 //   - 如本地直连或单一地址情境下，可仅配置 bindAddr，系统将自动设置广告地址一致。
-func WithRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
+func WithRemoting(codec Codec, bindAddr string, advertiseAddr ...string) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
+		if codec == nil {
+			panic("Remoting actor system option codec is required")
+		}
+
+		opts.RemotingCodec = codec
 		opts.RemotingBindAddress = bindAddr
 		if len(advertiseAddr) > 0 {
 			opts.RemotingAdvertiseAddress = advertiseAddr[0]

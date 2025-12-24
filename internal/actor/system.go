@@ -2,6 +2,7 @@ package actor
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -38,11 +39,10 @@ func NewSystem(options ...vivid.ActorSystemOption) *sugar.Result[*System] {
 
 	// 初始化远程服务器 Actor
 	if opts.RemotingBindAddress != "" && opts.RemotingAdvertiseAddress != "" {
-		system.options.Logger = system.options.Logger.WithGroup(opts.RemotingAdvertiseAddress)
 		logAttrs = append(logAttrs, log.String("bind_address", opts.RemotingBindAddress))
 		logAttrs = append(logAttrs, log.String("advertise_address", opts.RemotingAdvertiseAddress))
 
-		system.remotingServer = remoting.NewServerActor(opts.RemotingBindAddress, opts.RemotingAdvertiseAddress, system)
+		system.remotingServer = remoting.NewServerActor(opts.RemotingBindAddress, opts.RemotingAdvertiseAddress, opts.RemotingCodec, system)
 		result := system.ActorOf(system.remotingServer, vivid.WithActorName("@remoting"))
 		if result.IsErr() {
 			return sugar.Err[*System](result.Err())
@@ -79,10 +79,16 @@ func (s *System) HandleEnvelop(envelop vivid.Envelop) {
 	receiverMailbox.Enqueue(envelop)
 }
 
-func (s *System) Stop() {
-	s.Logger().Debug("actor system stopping")
+func (s *System) Stop(timeout ...time.Duration) {
+	var stopTimeout = time.Minute
+	if len(timeout) > 0 && timeout[0] > 0 {
+		stopTimeout = timeout[0]
+	}
+
+	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
 	s.Context.Kill(s.Context.Ref(), true, "actor system stop")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*1111115)
+
+	ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 	defer cancel()
 	select {
 	case <-s.guardClosedSignal:
@@ -91,10 +97,10 @@ func (s *System) Stop() {
 		s.actorContexts.Range(func(key, value any) bool {
 			return true
 		})
-		panic("dead lock")
+		panic(fmt.Errorf("actor system stop timeout, %s", ctx.Err()))
 	}
 
-	s.Logger().Info("actor system stopped")
+	s.Logger().Debug("actor system stopped")
 }
 
 func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) {

@@ -12,12 +12,13 @@ import (
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
-func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, envelopHandler NetworkEnvelopHandler) *tcpConnectionActor {
+func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler) *tcpConnectionActor {
 	return &tcpConnectionActor{
 		client:         client,
 		conn:           conn,
 		advertiseAddr:  advertiseAddr,
 		envelopHandler: envelopHandler,
+		codec:          codec,
 	}
 }
 
@@ -29,6 +30,7 @@ type tcpConnectionActor struct {
 	writeCloseLock sync.RWMutex
 	conn           net.Conn
 	closed         bool
+	codec          vivid.Codec
 }
 
 func (c *tcpConnectionActor) OnPrelaunch() (err error) {
@@ -94,7 +96,7 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) {
 		senderAddr, senderPath,
 		receiverAddr, receiverPath,
 		messageInstance,
-		err := serialize.DecodeEnvelopWithRemoting(msgBuf)
+		err := serialize.DecodeEnvelopWithRemoting(c.codec, msgBuf)
 	if err != nil {
 		ctx.Logger().Warn("decode remoting envelop failed", log.Any("err", err))
 		ctx.TellSelf(c.conn)
