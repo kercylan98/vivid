@@ -57,24 +57,49 @@ type ExponentialBackoff struct {
 //   - limit: 最大尝试次数，如果 <= 0 则不限制
 //
 // 返回:
-//   - error: 执行函数的结果
-func (eb *ExponentialBackoff) Try(fn func() error, limit int) error {
+//   - abort: 是否终止
+//   - err: 执行函数的结果
+func (eb *ExponentialBackoff) Try(fn func() (abort bool, err error), limit int) (abort bool, err error) {
 	defer func() {
 		eb.Reset()
 	}()
 	for {
-		if err := fn(); err == nil {
-			return nil
+		abort, err = fn()
+		if abort || err == nil {
+			return abort, err
 		}
 		if limit > 0 && eb.currentAttempt >= limit {
-			return fmt.Errorf("try failed after %d attempts", limit)
+			return abort, fmt.Errorf("try failed after %d attempts", limit)
 		}
 		time.Sleep(eb.Next())
 	}
 }
 
-func (eb *ExponentialBackoff) Forever(fn func() error) {
-	_ = eb.Try(fn, -1)
+// Forever 无限循环执行函数，直到成功或主动中断。
+//
+// 参数:
+//   - fn: 要执行的函数
+//   - errorHandlers: 错误处理函数，用于处理错误，按顺序执行，如果存在多个错误处理函数，则按顺序执行，如果执行函数返回 true，则终止循环
+//
+// 返回:
+//   - abort: 是否终止
+//   - err: 执行函数的结果
+func (eb *ExponentialBackoff) Forever(fn func() (abort bool, err error), errorHandlers ...func(err error)) (abort bool, err error) {
+	defer func() {
+		eb.Reset()
+	}()
+	for {
+		abort, err = fn()
+		if err != nil {
+			for _, errorHandler := range errorHandlers {
+				errorHandler(err)
+			}
+		}
+		if abort || err == nil {
+			return abort, err
+		}
+		time.Sleep(eb.Next())
+	}
 }
 
 // Next 获取下一次的延迟时间

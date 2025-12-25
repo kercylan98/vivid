@@ -43,7 +43,8 @@ type ServerActor struct {
 	options                  ServerActorOptions             // 服务器选项
 	bindAddr                 string                         // TCP服务器绑定的本地监听地址（如 "0.0.0.0:8080"），只绑定本地，不对外暴露
 	advertiseAddr            string                         // 对外宣称的服务地址（如 "public.ip:port"），用于服务注册和远程节点发现
-	acceptorRef              vivid.ActorRef                 // 当前正在维护 net.Listener 和负责被动接收和管理新 TCP 连接的 Acceptor Actor 的引用
+	acceptorRef              vivid.ActorRef                 // 当前正在负责被动接收和管理新 TCP 连接的 Acceptor Actor 的引用
+	acceptorListener         net.Listener                   // 必须持有的 listener，避免 Acceptor 阻塞在 listener.Accept() 时无法正常退出
 	backoff                  *utils.ExponentialBackoff      // 指数退避器，用于监听端口失败时的重试延迟策略，防止过于频繁重试导致资源浪费
 	backoffTimer             *time.Timer                    // 指数退避重试定时器，用于重试启动服务器监听
 	acceptConnections        map[string]*tcpConnectionActor // 当前已建立并被服务器管理的连接集合，key为连接唯一标识
@@ -76,14 +77,13 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 	}
 
 	var (
-		addr     *net.TCPAddr
-		err      error
-		listener net.Listener
+		addr *net.TCPAddr
+		err  error
 	)
 
 	addr, err = net.ResolveTCPAddr("tcp", s.bindAddr)
 	if err == nil {
-		listener, err = net.ListenTCP("tcp", addr)
+		s.acceptorListener, err = net.ListenTCP("tcp", addr)
 	}
 
 	if err != nil {
@@ -101,13 +101,13 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 		s.backoffTimer.Stop()
 		s.backoffTimer = nil
 	}
-	ctx.Logger().Info("server listener started", log.String("bind_addr", listener.Addr().String()))
+	ctx.Logger().Info("server listener started", log.String("bind_addr", s.acceptorListener.Addr().String()))
 
 	// 安全的 Unwrap， ServerAcceptActor 未实现 vivid.PrelaunchActor 接口，不会发生错误
-	acceptor := newServerAcceptActor(listener, s.advertiseAddr, s.envelopHandler, s.codec)
+	acceptor := newServerAcceptActor(s.acceptorListener, s.advertiseAddr, s.envelopHandler, s.codec)
 	s.acceptorRef = ctx.ActorOf(acceptor, vivid.WithActorName("acceptor")).Unwrap()
 	if s.options.ListenerCreatedHandler != nil {
-		s.options.ListenerCreatedHandler(listener)
+		s.options.ListenerCreatedHandler(s.acceptorListener)
 	}
 }
 
@@ -158,6 +158,13 @@ func (s *ServerActor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
 		}
 	}
 
+	if s.acceptorListener != nil {
+		if err := s.acceptorListener.Close(); err != nil {
+			ctx.Logger().Warn("server acceptor listener close fail", log.Any("err", err))
+		}
+		s.acceptorListener = nil
+	}
+
 	if s.backoffTimer != nil {
 		s.backoffTimer.Stop()
 		s.backoffTimer = nil
@@ -165,8 +172,6 @@ func (s *ServerActor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
 }
 
 func (s *ServerActor) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
-	ctx.Logger().Debug("server actor killed", log.Bool("self", ctx.Ref().Equals(message.Ref)), log.String("target", message.Ref.GetPath()))
-
 	switch {
 	case s.acceptConnections[message.Ref.GetPath()] != nil:
 		// 如果是维护的连接销毁，从集合中移除

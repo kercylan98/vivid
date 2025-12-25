@@ -8,6 +8,7 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/actor"
+	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -37,8 +38,8 @@ func TestSystem_RemotingAsk(t *testing.T) {
 	codec := NewTestCodec().
 		Register("test_message", &TestInternalMessage{})
 
-	system1 := actor.NewSystem(vivid.WithRemoting(codec, "127.0.0.1:8080")).Unwrap()
-	system2 := actor.NewSystem(vivid.WithRemoting(codec, "127.0.0.1:8081")).Unwrap()
+	system1 := actor.NewTestSystem(t, vivid.WithRemoting(codec, "127.0.0.1:8080"))
+	system2 := actor.NewTestSystem(t, vivid.WithRemoting(codec, "127.0.0.1:8081"), vivid.WithActorSystemLogger(log.GetDefault()))
 
 	ref := system1.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch v := ctx.Message().(type) {
