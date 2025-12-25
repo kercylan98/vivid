@@ -166,3 +166,8 @@ type ActorLiaison interface {
 	// Logger 返回日志记录器。
 	Logger() log.Logger
 }
+
+type PrelaunchContext interface {
+	// Logger 返回日志记录器。
+	Logger() log.Logger
+}

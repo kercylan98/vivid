@@ -98,7 +98,7 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) {
 		messageInstance,
 		err := serialize.DecodeEnvelopWithRemoting(c.codec, msgBuf)
 	if err != nil {
-		ctx.Logger().Warn("decode remoting envelop failed", log.Any("err", err))
+		ctx.Logger().Warn("decode Remoting envelop failed", log.Any("err", err))
 		ctx.TellSelf(c.conn)
 		return
 	}

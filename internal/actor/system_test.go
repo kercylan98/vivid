@@ -1,6 +1,7 @@
 package actor_test
 
 import (
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -66,4 +67,21 @@ func TestSystem_RemotingAsk(t *testing.T) {
 
 	system1.Stop()
 	system2.Stop()
+}
+
+func TestSystem_ServerAcceptActorRestart(t *testing.T) {
+	var wg sync.WaitGroup
+	var count int
+	wg.Add(10)
+	system := actor.NewTestSystemWithBeforeStartHandler(t, func(system *actor.TestSystem) {
+		system.RegisterRemotingListenerBindEvent(func(listener net.Listener) {
+			if count < 10 {
+				assert.Nil(t, listener.Close())
+				count++
+				wg.Done()
+			}
+		})
+	}, vivid.WithRemoting(NewTestCodec(), "127.0.0.1:0"))
+	defer system.Stop()
+	wg.Wait()
 }

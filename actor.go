@@ -25,7 +25,7 @@ type PrelaunchActor interface {
 	Actor
 	// OnPrelaunch 会在 Actor 正式注册前被调用，仅被调用一次。
 	// 返回 error 则 Actor 启动流程将中断。
-	OnPrelaunch() error
+	OnPrelaunch(ctx PrelaunchContext) error
 }
 
 // ActorFN 是基于函数适配的 Actor 实现方式。

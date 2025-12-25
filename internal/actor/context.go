@@ -113,7 +113,7 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *suga
 		return result.Error(fmt.Errorf("actor killed"))
 	}
 	if preLaunchActor, ok := actor.(vivid.PrelaunchActor); ok {
-		if err := preLaunchActor.OnPrelaunch(); err != nil {
+		if err := preLaunchActor.OnPrelaunch(c); err != nil {
 			return result.Error(err)
 		}
 	}

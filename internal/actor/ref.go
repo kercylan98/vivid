@@ -33,6 +33,9 @@ func (r *Ref) GetAddress() string {
 }
 
 func (r *Ref) Equals(other vivid.ActorRef) bool {
+	if other == nil {
+		return false
+	}
 	return r.GetAddress() == other.GetAddress() && r.GetPath() == other.GetPath()
 }
 

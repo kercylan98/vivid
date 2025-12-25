@@ -12,21 +12,21 @@ var (
 	_ vivid.Actor = (*serverAcceptActor)(nil)
 )
 
-func newServerAcceptActor(serverActor *ServerActor) *serverAcceptActor {
+func newServerAcceptActor(listener net.Listener, advertiseAddr string, envelopHandler NetworkEnvelopHandler, codec vivid.Codec) *serverAcceptActor {
 	return &serverAcceptActor{
-		listener:       serverActor.listener,
-		advertiseAddr:  serverActor.advertiseAddr,
-		envelopHandler: serverActor.envelopHandler,
-		codec:          serverActor.codec,
+		listener:       listener,
+		advertiseAddr:  advertiseAddr,
+		envelopHandler: envelopHandler,
+		codec:          codec,
 	}
 }
 
 // serverAcceptActor 是专用于接收远程连接的 Actor
 type serverAcceptActor struct {
-	listener       net.Listener
-	advertiseAddr  string
-	envelopHandler NetworkEnvelopHandler
-	codec          vivid.Codec
+	listener       net.Listener          // 监听器
+	advertiseAddr  string                // 对外宣称的服务地址
+	envelopHandler NetworkEnvelopHandler // 网络消息处理器
+	codec          vivid.Codec           // 外部跨进程消息编解码器
 }
 
 func (a *serverAcceptActor) OnReceive(ctx vivid.ActorContext) {
@@ -45,8 +45,15 @@ func (a *serverAcceptActor) onLaunch(ctx vivid.ActorContext) {
 func (a *serverAcceptActor) onAccept(ctx vivid.ActorContext) {
 	conn, err := a.listener.Accept()
 	if err != nil {
-		panic("error accepting connection not impl")
+		// 监听失败，可能为主动关闭或系统异常，销毁 Actor 并退出
+		ctx.Kill(ctx.Ref(), false, fmt.Sprintf("server listener accept connection failed: %s", err))
+		return
 	}
+
+	// 进入下一次循环监听
+	defer func(listener net.Listener) {
+		ctx.TellSelf(listener)
+	}(a.listener)
 
 	// 由 ServerActor 负责管理连接
 	connActor := newTCPConnectionActor(false, conn, a.advertiseAddr, a.codec, a.envelopHandler)

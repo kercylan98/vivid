@@ -3,6 +3,7 @@ package actor
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -22,9 +23,14 @@ var (
 )
 
 func NewSystem(options ...vivid.ActorSystemOption) *sugar.Result[*System] {
+	return newSystem(nil, nil, options...)
+}
+
+func newSystem(testSystem *TestSystem, startBeforeHandler func(system *TestSystem), options ...vivid.ActorSystemOption) *sugar.Result[*System] {
 	opts := vivid.NewActorSystemOptions(options...)
 
 	system := &System{
+		testSystem:        testSystem,
 		options:           opts,
 		actorContexts:     sync.Map{},
 		guardClosedSignal: make(chan struct{}),
@@ -37,12 +43,23 @@ func NewSystem(options ...vivid.ActorSystemOption) *sugar.Result[*System] {
 		return sugar.Err[*System](err)
 	}
 
+	if startBeforeHandler != nil {
+		startBeforeHandler(system.testSystem)
+	}
+
 	// 初始化远程服务器 Actor
 	if opts.RemotingBindAddress != "" && opts.RemotingAdvertiseAddress != "" {
 		logAttrs = append(logAttrs, log.String("bind_address", opts.RemotingBindAddress))
 		logAttrs = append(logAttrs, log.String("advertise_address", opts.RemotingAdvertiseAddress))
 
-		system.remotingServer = remoting.NewServerActor(opts.RemotingBindAddress, opts.RemotingAdvertiseAddress, opts.RemotingCodec, system)
+		var remotingServerActorOptions = remoting.ServerActorOptions{}
+		if system.testSystem != nil {
+			remotingServerActorOptions.ListenerCreatedHandler = func(listener net.Listener) {
+				system.testSystem.onBindRemotingListener(listener)
+			}
+		}
+
+		system.remotingServer = remoting.NewServerActor(opts.RemotingBindAddress, opts.RemotingAdvertiseAddress, opts.RemotingCodec, system, remotingServerActorOptions)
 		result := system.ActorOf(system.remotingServer, vivid.WithActorName("@remoting"))
 		if result.IsErr() {
 			return sugar.Err[*System](result.Err())
@@ -55,6 +72,7 @@ func NewSystem(options ...vivid.ActorSystemOption) *sugar.Result[*System] {
 
 type System struct {
 	*Context                                    // ActorSystem 本身就表示了根 Actor
+	testSystem        *TestSystem               // 测试系统
 	options           *vivid.ActorSystemOptions // 系统选项
 	actorContexts     sync.Map                  // 用于加速访问的 ActorContext 缓存（含有 Future）
 	guardClosedSignal chan struct{}             // 用于通知系统关闭的信号
