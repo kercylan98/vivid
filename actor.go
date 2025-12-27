@@ -17,6 +17,22 @@ type Actor interface {
 	OnReceive(ctx ActorContext)
 }
 
+// ActorProvider 定义了 Actor 的提供者接口。
+type ActorProvider interface {
+	// Provide 提供 Actor 实例。
+	Provide() Actor
+}
+
+// ActorProviderFN 是基于函数适配的 ActorProvider 实现方式。
+// 可通过直接传递函数实现 ActorProvider 行为，简化简单业务场景下的类型定义。
+// 例如：ActorProviderFN(func() Actor { ... })。
+type ActorProviderFN func() Actor
+
+// Provide 实现 ActorProvider 接口，将 Actor 实例的提供委托给具体的函数实现。
+func (fn ActorProviderFN) Provide() Actor {
+	return fn()
+}
+
 // PrelaunchActor 扩展了 Actor 接口，允许 Actor 在正式启动前执行预处理逻辑。
 //
 // OnPrelaunch 实现可用于依赖注入、资源预加载、配置校验等初始化前操作。
@@ -26,6 +42,22 @@ type PrelaunchActor interface {
 	// OnPrelaunch 会在 Actor 正式注册前被调用，仅被调用一次。
 	// 返回 error 则 Actor 启动流程将中断。
 	OnPrelaunch(ctx PrelaunchContext) error
+}
+
+// PreRestartActor 扩展了 Actor 接口，允许 Actor 在重启前执行预处理逻辑。
+
+// OnPreRestart 实现可用于依赖注入、资源预加载、配置校验等初始化前操作。
+// 返回 error 表示重启失败，系统将阻止该 Actor 重启并记录错误。
+type PreRestartActor interface {
+	Actor
+	// OnPreRestart 会在 Actor 重启前被调用，仅被调用一次。
+	OnPreRestart(ctx RestartContext) error
+}
+
+type RestartedActor interface {
+	Actor
+	// OnRestarted 会在 Actor 重启后被调用，仅被调用一次。
+	OnRestarted(ctx RestartContext) error
 }
 
 // ActorFN 是基于函数适配的 Actor 实现方式。
@@ -55,6 +87,7 @@ type ActorOptions struct {
 	DefaultAskTimeout   time.Duration       // 指定该 Actor Ask 请求的默认超时时间。
 	Logger              log.Logger          // 为 Actor 专用日志对象，便于定位问题。
 	SupervisionStrategy SupervisionStrategy // 指定 Actor 的监督策略。
+	Provider            ActorProvider       // 指定 Actor 的提供者，它被用于在 Actor 重启时提供新的 Actor 实例，若未指定将不会主动重置 Actor 实例状态，但任可在其生命周期内主动重置。
 }
 
 // WithActorSupervisionStrategy 返回一个设置 Actor.SupervisionStrategy 字段的配置项。
@@ -116,5 +149,14 @@ func WithActorDefaultAskTimeout(timeout time.Duration) ActorOption {
 func WithActorLogger(logger log.Logger) ActorOption {
 	return func(opts *ActorOptions) {
 		opts.Logger = logger
+	}
+}
+
+// WithActorProvider 返回一个设置 Actor.Provider 字段的配置项。
+//
+// provider 用于提供 Actor 实例，它被用于在 Actor 重启时提供新的 Actor 实例，若未指定将不会主动重置 Actor 实例状态，但任可在其生命周期内主动重置。
+func WithActorProvider(provider ActorProvider) ActorOption {
+	return func(opts *ActorOptions) {
+		opts.Provider = provider
 	}
 }

@@ -3,6 +3,7 @@ package actor
 import (
 	"fmt"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -81,6 +82,7 @@ type Context struct {
 	children      map[vivid.ActorPath]vivid.ActorRef // 懒加载的子 Actor 引用
 	envelop       vivid.Envelop                      // 当前 ActorContext 的消息
 	state         int32                              // 状态
+	restarting    *RestartMessage                    // 正在重启的消息
 }
 
 func (c *Context) Logger() log.Logger {
@@ -186,10 +188,12 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 
 func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// 如果当前 Actor 状态不是 running，则不处理消息（非系统消息）
-	if !envelop.System() && atomic.LoadInt32(&c.state) != running {
+	// 如果当前 Actor 状态是 killing，即便是系统消息，也应当死信处理
+	if currentState := atomic.LoadInt32(&c.state); (!envelop.System() && currentState != running) || currentState == killing {
 		return // TODO: 应当死信处理
 	}
 
+	// 处理消息
 	c.envelop = envelop
 	behavior := c.behaviorStack.Peek()
 
@@ -204,7 +208,15 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 		c.onSupervise(message)
 	case *messages.NoneArgsCommandMessage:
 		c.onCommand(message)
+	case *RestartMessage:
+		c.onRestart(message, behavior)
 	default:
+		defer func() {
+			if r := recover(); r != nil {
+				c.Logger().Error("unexpected error", log.Any("error", r), log.String("error_type", fmt.Sprintf("%T", r)), log.String("stack", string(debug.Stack())))
+				c.Failed(r)
+			}
+		}()
 		behavior(c)
 	}
 
@@ -219,20 +231,60 @@ func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
 	}
 }
 
-func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
+func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
 	if !atomic.CompareAndSwapInt32(&c.state, running, killing) {
 		return
 	}
 
-	c.Logger().Debug("receive kill", log.String("path", c.ref.path))
-	// 等待所有子 Actor 结束
+	// 标记正在重启
+	c.restarting = message
+	c.Logger().Debug("receive restart", log.String("path", c.ref.GetPath()), log.String("reason", message.Reason), log.Any("fault", message.Fault), log.String("stack", string(message.Stack)))
+
+	// 执行重启前的预处理
+	// 该阶段主要是用户的自定义清理逻辑，发生异常应当记录错误并继续重启
+	if preRestartActor, ok := c.actor.(vivid.PreRestartActor); ok {
+		message.recoverExec(c.Logger(), "pre restart", false, func() error {
+			return preRestartActor.OnPreRestart(c)
+		})
+	}
+
+	// 结束自身，由于重启已经进行了优雅处理筛选，应当立即执行
+	// 覆盖当前消息，以便在 onKill 中使用
+	killMessage := &vivid.OnKill{
+		Killer: c.ref,
+		Poison: message.Poison,
+		Reason: message.Reason,
+	}
+	c.envelop = mailbox.NewEnvelopWithTell(true, c.Sender(), c.ref, killMessage)
+	c.onKill(killMessage, behavior)
+}
+
+func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
+	if (c.restarting == nil && !atomic.CompareAndSwapInt32(&c.state, running, killing)) || atomic.LoadInt32(&c.state) != running {
+		return
+	}
+
+	c.Logger().Debug("receive kill", log.String("path", c.ref.path), log.Bool("restarting", c.restarting != nil))
+	// 等待所有子 Actor 结束，假设是重启，子 Actor 不应该跟随重启，应该由父节点决定是否重启
 	for _, child := range c.children {
 		c.Logger().Debug("notify child kill", log.String("path", child.GetPath()))
 		c.Kill(child, message.Poison, message.Reason)
 	}
 
 	// 宣告自己进入死亡中
-	behavior(c)
+	if c.restarting != nil {
+		// 失败意味着资源可能无法正确释放，但不应阻止新实例的创建。
+		// 可能存在资源泄漏，应当记录警告
+		logger := c.Logger()
+		if !c.restarting.recoverExec(logger, "on kill", false, func() error {
+			behavior(c)
+			return nil
+		}) {
+			logger.Warn("restart kill failed; resources may not have been properly released", log.String("path", c.ref.GetPath()), log.String("reason", c.restarting.Reason), log.Any("fault", c.restarting.Fault), log.String("stack", string(c.restarting.Stack)))
+		}
+	} else {
+		behavior(c)
+	}
 
 	// 尝试确认死亡
 	c.onKilled(&vivid.OnKilled{Ref: c.ref}, behavior)
@@ -253,15 +305,68 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 
 	selfKilledMessage := &vivid.OnKilled{Ref: c.ref}
 	c.envelop = mailbox.NewEnvelopWithTell(true, c.Sender(), c.ref, selfKilledMessage)
-	behavior(c)
-
-	// 宣告父节点自身死亡
-	c.system.removeActorContext(c)
-	if c.parent != nil {
-		c.tell(true, c.parent, selfKilledMessage)
+	if c.restarting != nil {
+		// 失败意味着资源可能无法正确释放，但不应阻止新实例的创建。
+		// 可能存在资源泄漏，应当记录警告
+		logger := c.Logger()
+		if !c.restarting.recoverExec(logger, "on killed", false, func() error {
+			behavior(c)
+			return nil
+		}) {
+			logger.Warn("restart killed failed; resources may not have been properly released", log.String("path", c.ref.GetPath()), log.String("reason", c.restarting.Reason), log.Any("fault", c.restarting.Fault), log.String("stack", string(c.restarting.Stack)))
+		}
+	} else {
+		behavior(c)
 	}
 
-	c.Logger().Debug("actor killed", log.String("path", c.ref.GetPath()))
+	// 宣告父节点自身死亡，重启状态下并非真正死亡，不做移除和通知
+	restarting := c.restarting != nil
+	if !restarting {
+		c.system.removeActorContext(c)
+		if c.parent != nil {
+			c.tell(true, c.parent, selfKilledMessage)
+		}
+	}
+	c.Logger().Debug("actor killed", log.String("path", c.ref.GetPath()), log.Bool("restarting", restarting))
+
+	if restarting {
+		// 如果提供了提供者，则使用提供者提供新的 Actor 实例
+		if c.options.Provider != nil {
+			c.actor = c.options.Provider.Provide()
+		}
+		c.behaviorStack.Clear().Push(c.actor.OnReceive)
+		c.Logger().Debug("actor restarted", log.String("path", c.ref.GetPath()))
+
+		// 触发重启后的回调
+		var success = true
+		if restartedActor, ok := c.actor.(vivid.RestartedActor); ok {
+			success = c.restarting.recoverExec(c.Logger(), "on restarted", true, func() error {
+				return restartedActor.OnRestarted(c)
+			})
+		}
+
+		// 触发生命周期
+		if preLaunchActor, ok := c.actor.(vivid.PrelaunchActor); ok && success {
+			success = c.restarting.recoverExec(c.Logger(), "on pre launch", true, func() error {
+				return preLaunchActor.OnPrelaunch(c)
+			})
+		}
+
+		// 当子 Actor 重启失败时，不再通知父 Actor 其死亡，而是让其进入“僵尸状态”，避免异常状态扩散。
+		if !success {
+			// 记录错误并释放资源
+			c.Logger().Error("restart failed; actor is now in zombie state", log.String("path", c.ref.GetPath()))
+			c.system.removeActorContext(c)
+
+			// 现有的 ActorRef 缓存中可能持有该邮箱，应当快速排空且进入死信息，避免内存长时间驻留
+			c.mailbox.Resume()
+		} else {
+			c.restarting = nil
+			atomic.CompareAndSwapInt32(&c.state, killing, running)
+			c.tell(true, c.parent, new(vivid.OnLaunch))
+			c.mailbox.Resume()
+		}
+	}
 }
 
 func (c *Context) Message() vivid.Message {

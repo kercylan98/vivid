@@ -19,8 +19,9 @@ func (s *BehaviorStack) Peek() vivid.Behavior {
 	return s.behaviors[len(s.behaviors)-1]
 }
 
-func (s *BehaviorStack) Push(behavior vivid.Behavior) {
+func (s *BehaviorStack) Push(behavior vivid.Behavior) *BehaviorStack {
 	s.behaviors = append(s.behaviors, behavior)
+	return s
 }
 
 func (s *BehaviorStack) Pop() vivid.Behavior {
@@ -32,8 +33,9 @@ func (s *BehaviorStack) Pop() vivid.Behavior {
 	return behavior
 }
 
-func (s *BehaviorStack) Clear() {
+func (s *BehaviorStack) Clear() *BehaviorStack {
 	s.behaviors = nil
+	return s
 }
 
 func (s *BehaviorStack) Len() int {
