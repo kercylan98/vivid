@@ -45,6 +45,18 @@ type Mailbox struct {
 	backoff           *utils.ExponentialBackoff
 }
 
+func (m *Mailbox) Pause() {
+	// 远程邮箱不考虑，该邮箱仅作为向外投递消息的中转通道
+}
+
+func (m *Mailbox) Resume() {
+	// 远程邮箱不考虑，该邮箱仅作为向外投递消息的中转通道
+}
+
+func (m *Mailbox) IsPaused() bool {
+	return false
+}
+
 func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 	sender := envelop.Sender()
 	slot := utils.Fnv32aHash(sender.GetPath()) % poolSize

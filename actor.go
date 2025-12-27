@@ -50,10 +50,23 @@ type ActorOption = func(options *ActorOptions)
 // 包含 Actor 命名、邮箱实现、默认 Ask 超时，以及专属 Logger。
 // 建议通过 ActorOption 构造器进行配置，便于向后兼容及灵活扩展。
 type ActorOptions struct {
-	Name              string        // Name 指定 Actor 的标识性名称（唯一性由父级上下文保证）。
-	Mailbox           Mailbox       // Mailbox 指定 Actor 的消息邮箱实例，支持自定义调度模型。
-	DefaultAskTimeout time.Duration // DefaultAskTimeout 指定该 Actor Ask 请求的默认超时时间。
-	Logger            log.Logger    // Logger 为 Actor 专用日志对象，便于定位问题。
+	Name                string              // 指定 Actor 的标识性名称（唯一性由父级上下文保证）。
+	Mailbox             Mailbox             // 指定 Actor 的消息邮箱实例，支持自定义调度模型。
+	DefaultAskTimeout   time.Duration       // 指定该 Actor Ask 请求的默认超时时间。
+	Logger              log.Logger          // 为 Actor 专用日志对象，便于定位问题。
+	SupervisionStrategy SupervisionStrategy // 指定 Actor 的监督策略。
+}
+
+// WithActorSupervisionStrategy 返回一个设置 Actor.SupervisionStrategy 字段的配置项。
+//
+// supervisionStrategy 为 Actor 的监督策略。如果未指定，则使用系统默认的监督策略。
+//
+// 返回:
+//   - ActorOption: 一个设置 Actor.SupervisionStrategy 字段的配置项。
+func WithActorSupervisionStrategy(supervisionStrategy SupervisionStrategy) ActorOption {
+	return func(opts *ActorOptions) {
+		opts.SupervisionStrategy = supervisionStrategy
+	}
 }
 
 // WithActorOptions 返回一个设置完整 ActorOptions 的配置项。

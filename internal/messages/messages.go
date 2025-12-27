@@ -19,6 +19,10 @@ var outsideMessageDesc = &MessageDesc{
 	},
 }
 
+func init() {
+	RegisterInternalMessage[NoneArgsCommandMessage]("NoneArgsCommandMessage", onNoneArgsCommandMessageReader, onNoneArgsCommandMessageWriter)
+}
+
 type MessageDesc struct {
 	typeOf      reflect.Type
 	messageName string
@@ -99,4 +103,49 @@ func DeserializeRemotingMessage(reader *Reader, desc *MessageDesc) (any, error) 
 		return nil, err
 	}
 	return message, nil
+}
+
+// Command 表示命令消息的命令
+type Command uint8
+
+const (
+	CommandPauseMailbox  Command = iota // 暂停邮箱消息处理
+	CommandResumeMailbox                // 恢复邮箱消息处理
+)
+
+func (c Command) String() string {
+	var name string
+	switch c {
+	case CommandPauseMailbox:
+		name = "CommandPauseMailbox"
+	case CommandResumeMailbox:
+		name = "CommandResumeMailbox"
+	default:
+		name = "UnknownCommand"
+	}
+	return fmt.Sprintf("%s(%d)", name, uint8(c))
+}
+
+func (c Command) Build() *NoneArgsCommandMessage {
+	return &NoneArgsCommandMessage{Command: c}
+}
+
+// NoneArgsCommandMessage 表示没有参数的命令消息，行为由枚举决定
+type NoneArgsCommandMessage struct {
+	Command Command
+}
+
+func onNoneArgsCommandMessageReader(message any, reader *Reader) error {
+	m := message.(*NoneArgsCommandMessage)
+	ui8 := uint8(m.Command)
+	if err := reader.ReadInto(&ui8); err != nil {
+		return err
+	}
+	m.Command = Command(ui8)
+	return nil
+}
+
+func onNoneArgsCommandMessageWriter(message any, writer *Writer) error {
+	m := message.(*NoneArgsCommandMessage)
+	return writer.WriteFrom(uint8(m.Command))
 }

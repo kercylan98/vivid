@@ -10,6 +10,7 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
+	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/sugar"
 )
@@ -199,10 +200,23 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 		c.onKill(message, behavior)
 	case *vivid.OnKilled:
 		c.onKilled(message, behavior)
+	case *supervisionContext:
+		c.onSupervise(message)
+	case *messages.NoneArgsCommandMessage:
+		c.onCommand(message)
 	default:
 		behavior(c)
 	}
 
+}
+
+func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
+	switch message.Command {
+	case messages.CommandPauseMailbox:
+		c.mailbox.Pause()
+	case messages.CommandResumeMailbox:
+		c.mailbox.Resume()
+	}
 }
 
 func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
@@ -280,4 +294,38 @@ func (c *Context) Kill(ref vivid.ActorRef, poison bool, reason ...string) {
 		Poison: poison,
 		Reason: strings.Join(reason, ", "),
 	})
+}
+
+func (c *Context) Children() vivid.ActorRefs {
+	children := make(vivid.ActorRefs, 0, len(c.children))
+	for _, child := range c.children {
+		children = append(children, child)
+	}
+	return children
+}
+
+func (c *Context) Failed(fault vivid.Message) {
+	// 挂起当前 Actor 的消息处理并且向父级 Actor 发送监督上下文以触发父级 Actor 的监督策略
+	c.mailbox.Pause()
+	supervisionContext := newSupervisionContext(c.ref, fault)
+	c.tell(true, c.parent, supervisionContext)
+}
+
+func (c *Context) onSupervise(supervisionContext *supervisionContext) {
+	supervise(c, supervisionContext)
+	var (
+		targets  vivid.ActorRefs
+		decision vivid.SupervisionDecision
+		reason   string
+	)
+
+	// 获取影响的目标和决策
+	targets, decision, reason = c.options.SupervisionStrategy.Supervise(supervisionContext)
+
+	// 暂停所有目标的邮箱消息处理
+	mailboxPauseMessage := messages.CommandPauseMailbox.Build()
+	for _, target := range targets {
+		c.tell(true, target, mailboxPauseMessage)
+	}
+	supervisionContext.applyDecision(c, targets, decision, reason)
 }

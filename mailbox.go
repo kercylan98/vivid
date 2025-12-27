@@ -7,6 +7,15 @@ type Mailbox interface {
 	// Enqueue 用于将消息信封入队。
 	// 参数 envelop 为待入队的消息信封，该信封一般实现了 Envelop 接口。
 	Enqueue(envelop Envelop)
+
+	// Pause 暂停消息的处理
+	Pause()
+
+	// Resume 恢复消息的处理
+	Resume()
+
+	// IsPaused 返回是否暂停消息的处理
+	IsPaused() bool
 }
 
 // Envelop 定义了消息传递过程中的信封接口。

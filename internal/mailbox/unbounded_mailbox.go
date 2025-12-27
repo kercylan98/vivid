@@ -20,12 +20,29 @@ func NewUnboundedMailbox(initialSize int64, handler vivid.EnvelopHandler) *Unbou
 }
 
 type UnboundedMailbox struct {
-	num          int32
-	status       uint32
-	buffer       *queues.RingQueue
-	systemNum    int32
-	systemBuffer *queues.RingQueue
-	handler      vivid.EnvelopHandler
+	buffer       *queues.RingQueue    // 普通消息队列
+	systemBuffer *queues.RingQueue    // 系统消息队列
+	handler      vivid.EnvelopHandler // 消息处理器
+	status       uint32               // 状态
+	paused       uint32               // 是否暂停普通消息处理
+	num          int32                // 用户消息数量
+	systemNum    int32                // 系统消息数量
+}
+
+func (m *UnboundedMailbox) Pause() {
+	atomic.StoreUint32(&m.paused, 1)
+}
+
+func (m *UnboundedMailbox) Resume() {
+	if atomic.CompareAndSwapUint32(&m.paused, 1, 0) {
+		if atomic.CompareAndSwapUint32(&m.status, idle, processing) {
+			go m.process()
+		}
+	}
+}
+
+func (m *UnboundedMailbox) IsPaused() bool {
+	return atomic.LoadUint32(&m.paused) == 1
 }
 
 func (m *UnboundedMailbox) Enqueue(envelop vivid.Envelop) {
@@ -61,7 +78,7 @@ func (m *UnboundedMailbox) processHandle() {
 	var ok bool
 
 	for {
-		// 先处理系统消息
+		// 优先处理系统消息
 		for {
 			if msg, ok = m.systemBuffer.Pop(); ok {
 				atomic.AddInt32(&m.systemNum, -1)
@@ -71,7 +88,12 @@ func (m *UnboundedMailbox) processHandle() {
 			}
 		}
 
-		// 再处理用户消息
+		// 检查邮箱是否暂停，暂停时忽略普通消息处理
+		if atomic.LoadUint32(&m.paused) == 1 {
+			return
+		}
+
+		// 处理普通消息
 		if msg, ok = m.buffer.Pop(); ok {
 			atomic.AddInt32(&m.num, -1)
 			m.handler.HandleEnvelop(msg.(vivid.Envelop))

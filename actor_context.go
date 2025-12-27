@@ -36,6 +36,9 @@ type ActorContext interface {
 	// Parent 返回当前 Actor 的父级 ActorRef。
 	Parent() ActorRef
 
+	// Children 返回当前 Actor 的所有子 ActorRefs。
+	Children() ActorRefs
+
 	// Ref 返回当前 Actor 的 ActorRef 实例。
 	Ref() ActorRef
 
@@ -83,6 +86,12 @@ type ActorContext interface {
 
 	// Name 返回当前 Actor 的名称。
 	Name() string
+
+	// Failed 报告当前 Actor 发生故障，将根据父级 Actor 的监督策略决定如何处理故障。
+	//
+	// 参数:
+	//   - fault: 故障消息
+	Failed(fault Message)
 }
 
 type actorRace interface {

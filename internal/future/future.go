@@ -35,6 +35,18 @@ type Future[T vivid.Message] struct {
 	closer  func()        // Future 关闭时的回调函数
 }
 
+func (f *Future[T]) Pause() {
+	// Future 不考虑暂停
+}
+
+func (f *Future[T]) Resume() {
+	// Future 不考虑恢复
+}
+
+func (f *Future[T]) IsPaused() bool {
+	return false
+}
+
 // Enqueue 实现 Mailbox 的入列接口，用于 Future 接收消息响应
 func (f *Future[T]) Enqueue(envelop vivid.Envelop) {
 	f.close(envelop.Message())

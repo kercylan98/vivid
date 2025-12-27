@@ -43,6 +43,10 @@ func (r *Ref) Clone() vivid.ActorRef {
 	return NewRef(r.GetAddress(), r.GetPath())
 }
 
+func (r *Ref) ToActorRefs() vivid.ActorRefs {
+	return vivid.ActorRefs{r}
+}
+
 func NewAgentRef(agent *Ref) *AgentRef {
 	return &AgentRef{
 		ref:   NewRef(agent.GetAddress(), agent.GetPath()+"@future@"+uuid.NewString()),
