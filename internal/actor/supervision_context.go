@@ -119,7 +119,7 @@ func (c *supervisionContext) applyDecision(ctx *Context, targets vivid.ActorRefs
 			Poison: isGraceful,
 		}
 		for _, target := range targets {
-			ctx.tell(isGraceful, target, restartMessage)
+			ctx.tell(!isGraceful, target, restartMessage)
 		}
 
 		// 优雅重启的情况下，由于目标邮箱是挂起的，所以无法被执行，还需要对其邮箱进行恢复处理
@@ -180,7 +180,11 @@ func (c *supervisionContext) FaultStack() []byte {
 	var stack []byte
 	current := c
 	for current != nil {
-		stack = append(stack, []byte(fmt.Sprintf("supervisionContext: %p, child: %s\n", current, current.child.First().GetPath()))...)
+		childPath := "<nil>"
+		if first := current.child.First(); first != nil {
+			childPath = first.GetPath()
+		}
+		stack = append(stack, []byte(fmt.Sprintf("supervisionContext: %p, child: %s\n", current, childPath))...)
 		stack = append(stack, current.faultStack...)
 		current = current.subSupervisionContext
 	}

@@ -20,7 +20,8 @@ var outsideMessageDesc = &MessageDesc{
 }
 
 func init() {
-	RegisterInternalMessage[NoneArgsCommandMessage]("NoneArgsCommandMessage", onNoneArgsCommandMessageReader, onNoneArgsCommandMessageWriter)
+	// RegisterInternalMessage 的泛型参数应为“指针类型”，框架内部会自动取 Elem().Elem() 得到实际消息结构体类型
+	RegisterInternalMessage[*NoneArgsCommandMessage]("NoneArgsCommandMessage", onNoneArgsCommandMessageReader, onNoneArgsCommandMessageWriter)
 }
 
 type MessageDesc struct {

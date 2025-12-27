@@ -187,9 +187,14 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 }
 
 func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
-	// 如果当前 Actor 状态不是 running，则不处理消息（非系统消息）
-	// 如果当前 Actor 状态是 killing，即便是系统消息，也应当死信处理
-	if currentState := atomic.LoadInt32(&c.state); (!envelop.System() && currentState != running) || currentState == killing {
+	// 非运行状态下：
+	// - 普通消息一律丢弃（TODO: 死信）
+	// - 系统消息在 killing 阶段仍需要处理（例如子 Actor 的 OnKilled 事件），否则终止流程无法闭环
+	currentState := atomic.LoadInt32(&c.state)
+	if currentState == killed {
+		return // TODO: 应当死信处理
+	}
+	if !envelop.System() && currentState != running {
 		return // TODO: 应当死信处理
 	}
 
@@ -232,6 +237,7 @@ func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
 }
 
 func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
+	// restart 只允许从 running 进入，避免覆盖并发的 kill/stop 流程
 	if !atomic.CompareAndSwapInt32(&c.state, running, killing) {
 		return
 	}
@@ -256,14 +262,17 @@ func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
 		Reason: message.Reason,
 	}
 	c.envelop = mailbox.NewEnvelopWithTell(true, c.Sender(), c.ref, killMessage)
-	c.onKill(killMessage, behavior)
+	c.doKill(killMessage, behavior)
 }
 
 func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
-	if (c.restarting == nil && !atomic.CompareAndSwapInt32(&c.state, running, killing)) || atomic.LoadInt32(&c.state) != running {
+	if !atomic.CompareAndSwapInt32(&c.state, running, killing) {
 		return
 	}
+	c.doKill(message, behavior)
+}
 
+func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 	c.Logger().Debug("receive kill", log.String("path", c.ref.path), log.Bool("restarting", c.restarting != nil))
 	// 等待所有子 Actor 结束，假设是重启，子 Actor 不应该跟随重启，应该由父节点决定是否重启
 	for _, child := range c.children {
@@ -362,7 +371,7 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 			c.mailbox.Resume()
 		} else {
 			c.restarting = nil
-			atomic.CompareAndSwapInt32(&c.state, killing, running)
+			atomic.StoreInt32(&c.state, running)
 			c.tell(true, c.parent, new(vivid.OnLaunch))
 			c.mailbox.Resume()
 		}
