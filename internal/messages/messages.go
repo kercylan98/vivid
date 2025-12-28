@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"reflect"
+	"time"
 )
 
 var outsideMessageDesc = &MessageDesc{
@@ -20,8 +21,11 @@ var outsideMessageDesc = &MessageDesc{
 }
 
 func init() {
-	// RegisterInternalMessage 的泛型参数应为“指针类型”，框架内部会自动取 Elem().Elem() 得到实际消息结构体类型
 	RegisterInternalMessage[*NoneArgsCommandMessage]("NoneArgsCommandMessage", onNoneArgsCommandMessageReader, onNoneArgsCommandMessageWriter)
+	RegisterInternalMessage[*PingMessage]("PingMessage", onPingMessageReader, onPingMessageWriter)
+	RegisterInternalMessage[*PongMessage]("PongMessage", onPongMessageReader, onPongMessageWriter)
+	RegisterInternalMessage[*WatchMessage]("WatchMessage", onWatchMessageReader, onWatchMessageWriter)
+	RegisterInternalMessage[*UnwatchMessage]("UnwatchMessage", onUnwatchMessageReader, onUnwatchMessageWriter)
 }
 
 type MessageDesc struct {
@@ -149,4 +153,66 @@ func onNoneArgsCommandMessageReader(message any, reader *Reader) error {
 func onNoneArgsCommandMessageWriter(message any, writer *Writer) error {
 	m := message.(*NoneArgsCommandMessage)
 	return writer.WriteFrom(uint8(m.Command))
+}
+
+type PingMessage struct {
+	Time time.Time // 发出 Ping 消息的时间
+}
+
+func onPingMessageReader(message any, reader *Reader) error {
+	m := message.(*PingMessage)
+	var unixNano int64
+	if err := reader.ReadInto(&unixNano); err != nil {
+		return err
+	}
+	m.Time = time.Unix(0, int64(unixNano))
+	return nil
+}
+
+func onPingMessageWriter(message any, writer *Writer) error {
+	m := message.(*PingMessage)
+	return writer.WriteFrom(m.Time.UnixNano())
+}
+
+type PongMessage struct {
+	Ping        *PingMessage // 对应的 Ping 消息
+	RespondTime time.Time    // 响应 Pong 消息的时间
+}
+
+func onPongMessageReader(message any, reader *Reader) error {
+	m := message.(*PongMessage)
+	var pingTime int64
+	var respondTime int64
+	if err := reader.ReadInto(&pingTime, &respondTime); err != nil {
+		return err
+	}
+	m.Ping = &PingMessage{Time: time.Unix(0, pingTime)}
+	m.RespondTime = time.Unix(0, respondTime)
+	return nil
+}
+
+func onPongMessageWriter(message any, writer *Writer) error {
+	m := message.(*PongMessage)
+	return writer.WriteFrom(m.Ping.Time.UnixNano(), m.RespondTime.UnixNano())
+}
+
+type WatchMessage struct{}
+
+func onWatchMessageReader(message any, reader *Reader) error {
+	return nil
+}
+
+func onWatchMessageWriter(message any, writer *Writer) error {
+	return nil
+}
+
+type UnwatchMessage struct {
+}
+
+func onUnwatchMessageReader(message any, reader *Reader) error {
+	return nil
+}
+
+func onUnwatchMessageWriter(message any, writer *Writer) error {
+	return nil
 }

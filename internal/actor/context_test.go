@@ -199,3 +199,25 @@ func TestContext_Kill(t *testing.T) {
 	system.Kill(ref, false, "test kill")
 	wg.Wait()
 }
+
+func TestContext_Watch(t *testing.T) {
+	system := actor.NewTestSystem(t)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {})).Unwrap()
+
+	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch message := ctx.Message().(type) {
+		case *vivid.OnLaunch:
+			ctx.Watch(ref)
+			ctx.Kill(ref, false, "test kill")
+			wg.Done()
+		case *vivid.OnKilled:
+			if message.Ref.Equals(ref) {
+				wg.Done()
+			}
+		}
+	})).Unwrap()
+
+	wg.Wait()
+}

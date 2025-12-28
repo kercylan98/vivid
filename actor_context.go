@@ -92,6 +92,12 @@ type ActorContext interface {
 	// 参数:
 	//   - fault: 故障消息
 	Failed(fault Message)
+
+	// Watch 监听指定 ActorRef 的终止事件，并在终止时收到 OnKilled 消息。
+	Watch(ref ActorRef)
+
+	// Unwatch 取消监听指定 ActorRef 的终止事件。
+	Unwatch(ref ActorRef)
 }
 
 type actorRace interface {

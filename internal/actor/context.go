@@ -83,6 +83,7 @@ type Context struct {
 	envelop       vivid.Envelop                      // 当前 ActorContext 的消息
 	state         int32                              // 状态
 	restarting    *RestartMessage                    // 正在重启的消息
+	watchers      map[string]vivid.ActorRef          // 正在监听该 Actor 终止事件的 ActorRef，其中 key 为 ActorRef 的完整路径
 }
 
 func (c *Context) Logger() log.Logger {
@@ -215,6 +216,12 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 		c.onCommand(message)
 	case *RestartMessage:
 		c.onRestart(message, behavior)
+	case *messages.PingMessage:
+		c.onPing(message)
+	case *messages.WatchMessage:
+		c.onWatch(message)
+	case *messages.UnwatchMessage:
+		c.onUnwatch(message)
 	default:
 		defer func() {
 			if r := recover(); r != nil {
@@ -234,6 +241,48 @@ func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
 	case messages.CommandResumeMailbox:
 		c.mailbox.Resume()
 	}
+}
+
+func (c *Context) onPing(message *messages.PingMessage) {
+	pongMessage := &messages.PongMessage{
+		Ping:        message,
+		RespondTime: time.Now(),
+	}
+	c.Reply(pongMessage)
+}
+
+func (c *Context) onWatch(_ *messages.WatchMessage) {
+	sender := c.envelop.Sender()
+	if sender.Equals(c.parent) {
+		// 父节点不需要显式监听子节点，因为父节点会自动监听子节点
+		c.Logger().Debug("parent does not need to watch child explicitly; this is handled by default", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+		return
+	}
+
+	// 检查是否已经监听
+	full := fmt.Sprintf("%s@%s", sender.GetAddress(), sender.GetPath())
+	if _, exists := c.watchers[full]; exists {
+		c.Logger().Debug("watcher already exists", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+		return
+	}
+
+	if c.watchers == nil {
+		c.watchers = make(map[string]vivid.ActorRef)
+	}
+
+	c.watchers[full] = sender
+	c.Logger().Debug("watcher added", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+}
+
+func (c *Context) onUnwatch(_ *messages.UnwatchMessage) {
+	sender := c.envelop.Sender()
+	full := fmt.Sprintf("%s@%s", sender.GetAddress(), sender.GetPath())
+	if _, exists := c.watchers[full]; !exists {
+		c.Logger().Debug("watcher not found", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+		return
+	}
+	delete(c.watchers, full)
+	c.Logger().Debug("watcher removed", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
 }
 
 func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
@@ -332,6 +381,12 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 	restarting := c.restarting != nil
 	if !restarting {
 		c.system.removeActorContext(c)
+		// 通知所有监听者
+		for _, watcher := range c.watchers {
+			c.tell(true, watcher, selfKilledMessage)
+		}
+
+		// 通知父节点
 		if c.parent != nil {
 			c.tell(true, c.parent, selfKilledMessage)
 		}
@@ -442,4 +497,18 @@ func (c *Context) onSupervise(supervisionContext *supervisionContext) {
 		c.tell(true, target, mailboxPauseMessage)
 	}
 	supervisionContext.applyDecision(c, targets, decision, reason)
+}
+
+// 目前该消息暂无任何字段，将其固化避免额外的内存分配
+var watchMessage = new(messages.WatchMessage)
+
+func (c *Context) Watch(ref vivid.ActorRef) {
+	c.tell(true, ref, watchMessage)
+}
+
+// 目前该消息暂无任何字段，将其固化避免额外的内存分配
+var unwatchMessage = new(messages.UnwatchMessage)
+
+func (c *Context) Unwatch(ref vivid.ActorRef) {
+	c.tell(true, ref, unwatchMessage)
 }
