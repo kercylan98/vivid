@@ -120,7 +120,7 @@ func (s *System) HandleEnvelop(envelop vivid.Envelop) {
 	receiverMailbox.Enqueue(envelop)
 }
 
-func (s *System) Stop(timeout ...time.Duration) {
+func (s *System) Stop(timeout ...time.Duration) error {
 	var stopTimeout = time.Minute
 	if len(timeout) > 0 && timeout[0] > 0 {
 		stopTimeout = timeout[0]
@@ -138,10 +138,11 @@ func (s *System) Stop(timeout ...time.Duration) {
 		s.actorContexts.Range(func(key, value any) bool {
 			return true
 		})
-		panic(fmt.Errorf("actor system stop timeout, %s", ctx.Err()))
+		return fmt.Errorf("actor system stop timeout, %w", ctx.Err())
 	}
 
 	s.Logger().Debug("actor system stopped")
+	return nil
 }
 
 func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) {

@@ -36,7 +36,7 @@ type ActorSystem interface {
 	// 注意事项：
 	//   - 多次调用 Stop() 并无额外副作用，仅首个调用会触发实际终止流程，其余调用会在等待终止完成后直接返回。
 	//   - 停止操作一经触发，不可逆转，系统不可再用于消息接收、Actor 创建等操作。
-	Stop(timeout ...time.Duration)
+	Stop(timeout ...time.Duration) error
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。
