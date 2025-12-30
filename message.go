@@ -61,3 +61,5 @@ func onKilledWriter(message any, writer *messages.Writer) error {
 	m := message.(*OnKilled)
 	return writer.WriteFrom(m.Ref)
 }
+
+type StreamEvent any

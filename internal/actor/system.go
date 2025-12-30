@@ -36,6 +36,8 @@ func newSystem(testSystem *TestSystem, startBeforeHandler func(system *TestSyste
 		guardClosedSignal: make(chan struct{}),
 	}
 
+	system.eventStream = newEventStream(system)
+
 	var err error
 	var logAttrs []any
 	system.Context, err = NewContext(system, nil, guard.NewActor(system.guardClosedSignal))
@@ -77,6 +79,7 @@ type System struct {
 	actorContexts     sync.Map                  // 用于加速访问的 ActorContext 缓存（含有 Future）
 	guardClosedSignal chan struct{}             // 用于通知系统关闭的信号
 	remotingServer    *remoting.ServerActor     // 远程服务器
+	eventStream       vivid.EventStream         // 事件流
 }
 
 // HandleRemotingEnvelop implements remoting.NetworkEnvelopHandler.

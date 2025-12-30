@@ -3,6 +3,7 @@ package actor
 import (
 	"fmt"
 	"net/url"
+	"reflect"
 	"runtime/debug"
 	"strings"
 	"sync/atomic"
@@ -14,6 +15,7 @@ import (
 	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/sugar"
+	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 var (
@@ -110,6 +112,10 @@ func (c *Context) Name() string {
 	return c.options.Name
 }
 
+func (c *Context) EventStream() vivid.EventStream {
+	return c.system.eventStream
+}
+
 func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *sugar.Result[vivid.ActorRef] {
 	var result sugar.ResultContainer[vivid.ActorRef]
 	var status = atomic.LoadInt32(&c.state)
@@ -139,6 +145,11 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *suga
 
 	c.tell(true, childCtx.Ref(), new(vivid.OnLaunch))
 	c.Logger().Debug("actor spawned", log.String("path", childCtx.Ref().GetPath()))
+
+	c.EventStream().Publish(c, ves.ActorSpawnedEvent{
+		ActorRef: childCtx.Ref(),
+		Type:     reflect.TypeOf(actor),
+	})
 
 	if status == killing {
 		c.Kill(childCtx.ref, false, "parent killed")
@@ -189,14 +200,12 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 
 func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// 非运行状态下：
-	// - 普通消息一律丢弃（TODO: 死信）
+	// - 普通消息一律推入死信队列
 	// - 系统消息在 killing 阶段仍需要处理（例如子 Actor 的 OnKilled 事件），否则终止流程无法闭环
 	currentState := atomic.LoadInt32(&c.state)
-	if currentState == killed {
-		return // TODO: 应当死信处理
-	}
-	if !envelop.System() && currentState != running {
-		return // TODO: 应当死信处理
+	if (currentState == killed) || (!envelop.System() && currentState != running) {
+		c.system.TellSelf(envelop)
+		return
 	}
 
 	// 处理消息
@@ -225,7 +234,9 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	default:
 		defer func() {
 			if r := recover(); r != nil {
-				c.Logger().Error("unexpected error", log.Any("error", r), log.String("error_type", fmt.Sprintf("%T", r)), log.String("stack", string(debug.Stack())))
+				stack := string(debug.Stack())
+				c.Logger().Error("unexpected error", log.Any("error", r), log.String("error_type", fmt.Sprintf("%T", r)), log.String("stack", stack))
+				fmt.Println(stack)
 				c.Failed(r)
 			}
 		}()
@@ -253,9 +264,16 @@ func (c *Context) onPing(message *messages.PingMessage) {
 
 func (c *Context) onWatch(_ *messages.WatchMessage) {
 	sender := c.envelop.Sender()
+	// 父节点不需要显式监听子节点，因为父节点会自动监听子节点
 	if sender.Equals(c.parent) {
-		// 父节点不需要显式监听子节点，因为父节点会自动监听子节点
 		c.Logger().Debug("parent does not need to watch child explicitly; this is handled by default", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+		return
+	}
+
+	// 如果已死，直接告知死亡
+	if atomic.LoadInt32(&c.state) == killed {
+		c.Logger().Debug("watcher already killed", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+		c.tell(false, sender, &vivid.OnKilled{Ref: c.ref})
 		return
 	}
 
@@ -380,6 +398,7 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 	// 宣告父节点自身死亡，重启状态下并非真正死亡，不做移除和通知
 	restarting := c.restarting != nil
 	if !restarting {
+		c.EventStream().UnsubscribeAll(c)
 		c.system.removeActorContext(c)
 		// 通知所有监听者
 		for _, watcher := range c.watchers {

@@ -21,6 +21,9 @@ type ActorContext interface {
 	//   - 可通过该实例访问 Actor 系统级别配置（如全局默认 ask 超时）、顶级 Actor 资源、注册服务等功能。
 	System() ActorSystem
 
+	// EventStream 返回事件流实例。
+	EventStream() EventStream
+
 	// Message 返回当前 ActorContext 正在处理的消息实例。
 	//
 	// 特殊消息说明：
