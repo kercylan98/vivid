@@ -6,6 +6,7 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/actor"
+	"github.com/kercylan98/vivid/pkg/ves"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -220,4 +221,37 @@ func TestContext_Watch(t *testing.T) {
 	})).Unwrap()
 
 	wg.Wait()
+}
+
+func TestContext_DeathLetter(t *testing.T) {
+	system := actor.NewTestSystem(t)
+	defer system.Stop()
+
+	var waitSub = make(chan struct{})
+	var waitKilled = make(chan struct{})
+	var waitDeathLetter = make(chan struct{})
+
+	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch ctx.Message().(type) {
+		case *vivid.OnLaunch:
+			ctx.EventStream().Subscribe(ctx, ves.DeathLetterEvent{})
+			close(waitSub)
+		case ves.DeathLetterEvent:
+			close(waitDeathLetter)
+		}
+	})).Unwrap()
+
+	<-waitSub
+	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch ctx.Message().(type) {
+		case *vivid.OnLaunch:
+			ctx.Kill(ctx.Ref(), true, "test kill")
+		case *vivid.OnKilled:
+			close(waitKilled)
+		}
+	})).Unwrap()
+
+	<-waitKilled
+	system.Tell(ref, "test message")
+	<-waitDeathLetter
 }

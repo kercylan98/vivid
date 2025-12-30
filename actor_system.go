@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/metrics"
 )
 
 // ActorSystem 定义了 Actor 系统的核心接口，代表管理所有 Actor 的顶层实体。
@@ -63,6 +64,7 @@ func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
 	options = append([]ActorSystemOption{
 		WithActorSystemDefaultAskTimeout(DefaultAskTimeout),
 		WithActorSystemLogger(log.GetDefault()),
+		WithActorSystemEnableMetricsUpdatedNotify(-1),
 	}, options...)
 
 	opts := &ActorSystemOptions{}
@@ -85,7 +87,7 @@ func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
 type ActorSystemOptions struct {
 	// DefaultAskTimeout 指定所有 Actor 在调用 Ask 模式（请求-应答）时的默认超时时长。
 	// 若单次调用未特别指定，则将采用该超时时间，超时后会导致 Future 对象失败。
-	// 合理配置此值可防止消息“悬挂”导致资源泄漏，也可根据业务特性灵活设置。
+	// 合理配置此值可防止消息"悬挂"导致资源泄漏，也可根据业务特性灵活设置。
 	DefaultAskTimeout time.Duration
 
 	// Logger 指定 ActorSystem 的日志记录器。
@@ -103,6 +105,36 @@ type ActorSystemOptions struct {
 
 	// RemotingCodec 指定用于远程通讯的消息编解码器。
 	RemotingCodec Codec
+
+	// EnableMetrics 指定是否启用指标收集。
+	// 启用后，系统会自动创建 Metrics Actor 来收集和统计系统运行指标。
+	EnableMetrics bool
+
+	// Metrics 指标收集器。
+	Metrics metrics.Metrics
+
+	// EnableMetricsUpdatedNotify 指定是否启用指标收集更新通知。
+	EnableMetricsUpdatedNotify time.Duration
+}
+
+// WithActorSystemEnableMetricsUpdatedNotify 返回一个 ActorSystemOption，用于设置指标更新时快照推送行为的间隔策略。
+//
+// 配置说明：
+//   - 当 duration == 0 时：每次指标发生更新后，都会立即将最新指标快照（metrics.MetricsSnapshot）推送到事件流（EventStream）。
+//   - 当 duration > 0 时：系统将按照指定的间隔定期推送指标快照到事件流，而不是每次变更都推送。
+//   - 当 duration < 0 时：关闭指标快照推送功能（默认不开启）。
+//
+// 常用场景：
+//   - 实时采集与推送：设置为 0，可用于需要及时响应指标变化的场合，例如开发调试或高敏感监控。
+//   - 定时采集推送：设置为正值（如 5 秒），便于生产环境定期快照，减少推送频率和资源占用。
+//   - 完全关闭：设置为负值，在无需指标变更通知时关闭（默认不开启）。
+//
+// 参数：
+//   - duration: 指标推送间隔，具体行为见上方说明。
+func WithActorSystemEnableMetricsUpdatedNotify(duration time.Duration) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		opts.EnableMetricsUpdatedNotify = duration
+	}
 }
 
 // WithActorSystemDefaultAskTimeout 返回一个 ActorSystemOption，用于指定 ActorSystem 的默认 Ask 超时时间。
@@ -120,6 +152,40 @@ func WithActorSystemDefaultAskTimeout(timeout time.Duration) ActorSystemOption {
 		if timeout > 0 {
 			opts.DefaultAskTimeout = timeout
 		}
+	}
+}
+
+// WithActorSystemEnableMetrics 返回一个 ActorSystemOption，用于启用指标收集功能。
+//
+// 启用后，系统会自动创建 Metrics Actor 来收集和统计系统运行指标，
+// 包括 Actor 数量、失败数、重启数、死信数等核心指标。
+//
+// 用法场景：
+//   - 在生产环境中启用指标收集，用于监控和诊断
+//   - 通过 Metrics 接口查询系统运行状态
+//
+// 参数：
+//   - enable: 是否启用指标收集，默认为 false
+func WithActorSystemEnableMetrics(enable bool) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		opts.EnableMetrics = enable
+		if opts.Metrics == nil {
+			opts.Metrics = metrics.NewDefaultMetrics()
+		}
+	}
+}
+
+// WithActorSystemMetrics 返回一个 ActorSystemOption，用于指定指标收集器。
+//
+// 用法场景：
+//   - 在构建 ActorSystem 时，通过该 Option 明确设置指标收集器。
+//   - 支持灵活的业务需求（如部分场景需要自定义指标收集器，或测试环境下使用内存指标收集器）。
+//
+// 参数：
+//   - metrics: 期望设置的指标收集器。
+func WithActorSystemMetrics(metrics metrics.Metrics) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		opts.Metrics = metrics
 	}
 }
 

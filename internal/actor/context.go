@@ -14,6 +14,7 @@ import (
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/sugar"
 	"github.com/kercylan98/vivid/pkg/ves"
 )
@@ -45,12 +46,12 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 		behaviorStack: NewBehaviorStack(),
 	}
 
+	// 初始化 ActorOptions
 	for _, option := range options {
 		option(ctx.options)
 	}
 
-	ctx.mailbox = mailbox.NewUnboundedMailbox(256, ctx)
-
+	// 初始化 ActorRef
 	var parentAddress = system.options.RemotingAdvertiseAddress
 	var path = ctx.options.Name
 	if path == "" && parent != nil {
@@ -68,6 +69,16 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 	}
 
 	ctx.ref = NewRef(parentAddress, path)
+
+	// 执行 PrelaunchActor 的 OnPrelaunch 方法
+	if preLaunchActor, ok := actor.(vivid.PrelaunchActor); ok {
+		if err := preLaunchActor.OnPrelaunch(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	ctx.mailbox = mailbox.NewUnboundedMailbox(256, ctx)
+
 	ctx.behaviorStack.Push(actor.OnReceive)
 
 	return ctx, nil
@@ -86,6 +97,10 @@ type Context struct {
 	state         int32                              // 状态
 	restarting    *RestartMessage                    // 正在重启的消息
 	watchers      map[string]vivid.ActorRef          // 正在监听该 Actor 终止事件的 ActorRef，其中 key 为 ActorRef 的完整路径
+}
+
+func (c *Context) Metrics() metrics.Metrics {
+	return c.system.Metrics()
 }
 
 func (c *Context) Logger() log.Logger {
@@ -122,15 +137,6 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *suga
 	if status == killed {
 		return result.Error(fmt.Errorf("actor killed"))
 	}
-	if preLaunchActor, ok := actor.(vivid.PrelaunchActor); ok {
-		if err := preLaunchActor.OnPrelaunch(c); err != nil {
-			return result.Error(err)
-		}
-	}
-
-	if c.children == nil {
-		c.children = make(map[vivid.ActorPath]vivid.ActorRef)
-	}
 
 	childCtx, err := NewContext(c.system, c.ref, actor, options...)
 	if err != nil {
@@ -141,11 +147,15 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *suga
 		return sugar.With[vivid.ActorRef](nil, fmt.Errorf("already exists"))
 	}
 
+	if c.children == nil {
+		c.children = make(map[vivid.ActorPath]vivid.ActorRef)
+	}
 	c.children[childCtx.Ref().GetPath()] = childCtx.Ref()
 
 	c.tell(true, childCtx.Ref(), new(vivid.OnLaunch))
 	c.Logger().Debug("actor spawned", log.String("path", childCtx.Ref().GetPath()))
 
+	// 通知事件流
 	c.EventStream().Publish(c, ves.ActorSpawnedEvent{
 		ActorRef: childCtx.Ref(),
 		Type:     reflect.TypeOf(actor),
@@ -204,7 +214,10 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// - 系统消息在 killing 阶段仍需要处理（例如子 Actor 的 OnKilled 事件），否则终止流程无法闭环
 	currentState := atomic.LoadInt32(&c.state)
 	if (currentState == killed) || (!envelop.System() && currentState != running) {
-		c.system.TellSelf(envelop)
+		c.system.TellSelf(ves.DeathLetterEvent{
+			Envelope: envelop,
+			Time:     time.Now(),
+		})
 		return
 	}
 
@@ -215,6 +228,11 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	switch message := c.envelop.Message().(type) {
 	case *vivid.OnLaunch:
 		behavior(c)
+		// 通知事件流
+		c.EventStream().Publish(c, ves.ActorLaunchedEvent{
+			ActorRef: c.ref,
+			Type:     reflect.TypeOf(c.actor),
+		})
 	case *vivid.OnKill:
 		c.onKill(message, behavior)
 	case *vivid.OnKilled:
@@ -249,8 +267,18 @@ func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
 	switch message.Command {
 	case messages.CommandPauseMailbox:
 		c.mailbox.Pause()
+		// 通知事件流
+		c.EventStream().Publish(c, ves.ActorMailboxPausedEvent{
+			ActorRef: c.ref,
+			Type:     reflect.TypeOf(c.actor),
+		})
 	case messages.CommandResumeMailbox:
 		c.mailbox.Resume()
+		// 通知事件流
+		c.EventStream().Publish(c, ves.ActorMailboxResumedEvent{
+			ActorRef: c.ref,
+			Type:     reflect.TypeOf(c.actor),
+		})
 	}
 }
 
@@ -290,6 +318,11 @@ func (c *Context) onWatch(_ *messages.WatchMessage) {
 
 	c.watchers[full] = sender
 	c.Logger().Debug("watcher added", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+	// 通知事件流
+	c.EventStream().Publish(c, ves.ActorWatchedEvent{
+		ActorRef: c.ref,
+		Watcher:  sender,
+	})
 }
 
 func (c *Context) onUnwatch(_ *messages.UnwatchMessage) {
@@ -301,6 +334,11 @@ func (c *Context) onUnwatch(_ *messages.UnwatchMessage) {
 	}
 	delete(c.watchers, full)
 	c.Logger().Debug("watcher removed", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+	// 通知事件流
+	c.EventStream().Publish(c, ves.ActorUnwatchedEvent{
+		ActorRef: c.ref,
+		Watcher:  sender,
+	})
 }
 
 func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
@@ -312,6 +350,14 @@ func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
 	// 标记正在重启
 	c.restarting = message
 	c.Logger().Debug("receive restart", log.String("path", c.ref.GetPath()), log.String("reason", message.Reason), log.Any("fault", message.Fault), log.String("stack", string(message.Stack)))
+
+	// 通知事件流
+	c.EventStream().Publish(c, ves.ActorRestartingEvent{
+		ActorRef: c.ref,
+		Type:     reflect.TypeOf(c.actor),
+		Reason:   message.Reason,
+		Fault:    message.Fault,
+	})
 
 	// 执行重启前的预处理
 	// 该阶段主要是用户的自定义清理逻辑，发生异常应当记录错误并继续重启
@@ -409,6 +455,12 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 		if c.parent != nil {
 			c.tell(true, c.parent, selfKilledMessage)
 		}
+
+		// 通知事件流
+		c.EventStream().Publish(c, ves.ActorKilledEvent{
+			ActorRef: c.ref,
+			Type:     reflect.TypeOf(c.actor),
+		})
 	}
 	c.Logger().Debug("actor killed", log.String("path", c.ref.GetPath()), log.Bool("restarting", restarting))
 
@@ -448,6 +500,16 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 			atomic.StoreInt32(&c.state, running)
 			c.tell(true, c.parent, new(vivid.OnLaunch))
 			c.mailbox.Resume()
+			// 通知事件流
+			c.EventStream().Publish(c, ves.ActorRestartedEvent{
+				ActorRef: c.ref,
+				Type:     reflect.TypeOf(c.actor),
+			})
+			// 通知事件流：邮箱恢复
+			c.EventStream().Publish(c, ves.ActorMailboxResumedEvent{
+				ActorRef: c.ref,
+				Type:     reflect.TypeOf(c.actor),
+			})
 		}
 	}
 }
@@ -497,6 +559,17 @@ func (c *Context) Failed(fault vivid.Message) {
 	c.mailbox.Pause()
 	supervisionContext := newSupervisionContext(c.ref, fault)
 	c.tell(true, c.parent, supervisionContext)
+	// 通知事件流
+	c.EventStream().Publish(c, ves.ActorFailedEvent{
+		ActorRef: c.ref,
+		Type:     reflect.TypeOf(c.actor),
+		Fault:    fault,
+	})
+	// 通知事件流：邮箱暂停
+	c.EventStream().Publish(c, ves.ActorMailboxPausedEvent{
+		ActorRef: c.ref,
+		Type:     reflect.TypeOf(c.actor),
+	})
 }
 
 func (c *Context) onSupervise(supervisionContext *supervisionContext) {

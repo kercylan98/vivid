@@ -88,10 +88,5 @@ func (c *TestCodec) Decode(data []byte) (vivid.Message, error) {
 	}
 
 	// 转换为 vivid.Message
-	message, ok := messagePtr.(vivid.Message)
-	if !ok {
-		return nil, fmt.Errorf("decoded value does not implement vivid.Message")
-	}
-
-	return message, nil
+	return messagePtr, nil
 }

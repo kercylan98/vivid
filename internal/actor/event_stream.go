@@ -28,7 +28,7 @@ type eventStream struct {
 	mu              sync.RWMutex
 }
 
-func (es *eventStream) Subscribe(ctx vivid.ActorContext, event any) {
+func (es *eventStream) Subscribe(ctx vivid.EventStreamContext, event any) {
 	eventType := reflect.TypeOf(event)
 
 	es.mu.Lock()
@@ -56,7 +56,7 @@ func (es *eventStream) Subscribe(ctx vivid.ActorContext, event any) {
 	ctx.Logger().Debug("event subscribed", log.String("event_type", eventType.String()), log.String("subscriber_path", subscriberPath))
 }
 
-func (es *eventStream) Publish(ctx vivid.ActorContext, event vivid.Message) {
+func (es *eventStream) Publish(ctx vivid.EventStreamContext, event vivid.Message) {
 	eventType := reflect.TypeOf(event)
 
 	es.mu.RLock()
@@ -68,7 +68,7 @@ func (es *eventStream) Publish(ctx vivid.ActorContext, event vivid.Message) {
 	}
 }
 
-func (es *eventStream) Unsubscribe(ctx vivid.ActorContext, event any) {
+func (es *eventStream) Unsubscribe(ctx vivid.EventStreamContext, event any) {
 	eventType := reflect.TypeOf(event)
 
 	es.mu.Lock()
@@ -90,7 +90,7 @@ func (es *eventStream) Unsubscribe(ctx vivid.ActorContext, event any) {
 	ctx.Logger().Debug("event unsubscribed", log.String("subscriber_path", subscriberPath), log.String("event_type", eventType.String()))
 }
 
-func (es *eventStream) UnsubscribeAll(ctx vivid.ActorContext) {
+func (es *eventStream) UnsubscribeAll(ctx vivid.EventStreamContext) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 

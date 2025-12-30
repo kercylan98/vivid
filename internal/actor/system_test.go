@@ -9,6 +9,7 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/actor"
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -85,4 +86,27 @@ func TestSystem_ServerAcceptActorRestart(t *testing.T) {
 	}, vivid.WithRemoting(NewTestCodec(), "127.0.0.1:0"))
 	defer system.Stop()
 	wg.Wait()
+}
+
+func TestSystem_Metrics(t *testing.T) {
+	system := actor.NewTestSystem(t, vivid.WithActorSystemEnableMetrics(true))
+	defer system.Stop()
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch ctx.Message().(type) {
+		case *vivid.OnLaunch:
+			ctx.Metrics().Counter("test_counter").Inc()
+			ctx.Metrics().Gauge("test_gauge").Inc()
+			ctx.Metrics().Histogram("test_histogram").Observe(1)
+			wg.Done()
+		}
+	}))
+
+	wg.Wait()
+	snapshot := system.Metrics().Snapshot()
+	assert.Equal(t, uint64(1), snapshot.Counters["test_counter"])
+	assert.Equal(t, int64(1), snapshot.Gauges["test_gauge"])
+	assert.Equal(t, metrics.HistogramSnapshot{Count: 0x1, Sum: 1, Min: 1, Max: 1, Values: []float64{1}}, snapshot.Histograms["test_histogram"])
 }

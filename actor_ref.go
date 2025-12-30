@@ -34,6 +34,9 @@ type ActorRef interface {
 
 	// ToActorRefs 返回当前 ActorRef 的切片，用于将 ActorRef 转换为切片。
 	ToActorRefs() ActorRefs
+
+	// String 返回当前 ActorRef 的字符串表示。
+	String() string
 }
 
 // ActorRefs 定义了 ActorRef 的切片类型，表示一组 ActorRef。

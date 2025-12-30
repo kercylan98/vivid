@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/sugar"
 )
 
@@ -152,6 +153,22 @@ type actorBasic interface {
 	// 返回值：
 	//   - log.Logger：当前上下文（ActorContext 或 ActorSystem）可用的日志记录器实例。
 	Logger() log.Logger
+
+	// Metrics 方法用于获取当前 ActorContext 可用的指标收集器（metrics.Metrics）。
+	//
+	// 功能说明：
+	//   - 支持业务 Actor 上报各类自定义、系统级的指标数据（如计数器、仪表盘、直方图等）用于运行监控与性能分析。
+	//   - 使用方式请参考 metrics.Metrics 接口，建议在消息处理等流程中按需调用采集/递增指标。
+	//
+	// 返回策略：
+	//   - 优先返回当前 ActorSystem 的指标收集器实例，实现统一采集及快照导出。
+	//   - 若当前 ActorSystem 未启用任何指标采集器（即未配置 metrics.Metrics），则本方法将返回一个仅临时有效的一次性指标收集器（其状态不会被全局保存，数据无法全局使用，仅保障业务代码调用不 panic）。
+	//   - 此场景下系统会自动输出一条告警日志，提示当前 ActorSystem 未启用正式指标组件，建议运维或开发人员及时补充配置以实现完整指标观测能力。
+	//   - 返回值无论如何保证不为 nil，调用方无需判空，可直接完成指标埋点；但如返回为临时收集器，其功能和可见性将受限。
+	//
+	// 警告：
+	//   - 如果你在未启用（未配置）全局指标采集时调用本方法，采集到的数据不会被纳入集中观察与管理，建议只在开发或测试场景下采用。
+	Metrics() metrics.Metrics
 }
 
 type ActorLiaison interface {
@@ -188,6 +205,12 @@ type ActorLiaison interface {
 type PrelaunchContext interface {
 	// Logger 返回日志记录器。
 	Logger() log.Logger
+
+	// EventStream 返回事件流实例。
+	EventStream() EventStream
+
+	// Ref 返回当前 ActorContext 的 ActorRef。
+	Ref() ActorRef
 }
 
 type RestartContext interface {

@@ -47,6 +47,10 @@ func (r *Ref) ToActorRefs() vivid.ActorRefs {
 	return vivid.ActorRefs{r}
 }
 
+func (r *Ref) String() string {
+	return r.GetAddress() + r.GetPath()
+}
+
 func NewAgentRef(agent *Ref) *AgentRef {
 	return &AgentRef{
 		ref:   NewRef(agent.GetAddress(), agent.GetPath()+"@future@"+uuid.NewString()),

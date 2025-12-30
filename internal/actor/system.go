@@ -11,8 +11,10 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/mailbox"
+	metricsActor "github.com/kercylan98/vivid/internal/metrics"
 	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/sugar"
 )
 
@@ -49,6 +51,23 @@ func newSystem(testSystem *TestSystem, startBeforeHandler func(system *TestSyste
 		startBeforeHandler(system.testSystem)
 	}
 
+	// 初始化指标收集 Actor
+	if opts.EnableMetrics {
+		var actorSystemMetrics metrics.Metrics
+		if opts.Metrics != nil {
+			actorSystemMetrics = opts.Metrics
+		} else {
+			actorSystemMetrics = metrics.NewDefaultMetrics()
+		}
+		system.metrics = actorSystemMetrics
+		metricsActor := metricsActor.NewActor(opts.EnableMetricsUpdatedNotify)
+		result := system.ActorOf(metricsActor, vivid.WithActorName("@metrics"))
+		if result.IsErr() {
+			return sugar.Err[*System](result.Err())
+		}
+		logAttrs = append(logAttrs, log.Bool("metrics_enabled", true))
+	}
+
 	// 初始化远程服务器 Actor
 	if opts.RemotingBindAddress != "" && opts.RemotingAdvertiseAddress != "" {
 		logAttrs = append(logAttrs, log.String("bind_address", opts.RemotingBindAddress))
@@ -80,6 +99,7 @@ type System struct {
 	guardClosedSignal chan struct{}             // 用于通知系统关闭的信号
 	remotingServer    *remoting.ServerActor     // 远程服务器
 	eventStream       vivid.EventStream         // 事件流
+	metrics           metrics.Metrics           // 指标收集器
 }
 
 // HandleRemotingEnvelop implements remoting.NetworkEnvelopHandler.
@@ -141,6 +161,14 @@ func (s *System) appendActorContext(ctx *Context) bool {
 // removeActorContext 用于移除指定路径的 ActorContext。
 func (s *System) removeActorContext(ctx *Context) {
 	s.actorContexts.Delete(ctx.Ref().GetPath())
+}
+
+func (s *System) Metrics() metrics.Metrics {
+	if s.metrics == nil {
+		s.Logger().Warn("metrics not enabled, returning temporary metrics collector, should use vivid.WithActorSystemEnableMetrics to enable metrics")
+		return metrics.NewDefaultMetrics()
+	}
+	return s.metrics
 }
 
 // findMailbox 负责根据给定的 ActorRef 查找并返回对应的邮箱（Mailbox）。
