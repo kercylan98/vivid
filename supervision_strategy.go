@@ -232,3 +232,117 @@ func (strategy *oneForOneStrategy) Supervise(ctx SupervisionContext) (targets Ac
 	decision, reason = strategy.decisionMaker.MakeDecision(ctx)
 	return ctx.Child(), decision, reason
 }
+
+type OneForAllStrategyOption func(options *OneForAllStrategyOptions)
+
+type OneForAllStrategyOptions struct {
+	InitialDelay time.Duration // 初始延迟时间，默认 1 秒
+	MaxDelay     time.Duration // 最大延迟时间，默认 1 分钟
+	Factor       float64       // 退避因子，默认 2.0
+	Jitter       bool          // 是否启用抖动，默认 true
+}
+
+// WithOneForAllStrategyOptions 返回一个设置 OneForAllStrategyOptions 的配置项。
+//
+// opts 为 OneForAllStrategyOptions 结构体。
+//
+// 返回:
+//   - OneForAllStrategyOption: 一个设置 OneForAllStrategyOptions 的配置项。
+func WithOneForAllStrategyOptions(opts OneForAllStrategyOptions) OneForAllStrategyOption {
+	return func(options *OneForAllStrategyOptions) {
+		*options = opts
+	}
+}
+
+// WithOneForAllStrategyInitialDelay 返回一个设置 OneForAllStrategyOptions.InitialDelay 的配置项。
+//
+// initialDelay 为初始延迟时间。初始延迟时间是用于第一次重试的延迟时间。
+// 如果 initialDelay <= 0，则使用默认值 1 秒。
+//
+// 返回:
+//   - OneForAllStrategyOption: 一个设置 OneForAllStrategyOptions.InitialDelay 的配置项。如果 initialDelay <= 0，则使用默认值 1 秒。
+func WithOneForAllStrategyInitialDelay(initialDelay time.Duration) OneForAllStrategyOption {
+	return func(options *OneForAllStrategyOptions) {
+		if initialDelay > 0 {
+			options.InitialDelay = initialDelay
+		}
+	}
+}
+
+// WithOneForAllStrategyMaxDelay 返回一个设置 OneForAllStrategyOptions.MaxDelay 的配置项。
+//
+// maxDelay 为最大延迟时间。最大延迟时间是用于最大重试的延迟时间。
+// 如果 maxDelay <= 0，则使用默认值 1 分钟。
+//
+// 返回:
+//   - OneForAllStrategyOption: 一个设置 OneForAllStrategyOptions.MaxDelay 的配置项。如果 maxDelay <= 0，则使用默认值 1 分钟。
+func WithOneForAllStrategyMaxDelay(maxDelay time.Duration) OneForAllStrategyOption {
+	return func(options *OneForAllStrategyOptions) {
+		if maxDelay > 0 {
+			options.MaxDelay = maxDelay
+		}
+	}
+}
+
+// WithOneForAllStrategyFactor 返回一个设置 OneForAllStrategyOptions.Factor 的配置项。
+//
+// factor 为退避因子。退避因子是用于计算重试延迟的因子。
+// 如果 factor <= 0，则使用默认值 2.0。
+//
+// 返回:
+//   - OneForAllStrategyOption: 一个设置 OneForAllStrategyOptions.Factor 的配置项。如果 factor <= 0，则使用默认值 2.0。
+func WithOneForAllStrategyFactor(factor float64) OneForAllStrategyOption {
+	return func(options *OneForAllStrategyOptions) {
+		if factor > 0 {
+			options.Factor = factor
+		}
+	}
+}
+
+// WithOneForAllStrategyJitter 返回一个设置 OneForAllStrategyOptions.Jitter 的配置项。
+//
+// jitter 为是否启用抖动。抖动是用于在重试时添加随机抖动。
+// 如果 jitter == false，则使用默认值 true。
+//
+// 返回:
+//   - OneForAllStrategyOption: 一个设置 OneForAllStrategyOptions.Jitter 的配置项。如果 jitter == false，则使用默认值 true。
+func WithOneForAllStrategyJitter(jitter bool) OneForAllStrategyOption {
+	return func(options *OneForAllStrategyOptions) {
+		if jitter {
+			options.Jitter = jitter
+		}
+	}
+}
+
+// OneForAllStrategy 返回一个一对多监督策略，使用指数退避算法。
+// 它将根据决策器返回的决策决定如何处理故障的 Actor。
+//
+// 返回:
+//   - SupervisionStrategy: 一个一对多监督策略。
+func OneForAllStrategy(decisionMaker SupervisionStrategyDecisionMaker, options ...OneForAllStrategyOption) SupervisionStrategy {
+	var opts = &OneForAllStrategyOptions{
+		InitialDelay: time.Second,
+		MaxDelay:     time.Minute,
+		Factor:       2.0,
+		Jitter:       true,
+	}
+
+	for _, option := range options {
+		option(opts)
+	}
+
+	return &oneForAllStrategy{
+		backoff:       utils.NewExponentialBackoff(opts.InitialDelay, opts.MaxDelay, opts.Factor, opts.Jitter),
+		decisionMaker: decisionMaker,
+	}
+}
+
+type oneForAllStrategy struct {
+	backoff       *utils.ExponentialBackoff
+	decisionMaker SupervisionStrategyDecisionMaker
+}
+
+func (strategy *oneForAllStrategy) Supervise(ctx SupervisionContext) (targets ActorRefs, decision SupervisionDecision, reason string) {
+	decision, reason = strategy.decisionMaker.MakeDecision(ctx)
+	return ctx.Children(), decision, reason
+}
