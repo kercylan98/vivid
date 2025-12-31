@@ -84,7 +84,6 @@ func (f *Future[T]) Result() (T, error) {
 }
 
 func (f *Future[T]) Wait() error {
-	v := <-f.done
-	_ = v
+	<-f.done
 	return f.err
 }
