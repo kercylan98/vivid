@@ -97,6 +97,45 @@ type Context struct {
 	state         int32                              // 状态
 	restarting    *RestartMessage                    // 正在重启的消息
 	watchers      map[string]vivid.ActorRef          // 正在监听该 Actor 终止事件的 ActorRef，其中 key 为 ActorRef 的完整路径
+	stash         []vivid.Envelop                    // 暂存区
+}
+
+func (c *Context) Stash() {
+	c.stash = append(c.stash, c.envelop)
+}
+
+func (c *Context) Unstash(num ...int) {
+	stashCount := len(c.stash)
+	if stashCount == 0 {
+		return
+	}
+
+	// 快速通道
+	if len(num) == 0 {
+		c.mailbox.Enqueue(c.stash[0])
+		c.stash = c.stash[1:]
+		return
+	}
+
+	// 批量恢复
+	popCount := num[0]
+	if popCount <= 0 {
+		popCount = stashCount
+	}
+
+	for i := 0; i < popCount; i++ {
+		c.mailbox.Enqueue(c.stash[i])
+	}
+	c.stash = c.stash[popCount:]
+
+	// 如果全部恢复，则释放底层数组
+	if stashCount == popCount {
+		c.stash = nil
+	}
+}
+
+func (c *Context) StashCount() int {
+	return len(c.stash)
 }
 
 func (c *Context) Metrics() metrics.Metrics {
