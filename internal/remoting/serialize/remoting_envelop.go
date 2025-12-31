@@ -18,7 +18,7 @@ func EncodeEnvelopWithRemoting(codec vivid.Codec, envelop vivid.Envelop) (data [
 		writer.WriteBytesWithLength(data, 4)
 	} else {
 		// 内部消息序列化
-		err = messages.SerializeRemotingMessage(writer, messageDesc, envelop.Message())
+		err = messages.SerializeRemotingMessage(codec, writer, messageDesc, envelop.Message())
 		if err != nil {
 			return nil, err
 		}
@@ -67,7 +67,7 @@ func DecodeEnvelopWithRemoting(codec vivid.Codec, data []byte) (
 	if messageDesc := messages.QueryMessageDescByName(messageName); !messageDesc.IsOutside() {
 		// 内部消息反序列化
 		reader.Reset(messageData)
-		messageInstance, err = messages.DeserializeRemotingMessage(reader, messageDesc)
+		messageInstance, err = messages.DeserializeRemotingMessage(codec, reader, messageDesc)
 		if err != nil {
 			return
 		}

@@ -1,11 +1,16 @@
 package vivid
 
-import "github.com/kercylan98/vivid/internal/messages"
+import (
+	"fmt"
+
+	"github.com/kercylan98/vivid/internal/messages"
+)
 
 func init() {
 	messages.RegisterInternalMessage[*OnLaunch]("OnLaunch", onLaunchReader, onLaunchWriter)
 	messages.RegisterInternalMessage[*OnKill]("OnKill", onKillReader, onKillWriter)
 	messages.RegisterInternalMessage[*OnKilled]("OnKilled", onKilledReader, onKilledWriter)
+	messages.RegisterInternalMessage[*PipeResult]("PipeResult", pipeResultReader, pipeResultWriter)
 }
 
 // Message 表示可被 Actor 系统传递和处理的消息类型。
@@ -19,11 +24,11 @@ type Message = any
 // 此结构体无字段，仅用于启动事件的识别。
 type OnLaunch struct{}
 
-func onLaunchReader(message any, reader *messages.Reader) error {
+func onLaunchReader(message any, reader *messages.Reader, codec messages.Codec) error {
 	return nil
 }
 
-func onLaunchWriter(message any, writer *messages.Writer) error {
+func onLaunchWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	return nil
 }
 
@@ -35,12 +40,12 @@ type OnKill struct {
 	Poison bool     // 是否采用毒杀模式，true 时立即销毁，不处理剩余队列，false 时常规优雅下线。
 }
 
-func onKillReader(message any, reader *messages.Reader) error {
+func onKillReader(message any, reader *messages.Reader, codec messages.Codec) error {
 	m := message.(*OnKill)
 	return reader.ReadInto(&m.Killer, &m.Reason, &m.Poison)
 }
 
-func onKillWriter(message any, writer *messages.Writer) error {
+func onKillWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	m := message.(*OnKill)
 	return writer.WriteFrom(m.Killer, m.Reason, m.Poison)
 }
@@ -52,14 +57,118 @@ type OnKilled struct {
 	Ref ActorRef // 被终止的 ActorRef
 }
 
-func onKilledReader(message any, reader *messages.Reader) error {
+func onKilledReader(message any, reader *messages.Reader, codec messages.Codec) error {
 	m := message.(*OnKilled)
 	return reader.ReadInto(&m.Ref)
 }
 
-func onKilledWriter(message any, writer *messages.Writer) error {
+func onKilledWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	m := message.(*OnKilled)
 	return writer.WriteFrom(m.Ref)
 }
 
 type StreamEvent any
+
+type PipeResult struct {
+	Id      string  // 管道ID
+	Message Message // 管道结果消息
+	Error   error   // 管道结果错误
+}
+
+func pipeResultReader(message any, reader *messages.Reader, codec messages.Codec) (err error) {
+	m := message.(*PipeResult)
+
+	var messageName string
+	var messageData []byte
+	var errorCode int32
+	var errorMessage string
+	var messageInstance any
+
+	// | data | messageName | errorCode | errorMessage |
+	if err = reader.ReadInto(&messageData, &messageName, &errorCode, &errorMessage); err != nil {
+		return err
+	}
+
+	if messageDesc := messages.QueryMessageDescByName(messageName); !messageDesc.IsOutside() {
+		// 内部消息反序列化
+		reader.Reset(messageData)
+		messageInstance, err = messages.DeserializeRemotingMessage(codec, reader, messageDesc)
+		if err != nil {
+			return
+		}
+	} else {
+		// 外部消息反序列化
+		messageInstance, err = codec.Decode(messageData)
+		if err != nil {
+			return
+		}
+	}
+
+	m.Message = messageInstance
+	if errorCode != 0 {
+		var foundError = QueryError(errorCode)
+		if foundError == nil {
+			foundError = ErrorException.With(fmt.Errorf("error code %d not found, message: %s", errorCode, errorMessage))
+		}
+		m.Error = foundError
+	}
+	return nil
+}
+
+func pipeResultWriter(message any, writer *messages.Writer, codec messages.Codec) (err error) {
+	m := message.(*PipeResult)
+
+	var messageDesc = messages.QueryMessageDesc(m.Message)
+	if messageDesc.IsOutside() {
+		// 外部消息序列化
+		data, err := codec.Encode(m.Message)
+		if err != nil {
+			return err
+		}
+		writer.WriteBytesWithLength(data, 4)
+	} else {
+		// 内部消息序列化
+		err = messages.SerializeRemotingMessage(codec, writer, messageDesc, m.Message)
+		if err != nil {
+			return err
+		}
+	}
+
+	var errorCode int32
+	var errorMessage string
+	switch err := m.Error.(type) {
+	case nil:
+	case *Error:
+		errorCode = err.GetCode()
+		errorMessage = err.GetMessage()
+	default:
+		errorCode = ErrorException.GetCode()
+		errorMessage = ErrorException.With(err).GetMessage()
+	}
+
+	return writer.WriteFrom(
+		messageDesc.MessageName(), // 消息名称
+		m.Id,                      // PipeID
+		errorCode, errorMessage,   // 错误码和错误消息
+	)
+}
+
+func (p *PipeResult) GetId() string {
+	return p.Id
+}
+
+func (p *PipeResult) IsSuccess() bool {
+	return p.Error == nil
+}
+
+func (p *PipeResult) IsError() bool {
+	return p.Error != nil
+}
+
+func (p *PipeResult) GetMessage() Message {
+	return p.Message
+}
+
+func (p *PipeResult) GetError() error {
+	return p.Error
+}

@@ -1,18 +1,5 @@
 package vivid
 
-import "errors"
-
-// ErrFutureTimeout 表示 Future 等待超时异常。
-// 常见于调用 Future.Result()/Wait() 时，在指定的超时时间内未等到目标应答消息，导致操作超时。
-// 业务代码可通过判定该错误，实现超时兜底、重试机制等。
-var (
-	ErrFutureTimeout = errors.New("future timeout")
-	// ErrFutureMessageTypeMismatch 表示 Future 收到不符合预期类型的消息异常。
-	// 当通过泛型声明的 Future[期望类型]，但实际收到的消息类型与声明不符时抛出该异常。
-	// 业务方可通过判定该错误实现类型安全保护与异常处理。
-	ErrFutureMessageTypeMismatch = errors.New("future message type mismatch")
-)
-
 // Future[T] 为 Actor 模式下异步请求-响应的结果占位对象（泛型）。
 // 用于异步消息通信（如 Ask）场景，支持并发安全、等待应答、超时控制与消息管道等能力。
 // T 为业务自定义的期望响应消息类型，提高类型安全与易用性。

@@ -10,10 +10,10 @@ import (
 var outsideMessageDesc = &MessageDesc{
 	typeOf:      nil,
 	messageName: "",
-	reader: func(message any, reader *Reader) error {
+	reader: func(message any, reader *Reader, codec Codec) error {
 		return fmt.Errorf("outside message desc reader is not implemented")
 	},
-	writer: func(message any, writer *Writer) error {
+	writer: func(message any, writer *Writer, codec Codec) error {
 		messageType := reflect.TypeOf(message).Elem()
 		gob.RegisterName(messageType.Name(), message)
 		return fmt.Errorf("outside message desc writer is not implemented")
@@ -57,9 +57,14 @@ var (
 )
 
 type (
-	InternalMessageReader = func(message any, reader *Reader) error
-	InternalMessageWriter = func(message any, writer *Writer) error
+	InternalMessageReader = func(message any, reader *Reader, codec Codec) error
+	InternalMessageWriter = func(message any, writer *Writer, codec Codec) error
 )
+
+type Codec interface {
+	Encode(message any) ([]byte, error)
+	Decode(message []byte) (any, error)
+}
 
 func RegisterInternalMessage[T any](messageName string, reader InternalMessageReader, writer InternalMessageWriter) {
 	tof := reflect.TypeOf((*T)(nil)).Elem().Elem()
@@ -90,10 +95,10 @@ func QueryMessageDescByName(messageName string) *MessageDesc {
 	return outsideMessageDesc
 }
 
-func SerializeRemotingMessage(writer *Writer, desc *MessageDesc, message any) error {
+func SerializeRemotingMessage(codec Codec, writer *Writer, desc *MessageDesc, message any) error {
 	dw := NewWriterFromPool()
 	defer ReleaseWriterToPool(dw)
-	if err := desc.writer(message, dw); err != nil {
+	if err := desc.writer(message, dw, codec); err != nil {
 		return err
 	}
 	// 写入包含长度的数据
@@ -101,9 +106,9 @@ func SerializeRemotingMessage(writer *Writer, desc *MessageDesc, message any) er
 	return nil
 }
 
-func DeserializeRemotingMessage(reader *Reader, desc *MessageDesc) (any, error) {
+func DeserializeRemotingMessage(codec Codec, reader *Reader, desc *MessageDesc) (any, error) {
 	message := desc.Instance()
-	err := desc.reader(message, reader)
+	err := desc.reader(message, reader, codec)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +145,7 @@ type NoneArgsCommandMessage struct {
 	Command Command
 }
 
-func onNoneArgsCommandMessageReader(message any, reader *Reader) error {
+func onNoneArgsCommandMessageReader(message any, reader *Reader, codec Codec) error {
 	m := message.(*NoneArgsCommandMessage)
 	ui8 := uint8(m.Command)
 	if err := reader.ReadInto(&ui8); err != nil {
@@ -150,7 +155,7 @@ func onNoneArgsCommandMessageReader(message any, reader *Reader) error {
 	return nil
 }
 
-func onNoneArgsCommandMessageWriter(message any, writer *Writer) error {
+func onNoneArgsCommandMessageWriter(message any, writer *Writer, codec Codec) error {
 	m := message.(*NoneArgsCommandMessage)
 	return writer.WriteFrom(uint8(m.Command))
 }
@@ -159,7 +164,7 @@ type PingMessage struct {
 	Time time.Time // 发出 Ping 消息的时间
 }
 
-func onPingMessageReader(message any, reader *Reader) error {
+func onPingMessageReader(message any, reader *Reader, codec Codec) error {
 	m := message.(*PingMessage)
 	var unixNano int64
 	if err := reader.ReadInto(&unixNano); err != nil {
@@ -169,7 +174,7 @@ func onPingMessageReader(message any, reader *Reader) error {
 	return nil
 }
 
-func onPingMessageWriter(message any, writer *Writer) error {
+func onPingMessageWriter(message any, writer *Writer, codec Codec) error {
 	m := message.(*PingMessage)
 	return writer.WriteFrom(m.Time.UnixNano())
 }
@@ -179,7 +184,7 @@ type PongMessage struct {
 	RespondTime time.Time    // 响应 Pong 消息的时间
 }
 
-func onPongMessageReader(message any, reader *Reader) error {
+func onPongMessageReader(message any, reader *Reader, codec Codec) error {
 	m := message.(*PongMessage)
 	var pingTime int64
 	var respondTime int64
@@ -191,28 +196,28 @@ func onPongMessageReader(message any, reader *Reader) error {
 	return nil
 }
 
-func onPongMessageWriter(message any, writer *Writer) error {
+func onPongMessageWriter(message any, writer *Writer, codec Codec) error {
 	m := message.(*PongMessage)
 	return writer.WriteFrom(m.Ping.Time.UnixNano(), m.RespondTime.UnixNano())
 }
 
 type WatchMessage struct{}
 
-func onWatchMessageReader(message any, reader *Reader) error {
+func onWatchMessageReader(message any, reader *Reader, codec Codec) error {
 	return nil
 }
 
-func onWatchMessageWriter(message any, writer *Writer) error {
+func onWatchMessageWriter(message any, writer *Writer, codec Codec) error {
 	return nil
 }
 
 type UnwatchMessage struct {
 }
 
-func onUnwatchMessageReader(message any, reader *Reader) error {
+func onUnwatchMessageReader(message any, reader *Reader, codec Codec) error {
 	return nil
 }
 
-func onUnwatchMessageWriter(message any, writer *Writer) error {
+func onUnwatchMessageWriter(message any, writer *Writer, codec Codec) error {
 	return nil
 }

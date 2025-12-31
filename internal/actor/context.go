@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
@@ -245,6 +246,32 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 	receiverMailbox.Enqueue(envelop)
 
 	return futureIns
+}
+
+func (c *Context) PipeTo(recipient vivid.ActorRef, message vivid.Message, forwarders vivid.ActorRefs, timeout ...time.Duration) string {
+	pipeId := uuid.NewString()
+	pipeFuture := c.ask(false, recipient, message, timeout...)
+
+	if len(forwarders) == 0 {
+		return pipeId
+	}
+
+	go func(c *Context, pipeId string, future vivid.Future[vivid.Message]) {
+		var pipeResult = &vivid.PipeResult{
+			Id: pipeId,
+		}
+
+		pipeResult.Message, pipeResult.Error = future.Result()
+		for _, forwarder := range forwarders {
+			if forwarder.Equals(c.ref) {
+				c.TellSelf(pipeResult)
+				continue
+			}
+			c.tell(false, forwarder, pipeResult)
+		}
+
+	}(c, pipeId, pipeFuture)
+	return pipeId
 }
 
 func (c *Context) HandleEnvelop(envelop vivid.Envelop) {

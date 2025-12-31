@@ -20,7 +20,7 @@ func NewFuture[T vivid.Message](timeout time.Duration, closer func()) *Future[T]
 	}
 
 	future.timer = time.AfterFunc(timeout, func() {
-		future.Close(vivid.ErrFutureTimeout)
+		future.Close(vivid.ErrorFutureTimeout)
 	})
 
 	return future
@@ -67,7 +67,7 @@ func (f *Future[T]) close(v any) {
 		f.message = val
 	case nil:
 	default:
-		f.err = fmt.Errorf("%w, expected %T, got %T", vivid.ErrFutureMessageTypeMismatch, f.message, val)
+		f.err = fmt.Errorf("%w, expected %T, got %T", vivid.ErrorFutureMessageTypeMismatch, f.message, val)
 	}
 	close(f.done)
 	if f.timer != nil {

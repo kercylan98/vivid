@@ -285,6 +285,8 @@ type ActorLiaison interface {
 	//   - 适用于 RPC、协作、需结果确认等双向通信场景。
 	Ask(recipient ActorRef, message Message, timeout ...time.Duration) Future[Message]
 
+	PipeTo(recipient ActorRef, message Message, forwarders ActorRefs, timeout ...time.Duration) string
+
 	// Logger 返回日志记录器。
 	Logger() log.Logger
 }
