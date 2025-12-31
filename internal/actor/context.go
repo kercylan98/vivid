@@ -525,16 +525,37 @@ func (c *Context) Sender() vivid.ActorRef {
 	return c.envelop.Sender()
 }
 
-func (c *Context) Become(behavior vivid.Behavior) {
+func generateBehaviorOptions(options ...vivid.BehaviorOption) *vivid.BehaviorOptions {
+	var opts = &vivid.BehaviorOptions{
+		DiscardOld: true,
+	}
+	for _, option := range options {
+		option(opts)
+	}
+	return opts
+}
+
+func (c *Context) Become(behavior vivid.Behavior, options ...vivid.BehaviorOption) {
+	var opts = generateBehaviorOptions(options...)
+
+	if opts.DiscardOld {
+		c.behaviorStack.Clear()
+	}
 	c.behaviorStack.Push(behavior)
 }
 
-func (c *Context) RevertBehavior() bool {
-	if c.behaviorStack.Len() == 1 {
-		return false
+func (c *Context) UnBecome(options ...vivid.BehaviorOption) {
+	var opts = generateBehaviorOptions(options...)
+
+	if opts.DiscardOld {
+		c.behaviorStack.Clear()
+	} else {
+		c.behaviorStack.Pop()
 	}
-	c.behaviorStack.Pop()
-	return true
+
+	if c.behaviorStack.Len() == 0 {
+		c.behaviorStack.Push(c.actor.OnReceive)
+	}
 }
 
 func (c *Context) Kill(ref vivid.ActorRef, poison bool, reason ...string) {

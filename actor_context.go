@@ -62,25 +62,45 @@ type ActorContext interface {
 	//   - 推荐仅在处理“请求-应答”业务时使用，否则无须显式回复。
 	Reply(message Message)
 
-	// Become 用新的行为（Behavior）函数替换当前行为，新的行为函数会被推入行为栈顶，直至下一次切换或恢复。
+	// Become 方法用于切换当前 Actor 的消息处理行为（Behavior）。
 	//
-	// 场景说明：
-	//   - 可实现 Actor 状态机、行为迁移、动态消息处理能力。
-	//   - 调用后立即生效，下次收到的消息由新行为逻辑处理。
+	// 功能说明：
+	//   - 该方法将新的行为函数 behavior 推入行为堆栈（行为栈顶），替换当前消息处理逻辑，实现 Actor 行为的动态变更。
+	//   - 行为栈的设计允许嵌套、递归叠加新行为，可支持有限状态机、流程迁移、角色切换等丰富业务场景。
+	//   - 此变更在调用后立即生效，后续收到的消息将按照新的 behavior 进行处理，直到再次切换或手动恢复。
 	//
-	// 注意：
-	//   - 行为切换为堆栈管理，可嵌套调用实现复杂流程。
-	Become(behavior Behavior)
+	// 参数说明：
+	//   - behavior: 新的消息处理函数，类型为 Behavior，该函数定义了 Actor 收到消息时的处理逻辑。
+	//   - options: 行为切换配置项（可选），用于定制行为栈的变更策略，如是否丢弃历史行为（参考 WithBehaviorDiscardOld、WithBehaviorOptions 等）。
+	//
+	// 使用建议：
+	//   - 适用于需实现 Actor 内部状态流转、阶段性业务流程、会话等动态事件的业务场景。
+	//   - 配合 UnBecome 可实现“行为回退”或多级“状态恢复”，增强 Actor 的灵活性与可测试性。
+	//   - 若需覆盖所有历史行为（清空行为栈，仅保留当前新行为），可传递对应 option 参数。
+	//
+	// 示例用法：
+	//   ctx.Become(waitForResponseBehavior)                 // 普通栈式行为切换
+	//   ctx.Become(failedState, WithBehaviorDiscardOld(true)) // 切换且丢弃原有行为，仅保留新行为
+	Become(behavior Behavior, options ...BehaviorOption)
 
-	// RevertBehavior 行为恢复，将行为栈弹出回退到上一个行为状态，并返回是否成功恢复。
+	// UnBecome 方法用于恢复 Actor 先前的行为（Behavior）。
 	//
-	// 返回：
-	//   - true  : 已成功恢复到上一个行为
-	//   - false : 当前行为为初始栈底，无法再退
+	// 功能说明：
+	//   - 该方法会弹出行为栈栈顶的 Behavior，恢复为先前的行为函数，通常用于“流程回退”或“状态机回溯”。
+	//   - 行为栈底始终为 Actor 的初始行为（创建时注册），若已堆栈到初始行为时再次调用，则无操作。
+	//   - 可配合 options 参数，实现定制的恢复策略（自定义行为栈管理）。
 	//
-	// 说明：
-	//   - 适合在阶段性流程、状态退出等场景调用。
-	RevertBehavior() bool
+	// 参数说明：
+	//   - options: 变更恢复过程的行为参数（可选），一般用于自定义行为恢复时的策略控制。
+	//
+	// 使用建议：
+	//   - 当任务流程需多级嵌套行为切换，阶段性完成后可调用 UnBecome 恢复先前逻辑，增强系统可读性与可维护性。
+	//   - 应确保行为切换与恢复的配对关系，避免异常栈状态。
+	//
+	// 示例用法：
+	//   ctx.UnBecome()                          // 常规行为回退
+	//   ctx.UnBecome(WithBehaviorOption(...))   // 搭配自定义恢复策略
+	UnBecome(options ...BehaviorOption)
 
 	// TellSelf 向当前 ActorContext 发送消息，通常用于在当前 ActorContext 内部进行消息传递或促进事件循环。
 	// 该函数等同于 Tell(ctx.Ref(), message) 的快捷方式。

@@ -58,14 +58,13 @@ func TestContext_RevertBehavior(t *testing.T) {
 				switch ctx.Message().(type) {
 				case int:
 					wg.Done()
-					assert.True(t, ctx.RevertBehavior())
+					ctx.UnBecome()
 					ctx.Tell(ctx.Ref(), 2)
 				}
 			})
 			ctx.Tell(ctx.Ref(), 1)
 		case int:
-			// 在 revert 后收到第二次消息，behavior 已复原，这里再次还原应该返回 false
-			assert.False(t, ctx.RevertBehavior())
+			ctx.UnBecome()
 			wg.Done()
 		}
 	}))
