@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
@@ -67,6 +68,7 @@ func QueryError(code int32) *Error {
 type Error struct {
 	code int32  // 错误码
 	msg  string // 错误消息
+	err  error  // 底层错误（用于错误链，不序列化）
 }
 
 func errorReader(message any, reader *messages.Reader, codec messages.Codec) error {
@@ -95,5 +97,31 @@ func (e *Error) With(err error) *Error {
 	return &Error{
 		code: e.code,
 		msg:  fmt.Sprintf("%s: %s", e.msg, err.Error()),
+		err:  fmt.Errorf("%s: %w", e.msg, err),
 	}
+}
+
+func (e *Error) Unwrap() error {
+	if e.err == nil {
+		return e
+	}
+	return e.err
+}
+
+func (e *Error) Is(target error) bool {
+	if e.err == nil {
+		var err *Error
+		if errors.As(target, &err) {
+			return e.code == err.code
+		}
+		return errors.Is(e, target)
+	}
+	return errors.Is(e.err, target)
+}
+
+func (e *Error) As(target any) bool {
+	if e.err == nil {
+		return errors.As(e, target)
+	}
+	return errors.As(e.err, target)
 }
