@@ -172,7 +172,7 @@ func (c *Context) Reply(message vivid.Message) {
 }
 
 func (c *Context) TellSelf(message vivid.Message) {
-	c.mailbox.Enqueue(mailbox.NewEnvelopWithTell(false, c.ref, c.ref, message))
+	c.mailbox.Enqueue(mailbox.NewEnvelop(false, c.ref, c.ref, message))
 }
 
 func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
@@ -180,7 +180,7 @@ func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
 }
 
 func (c *Context) tell(system bool, recipient vivid.ActorRef, message vivid.Message) {
-	envelop := mailbox.NewEnvelopWithTell(system, c.ref, recipient, message)
+	envelop := mailbox.NewEnvelop(system, c.ref, recipient, message)
 	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
 	receiverMailbox.Enqueue(envelop)
 }
@@ -201,7 +201,7 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 	})
 	c.system.appendFuture(agentRef, futureIns)
 
-	envelop := mailbox.NewEnvelopWithAsk(system, agentRef.agent, agentRef.ref, recipient, message)
+	envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message).WithAgent(agentRef.agent)
 	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
 	receiverMailbox.Enqueue(envelop)
 
@@ -374,7 +374,7 @@ func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
 		Poison: message.Poison,
 		Reason: message.Reason,
 	}
-	c.envelop = mailbox.NewEnvelopWithTell(true, c.Sender(), c.ref, killMessage)
+	c.envelop = mailbox.NewEnvelop(true, c.Sender(), c.ref, killMessage)
 	c.doKill(killMessage, behavior)
 }
 
@@ -426,7 +426,7 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 	}
 
 	selfKilledMessage := &vivid.OnKilled{Ref: c.ref}
-	c.envelop = mailbox.NewEnvelopWithTell(true, c.Sender(), c.ref, selfKilledMessage)
+	c.envelop = mailbox.NewEnvelop(true, c.Sender(), c.ref, selfKilledMessage)
 	if c.restarting != nil {
 		// 失败意味着资源可能无法正确释放，但不应阻止新实例的创建。
 		// 可能存在资源泄漏，应当记录警告

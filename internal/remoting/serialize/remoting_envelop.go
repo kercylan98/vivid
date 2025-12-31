@@ -59,7 +59,7 @@ func DecodeEnvelopWithRemoting(codec vivid.Codec, data []byte) (
 	var messageName string
 	var messageData []byte
 
-	// | data | messageName | system | agent | sender |
+	// | data | messageName | system | agent | sender | receiver |
 	if err = reader.ReadInto(&messageData, &messageName, &system, &agentAddr, &agentPath, &senderAddr, &senderPath, &receiverAddr, &receiverPath); err != nil {
 		return
 	}

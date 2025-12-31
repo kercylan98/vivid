@@ -112,7 +112,7 @@ func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, sender
 	sender = NewRef(senderAddr, senderPath)
 	receiver = NewRef(receiverAddr, receiverPath)
 	receiverMailbox := s.findMailbox(receiver)
-	receiverMailbox.Enqueue(mailbox.NewEnvelop(system, agent, sender, receiver, messageInstance))
+	receiverMailbox.Enqueue(mailbox.NewEnvelop(system, sender, receiver, messageInstance).WithAgent(agent))
 }
 
 func (s *System) HandleEnvelop(envelop vivid.Envelop) {
