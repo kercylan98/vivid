@@ -5,7 +5,6 @@ import (
 
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
-	"github.com/kercylan98/vivid/pkg/sugar"
 )
 
 // ActorContext 定义了 Actor 内部行为逻辑和运行环境的上下文接口，
@@ -199,13 +198,14 @@ type actorRace interface {
 	//   - options: 额外配置选项，可变参数（如显式命名、邮箱容量、启动参数等）
 	//
 	// 返回值:
-	//   - *sugar.Result[ActorRef]：子 Actor 的引用及创建过程中的异常（若有）
+	//   - ActorRef：子 Actor 的引用
+	//   - error：创建过程中的异常（若有）
 	//
 	// 核心说明：
 	//   - 仅允许父级 ActorContext 为自己的子 Actor 创建生命周期管理，保证结构树的隔离与一致性。
 	//   - 该方法非并发安全，不支持多协程并发创建同级 Actor；一般用于串行业务流程。
-	//   - 异常场景会返回 sugar 错误（如重名、系统资源限制等），调用方应处理创建失败的可能。
-	ActorOf(actor Actor, options ...ActorOption) *sugar.Result[ActorRef]
+	//   - 异常场景会返回 error（如重名、系统资源限制等），调用方应处理创建失败的可能。
+	ActorOf(actor Actor, options ...ActorOption) (ActorRef, error)
 }
 
 // actorBasic 抽象出 Actor 基础消息操作、父节点引用与通信能力，为 ActorContext 和 ActorSystem 内部复用。

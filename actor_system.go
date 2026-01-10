@@ -1,6 +1,7 @@
 package vivid
 
 import (
+	"context"
 	"time"
 
 	"github.com/kercylan98/vivid/pkg/log"
@@ -16,7 +17,7 @@ import (
 //
 // 典型用法：
 //   - 应用启动时创建唯一的 ActorSystem 实例，通过该实例衍生、管理其子 Actor。
-//   - 推荐通过 NewActorSystem（见 bootstrap 包）工厂方法创建实例，并使用泛型 sugar.Result 进行错误处理与解包。
+//   - 推荐通过 NewActorSystem（见 bootstrap 包）工厂方法创建实例，并使用 error 进行错误处理与解包。
 //
 // 注意事项：
 //   - ActorSystem 实例设计为轻量且线程安全，避免作为全局变量暴露在多线程环境下共享。
@@ -62,9 +63,11 @@ type ActorSystemOption = func(options *ActorSystemOptions)
 
 func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
 	options = append([]ActorSystemOption{
+		WithActorSystemContext(context.Background()),
 		WithActorSystemDefaultAskTimeout(DefaultAskTimeout),
 		WithActorSystemLogger(log.GetDefault()),
 		WithActorSystemEnableMetricsUpdatedNotify(-1),
+		WithActorSystemStopTimeout(time.Minute),
 	}, options...)
 
 	opts := &ActorSystemOptions{}
@@ -85,6 +88,10 @@ func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
 // 该结构体随着 ActorSystem 的创建流程被逐步填充，所有配置项均应通过 ActorSystemOption 配置函数进行设置。
 // 增加新配置时，只需在此结构体内扩展字段，能够保证向后兼容与良好的扩展性。
 type ActorSystemOptions struct {
+	// Context 指定 ActorSystem 的上下文。
+	// 若未指定，则使用默认的上下文。
+	Context context.Context
+
 	// DefaultAskTimeout 指定所有 Actor 在调用 Ask 模式（请求-应答）时的默认超时时长。
 	// 若单次调用未特别指定，则将采用该超时时间，超时后会导致 Future 对象失败。
 	// 合理配置此值可防止消息"悬挂"导致资源泄漏，也可根据业务特性灵活设置。
@@ -115,6 +122,36 @@ type ActorSystemOptions struct {
 
 	// EnableMetricsUpdatedNotify 指定是否启用指标收集更新通知。
 	EnableMetricsUpdatedNotify time.Duration
+
+	// StopTimeout 指定 ActorSystem 停止操作的超时时间。
+	StopTimeout time.Duration
+}
+
+// WithActorSystemStopTimeout 返回一个 ActorSystemOption，用于指定 ActorSystem 停止操作的超时时间。
+//
+// 用法场景：
+//   - 在构建 ActorSystem 时，通过该 Option 明确设置 ActorSystem 停止操作的超时时间。
+//   - 支持灵活的业务需求（如部分场景需要延长停止时间，或测试环境下缩短停止时间）。
+//
+// 参数：
+//   - timeout: 期望设置的超时时间，仅当 timeout > 0 时生效（不允许零值或负值；零/负值时忽略该配置）。
+func WithActorSystemStopTimeout(timeout time.Duration) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		opts.StopTimeout = timeout
+	}
+}
+
+// WithActorSystemContext 返回一个 ActorSystemOption，用于指定 ActorSystem 的上下文。
+//
+// 用法场景：
+//   - 在构建 ActorSystem 时，通过该 Option 明确设置 ActorSystem 的上下文。
+//
+// 参数：
+//   - context: 期望设置的上下文。
+func WithActorSystemContext(context context.Context) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		opts.Context = context
+	}
 }
 
 // WithActorSystemEnableMetricsUpdatedNotify 返回一个 ActorSystemOption，用于设置指标更新时快照推送行为的间隔策略。

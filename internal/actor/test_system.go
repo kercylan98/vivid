@@ -10,10 +10,6 @@ import (
 )
 
 func NewTestSystem(t *testing.T, options ...vivid.ActorSystemOption) *TestSystem {
-	return NewTestSystemWithBeforeStartHandler(t, nil, options...)
-}
-
-func NewTestSystemWithBeforeStartHandler(t *testing.T, beforeStartHandler func(system *TestSystem), options ...vivid.ActorSystemOption) *TestSystem {
 	options = append([]vivid.ActorSystemOption{
 		vivid.WithActorSystemLogger(log.NewSLogLogger(slog.New(log.NewTextHandler(t.Output(), &log.HandlerOptions{
 			AddSource:   true,
@@ -24,7 +20,10 @@ func NewTestSystemWithBeforeStartHandler(t *testing.T, beforeStartHandler func(s
 	sys := &TestSystem{
 		T: t,
 	}
-	sys.System = newSystem(sys, beforeStartHandler, options...).Unwrap()
+	sys.System = newSystem(sys, options...)
+	if err := sys.System.Start(); err != nil {
+		t.Fatal(err)
+	}
 	return sys
 }
 

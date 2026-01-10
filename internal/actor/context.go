@@ -16,7 +16,6 @@ import (
 	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
-	"github.com/kercylan98/vivid/pkg/sugar"
 	"github.com/kercylan98/vivid/pkg/ves"
 )
 
@@ -171,20 +170,19 @@ func (c *Context) EventStream() vivid.EventStream {
 	return c.system.eventStream
 }
 
-func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *sugar.Result[vivid.ActorRef] {
-	var result sugar.ResultContainer[vivid.ActorRef]
+func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {
 	var status = atomic.LoadInt32(&c.state)
 	if status == killed {
-		return result.Error(fmt.Errorf("actor killed"))
+		return nil, fmt.Errorf("actor killed")
 	}
 
 	childCtx, err := NewContext(c.system, c.ref, actor, options...)
 	if err != nil {
-		return sugar.With[vivid.ActorRef](nil, err)
+		return nil, err
 	}
 
 	if c.system.appendActorContext(childCtx) {
-		return sugar.With[vivid.ActorRef](nil, fmt.Errorf("already exists"))
+		return nil, fmt.Errorf("already exists")
 	}
 
 	if c.children == nil {
@@ -204,7 +202,7 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) *suga
 	if status == killing {
 		c.Kill(childCtx.ref, false, "parent killed")
 	}
-	return sugar.With(childCtx.Ref(), nil)
+	return childCtx.Ref(), nil
 }
 
 func (c *Context) Reply(message vivid.Message) {

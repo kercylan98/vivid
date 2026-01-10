@@ -9,7 +9,6 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
-	"github.com/kercylan98/vivid/pkg/sugar"
 )
 
 var (
@@ -84,9 +83,7 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 	addr, err = net.ResolveTCPAddr("tcp", s.bindAddr)
 	if err == nil {
 		s.acceptorListener, err = net.ListenTCP("tcp", addr)
-	}
-
-	if err != nil {
+	} else {
 		delay := s.backoff.Next()
 		ctx.Logger().Warn("server listener resolve address failed, restart later", log.String("bind_addr", s.bindAddr), log.Duration("delay", delay), log.Any("err", err))
 		s.backoffTimer = time.AfterFunc(delay, func() {
@@ -103,9 +100,12 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 	}
 	ctx.Logger().Info("server listener started", log.String("bind_addr", s.acceptorListener.Addr().String()))
 
-	// 安全的 Unwrap， ServerAcceptActor 未实现 vivid.PrelaunchActor 接口，不会发生错误
 	acceptor := newServerAcceptActor(s.acceptorListener, s.advertiseAddr, s.envelopHandler, s.codec)
-	s.acceptorRef = ctx.ActorOf(acceptor, vivid.WithActorName("acceptor")).Unwrap()
+	s.acceptorRef, err = ctx.ActorOf(acceptor, vivid.WithActorName("acceptor"))
+	if err != nil {
+		// 此步不应产生错误，如有则为系统重大变更，需整体review
+		panic(fmt.Errorf("unexpected error occurred when creating acceptor: %v; this indicates a major system change, please perform a thorough system review", err))
+	}
 	if s.options.ListenerCreatedHandler != nil {
 		s.options.ListenerCreatedHandler(s.acceptorListener)
 	}
@@ -127,15 +127,13 @@ func (s *ServerActor) onConnection(ctx vivid.ActorContext, connection *tcpConnec
 		prefix = "accept"
 	}
 	// 连接至服务端的无需绑定，客户端自行维护连接，不进行复用
-	ref := ctx.ActorOf(connection, vivid.WithActorName(fmt.Sprintf("%s-%s", prefix, connection.conn.RemoteAddr().String()))).
-		Then(func(rc sugar.ResultContainer[vivid.ActorRef], ar vivid.ActorRef) *sugar.Result[vivid.ActorRef] {
-			ctx.Reply(nil)
-			return rc.Ok(ar)
-		}).
-		Else(func(rc sugar.ResultContainer[vivid.ActorRef], err error) *sugar.Result[vivid.ActorRef] {
-			return rc.Error(err)
-		}).
-		Unwrap()
+	ref, err := ctx.ActorOf(connection, vivid.WithActorName(fmt.Sprintf("%s-%s", prefix, connection.conn.RemoteAddr().String())))
+	if err != nil {
+		ctx.Logger().Error("server accept connect failed", log.Any("err", err))
+		return
+	}
+
+	ctx.Reply(nil)
 
 	if !connection.client {
 		s.acceptConnections[ref.GetPath()] = connection

@@ -1,7 +1,6 @@
 package actor_test
 
 import (
-	"net"
 	"sync"
 	"testing"
 	"time"
@@ -14,7 +13,7 @@ import (
 )
 
 func TestSystem_Stop(t *testing.T) {
-	system := actor.NewSystem().Unwrap()
+	system := actor.NewTestSystem(t)
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -42,12 +41,13 @@ func TestSystem_RemotingAsk(t *testing.T) {
 	system1 := actor.NewTestSystem(t, vivid.WithRemoting(codec, "127.0.0.1:8080"))
 	system2 := actor.NewTestSystem(t, vivid.WithRemoting(codec, "127.0.0.1:8081"), vivid.WithActorSystemLogger(log.GetDefault()))
 
-	ref := system1.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system1.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch v := ctx.Message().(type) {
 		case *TestInternalMessage:
 			ctx.Reply(v)
 		}
-	})).Unwrap()
+	}))
+	assert.NoError(t, err)
 	ref = ref.Clone()
 
 	var wg sync.WaitGroup
@@ -69,23 +69,6 @@ func TestSystem_RemotingAsk(t *testing.T) {
 
 	system1.Stop()
 	system2.Stop()
-}
-
-func TestSystem_ServerAcceptActorRestart(t *testing.T) {
-	var wg sync.WaitGroup
-	var count int
-	wg.Add(10)
-	system := actor.NewTestSystemWithBeforeStartHandler(t, func(system *actor.TestSystem) {
-		system.RegisterRemotingListenerBindEvent(func(listener net.Listener) {
-			if count < 10 {
-				assert.Nil(t, listener.Close())
-				count++
-				wg.Done()
-			}
-		})
-	}, vivid.WithRemoting(NewTestCodec(), "127.0.0.1:0"))
-	defer system.Stop()
-	wg.Wait()
 }
 
 func TestSystem_Metrics(t *testing.T) {

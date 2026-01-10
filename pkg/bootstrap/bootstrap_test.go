@@ -7,6 +7,6 @@ import (
 )
 
 func TestNewActorSystem(t *testing.T) {
-	system := NewActorSystem().Unwrap()
+	system := NewActorSystem()
 	assert.NotNil(t, system)
 }

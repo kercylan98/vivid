@@ -11,7 +11,8 @@ import (
 )
 
 func TestContext_ActorOf(t *testing.T) {
-	system := actor.NewSystem().Unwrap()
+	system := actor.NewTestSystem(t)
+	defer system.Stop()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -26,7 +27,8 @@ func TestContext_ActorOf(t *testing.T) {
 }
 
 func TestContext_Become(t *testing.T) {
-	system := actor.NewSystem().Unwrap()
+	system := actor.NewTestSystem(t)
+	defer system.Stop()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -47,7 +49,8 @@ func TestContext_Become(t *testing.T) {
 }
 
 func TestContext_RevertBehavior(t *testing.T) {
-	system := actor.NewSystem().Unwrap()
+	system := actor.NewTestSystem(t)
+	defer system.Stop()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -73,25 +76,33 @@ func TestContext_RevertBehavior(t *testing.T) {
 }
 
 func TestContext_Tell(t *testing.T) {
-	system := actor.NewSystem().Unwrap()
+	system := actor.NewTestSystem(t)
+	defer system.Stop()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case int:
 			wg.Done()
 		}
-	})).Unwrap()
+	}))
+	assert.NoError(t, err)
 
 	system.Tell(ref, 1)
 	wg.Wait()
 }
 
 func BenchmarkContext_Tell(b *testing.B) {
-	system := actor.NewSystem().Unwrap()
+	system := actor.NewSystem()
+	if err := system.Start(); err != nil {
+		b.Fatal(err)
+	}
 
-	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {})).Unwrap()
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		system.Tell(ref, i)
@@ -101,19 +112,21 @@ func BenchmarkContext_Tell(b *testing.B) {
 }
 
 func TestContext_Ask(t *testing.T) {
-	system := actor.NewSystem().Unwrap()
+	system := actor.NewTestSystem(t)
+	defer system.Stop()
 
 	var wg sync.WaitGroup
 	wg.Add(3)
-	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case int:
 			ctx.Reply(1)
 			wg.Done()
 		}
-	})).Unwrap()
+	}))
+	assert.NoError(t, err)
 
-	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	_, err = system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			reply, err := system.Ask(ref, 1).Result()
@@ -121,7 +134,8 @@ func TestContext_Ask(t *testing.T) {
 			assert.Equal(t, 1, reply.(int))
 			wg.Done()
 		}
-	})).Unwrap()
+	}))
+	assert.NoError(t, err)
 
 	systemReply, systemErr := system.Ask(ref, 1).Result()
 	assert.Nil(t, systemErr)
@@ -131,13 +145,21 @@ func TestContext_Ask(t *testing.T) {
 }
 
 func BenchmarkContext_Ask(b *testing.B) {
-	system := actor.NewSystem().Unwrap()
-	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	system := actor.NewSystem()
+	if err := system.Start(); err != nil {
+		b.Fatal(err)
+	}
+
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch message := ctx.Message().(type) {
 		case int:
 			ctx.Reply(message)
 		}
-	})).Unwrap()
+	}))
+	if err != nil {
+		b.Fatal(err)
+	}
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := system.Ask(ref, i).Result(); err != nil {
@@ -149,12 +171,14 @@ func BenchmarkContext_Ask(b *testing.B) {
 }
 
 func TestContext_Sender(t *testing.T) {
-	system := actor.NewSystem().Unwrap()
+	system := actor.NewTestSystem(t)
+	defer system.Stop()
+
 	var refAHeldRefB vivid.ActorRef
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	refA := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	refA, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch m := ctx.Message().(type) {
 		case vivid.ActorRef:
 			refAHeldRefB = m
@@ -162,14 +186,16 @@ func TestContext_Sender(t *testing.T) {
 			assert.Equal(t, refAHeldRefB.GetAddress()+refAHeldRefB.GetPath(), ctx.Sender().GetAddress()+ctx.Sender().GetPath(), "sender ref mismatch")
 			wg.Done()
 		}
-	})).Unwrap()
+	}))
+	assert.NoError(t, err)
 
-	refB := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	refB, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case string:
 			ctx.Ask(refA, "ask-ref-b")
 		}
-	})).Unwrap()
+	}))
+	assert.NoError(t, err)
 
 	system.Tell(refA, refB)
 	system.Tell(refB, "start-ask")
@@ -177,10 +203,11 @@ func TestContext_Sender(t *testing.T) {
 }
 
 func TestContext_Kill(t *testing.T) {
-	system := actor.NewSystem().Unwrap()
+	system := actor.NewTestSystem(t)
+	defer system.Stop()
 	var wg sync.WaitGroup
 	wg.Add(5)
-	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
@@ -194,7 +221,8 @@ func TestContext_Kill(t *testing.T) {
 			// self kill, child killed, self killed
 			wg.Done()
 		}
-	})).Unwrap()
+	}))
+	assert.NoError(t, err)
 
 	system.Kill(ref, false, "test kill")
 	wg.Wait()
@@ -204,9 +232,10 @@ func TestContext_Watch(t *testing.T) {
 	system := actor.NewTestSystem(t)
 	var wg sync.WaitGroup
 	wg.Add(2)
-	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {})).Unwrap()
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
+	assert.NoError(t, err)
 
-	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	_, err = system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch message := ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			ctx.Watch(ref)
@@ -217,7 +246,8 @@ func TestContext_Watch(t *testing.T) {
 				wg.Done()
 			}
 		}
-	})).Unwrap()
+	}))
+	assert.NoError(t, err)
 
 	wg.Wait()
 }
@@ -230,7 +260,7 @@ func TestContext_DeathLetter(t *testing.T) {
 	var waitKilled = make(chan struct{})
 	var waitDeathLetter = make(chan struct{})
 
-	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	_, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			ctx.EventStream().Subscribe(ctx, ves.DeathLetterEvent{})
@@ -238,17 +268,19 @@ func TestContext_DeathLetter(t *testing.T) {
 		case ves.DeathLetterEvent:
 			close(waitDeathLetter)
 		}
-	})).Unwrap()
+	}))
+	assert.NoError(t, err)
 
 	<-waitSub
-	ref := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			ctx.Kill(ctx.Ref(), true, "test kill")
 		case *vivid.OnKilled:
 			close(waitKilled)
 		}
-	})).Unwrap()
+	}))
+	assert.NoError(t, err)
 
 	<-waitKilled
 	system.Tell(ref, "test message")

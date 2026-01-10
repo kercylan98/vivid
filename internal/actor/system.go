@@ -3,19 +3,24 @@ package actor
 import (
 	"context"
 	"fmt"
-	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/chain"
 	"github.com/kercylan98/vivid/internal/future"
-	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/mailbox"
-	metricsActor "github.com/kercylan98/vivid/internal/metrics"
 	"github.com/kercylan98/vivid/internal/remoting"
+	"github.com/kercylan98/vivid/internal/scheduler"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
-	"github.com/kercylan98/vivid/pkg/sugar"
+)
+
+const (
+	ready int32 = iota
+	start
+	stop
 )
 
 var (
@@ -24,11 +29,11 @@ var (
 	_ remoting.NetworkEnvelopHandler = (*System)(nil)
 )
 
-func NewSystem(options ...vivid.ActorSystemOption) *sugar.Result[*System] {
-	return newSystem(nil, nil, options...)
+func NewSystem(options ...vivid.ActorSystemOption) *System {
+	return newSystem(nil, options...)
 }
 
-func newSystem(testSystem *TestSystem, startBeforeHandler func(system *TestSystem), options ...vivid.ActorSystemOption) *sugar.Result[*System] {
+func newSystem(testSystem *TestSystem, options ...vivid.ActorSystemOption) *System {
 	opts := vivid.NewActorSystemOptions(options...)
 
 	system := &System{
@@ -36,59 +41,11 @@ func newSystem(testSystem *TestSystem, startBeforeHandler func(system *TestSyste
 		options:           opts,
 		actorContexts:     sync.Map{},
 		guardClosedSignal: make(chan struct{}),
+		scheduler:         scheduler.NewScheduler(opts.Context),
 	}
 
 	system.eventStream = newEventStream(system)
-
-	var err error
-	var logAttrs []any
-	system.Context, err = NewContext(system, nil, guard.NewActor(system.guardClosedSignal))
-	if err != nil {
-		return sugar.Err[*System](err)
-	}
-
-	if startBeforeHandler != nil {
-		startBeforeHandler(system.testSystem)
-	}
-
-	// 初始化指标收集 Actor
-	if opts.EnableMetrics {
-		var actorSystemMetrics metrics.Metrics
-		if opts.Metrics != nil {
-			actorSystemMetrics = opts.Metrics
-		} else {
-			actorSystemMetrics = metrics.NewDefaultMetrics()
-		}
-		system.metrics = actorSystemMetrics
-		metricsActor := metricsActor.NewActor(opts.EnableMetricsUpdatedNotify)
-		result := system.ActorOf(metricsActor, vivid.WithActorName("@metrics"))
-		if result.IsErr() {
-			return sugar.Err[*System](result.Err())
-		}
-		logAttrs = append(logAttrs, log.Bool("metrics_enabled", true))
-	}
-
-	// 初始化远程服务器 Actor
-	if opts.RemotingBindAddress != "" && opts.RemotingAdvertiseAddress != "" {
-		logAttrs = append(logAttrs, log.String("bind_address", opts.RemotingBindAddress))
-		logAttrs = append(logAttrs, log.String("advertise_address", opts.RemotingAdvertiseAddress))
-
-		var remotingServerActorOptions = remoting.ServerActorOptions{}
-		if system.testSystem != nil {
-			remotingServerActorOptions.ListenerCreatedHandler = func(listener net.Listener) {
-				system.testSystem.onBindRemotingListener(listener)
-			}
-		}
-
-		system.remotingServer = remoting.NewServerActor(opts.RemotingBindAddress, opts.RemotingAdvertiseAddress, opts.RemotingCodec, system, remotingServerActorOptions)
-		result := system.ActorOf(system.remotingServer, vivid.WithActorName("@remoting"))
-		if result.IsErr() {
-			return sugar.Err[*System](result.Err())
-		}
-	}
-
-	system.Logger().Debug("actor system initialized", logAttrs...)
-	return sugar.With(system, nil)
+	return system
 }
 
 type System struct {
@@ -100,6 +57,8 @@ type System struct {
 	remotingServer    *remoting.ServerActor     // 远程服务器
 	eventStream       vivid.EventStream         // 事件流
 	metrics           metrics.Metrics           // 指标收集器
+	scheduler         *scheduler.Scheduler      // 调度器
+	status            int32                     // 系统状态
 }
 
 // HandleRemotingEnvelop implements remoting.NetworkEnvelopHandler.
@@ -120,8 +79,39 @@ func (s *System) HandleEnvelop(envelop vivid.Envelop) {
 	receiverMailbox.Enqueue(envelop)
 }
 
+func (s *System) Logger() log.Logger {
+	return s.options.Logger
+}
+
+func (s *System) Start() error {
+	if !atomic.CompareAndSwapInt32(&s.status, ready, start) {
+		s.Logger().Warn("actor system already started or stopped, ignore start")
+		return nil
+	}
+	s.Logger().Debug("actor system starting")
+
+	if err := chain.New(chain.WithContext(s.options.Context)).
+		Append(systemChains.spawnGuardActor(s)).
+		Append(systemChains.initializeMetrics(s)).
+		Append(systemChains.initializeRemoting(s)).
+		Run(); err != nil {
+		s.Logger().Error("actor system start failed", log.Any("err", err))
+		err = s.Stop(s.options.StopTimeout)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("actor system start failed, and stop failed: %w", err)
+	}
+	return nil
+}
+
 func (s *System) Stop(timeout ...time.Duration) error {
-	var stopTimeout = time.Minute
+	if !atomic.CompareAndSwapInt32(&s.status, start, stop) {
+		s.Logger().Warn("actor system already stopped, ignore stop")
+		return nil
+	}
+
+	var stopTimeout = s.options.StopTimeout
 	if len(timeout) > 0 && timeout[0] > 0 {
 		stopTimeout = timeout[0]
 	}
@@ -129,7 +119,7 @@ func (s *System) Stop(timeout ...time.Duration) error {
 	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
 	s.Context.Kill(s.Context.Ref(), true, "actor system stop")
 
-	ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+	ctx, cancel := context.WithTimeout(s.options.Context, stopTimeout)
 	defer cancel()
 	select {
 	case <-s.guardClosedSignal:
