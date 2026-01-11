@@ -1,0 +1,214 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 匹配所有以 v 开头的 tag，如 v1.0.0
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取所有历史记录以生成 changelog
+      
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Get tag information
+        id: tag_info
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          
+          # 获取所有 tags 并排序
+          git fetch --tags
+          
+          # 获取上一个 tag（如果存在）
+          # 先尝试获取当前 tag 之前的最新 tag
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -A1 "^${TAG_NAME}$" | tail -1 || echo "")
+          
+          # 如果没找到，尝试使用 git describe
+          if [ -z "$PREVIOUS_TAG" ]; then
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 ${TAG_NAME}^ 2>/dev/null || echo "")
+          fi
+          
+          # 如果还是没有，从第一个 commit 开始
+          if [ -z "$PREVIOUS_TAG" ]; then
+            PREVIOUS_TAG=$(git rev-list --max-parents=0 HEAD 2>/dev/null || echo "")
+          fi
+          
+          echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+          echo "Current tag: $TAG_NAME"
+          echo "Previous tag: $PREVIOUS_TAG"
+      
+      - name: Generate changelog
+        id: changelog
+        run: |
+          TAG_NAME="${{ steps.tag_info.outputs.tag_name }}"
+          PREVIOUS_TAG="${{ steps.tag_info.outputs.previous_tag }}"
+          
+          # 生成分类的 changelog
+          echo "## 变更日志" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          
+          # 获取所有 commits
+          COMMITS=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"%s|%h|%an" --reverse)
+          
+          # 初始化分类数组
+          FEATURES=""
+          FIXES=""
+          DOCS=""
+          REFACTORS=""
+          TESTS=""
+          CHORES=""
+          PERFS=""
+          STYLES=""
+          OTHERS=""
+          
+          # 解析每个 commit
+          while IFS= read -r line; do
+            if [ -z "$line" ]; then
+              continue
+            fi
+            
+            # 提取 commit 消息、hash 和作者
+            MSG=$(echo "$line" | cut -d'|' -f1)
+            HASH=$(echo "$line" | cut -d'|' -f2)
+            AUTHOR=$(echo "$line" | cut -d'|' -f3)
+            
+            # 移除类型前缀和冒号，提取描述
+            if echo "$MSG" | grep -qE "^(feat|fix|docs|refactor|test|chore|perf|style)(\(.+\))?:"; then
+              DESC=$(echo "$MSG" | sed -E 's/^(feat|fix|docs|refactor|test|chore|perf|style)(\(.+\))?: //')
+            else
+              DESC="$MSG"
+            fi
+            
+            # 根据类型分类
+            if echo "$MSG" | grep -qE "^feat(\(.+\))?:"; then
+              FEATURES="${FEATURES}- ${DESC} ([${HASH:0:7}](https://github.com/${{ github.repository }}/commit/${HASH}))"$'\n'
+            elif echo "$MSG" | grep -qE "^fix(\(.+\))?:"; then
+              FIXES="${FIXES}- ${DESC} ([${HASH:0:7}](https://github.com/${{ github.repository }}/commit/${HASH}))"$'\n'
+            elif echo "$MSG" | grep -qE "^docs(\(.+\))?:"; then
+              DOCS="${DOCS}- ${DESC} ([${HASH:0:7}](https://github.com/${{ github.repository }}/commit/${HASH}))"$'\n'
+            elif echo "$MSG" | grep -qE "^refactor(\(.+\))?:"; then
+              REFACTORS="${REFACTORS}- ${DESC} ([${HASH:0:7}](https://github.com/${{ github.repository }}/commit/${HASH}))"$'\n'
+            elif echo "$MSG" | grep -qE "^test(\(.+\))?:"; then
+              TESTS="${TESTS}- ${DESC} ([${HASH:0:7}](https://github.com/${{ github.repository }}/commit/${HASH}))"$'\n'
+            elif echo "$MSG" | grep -qE "^chore(\(.+\))?:"; then
+              CHORES="${CHORES}- ${DESC} ([${HASH:0:7}](https://github.com/${{ github.repository }}/commit/${HASH}))"$'\n'
+            elif echo "$MSG" | grep -qE "^perf(\(.+\))?:"; then
+              PERFS="${PERFS}- ${DESC} ([${HASH:0:7}](https://github.com/${{ github.repository }}/commit/${HASH}))"$'\n'
+            elif echo "$MSG" | grep -qE "^style(\(.+\))?:"; then
+              STYLES="${STYLES}- ${DESC} ([${HASH:0:7}](https://github.com/${{ github.repository }}/commit/${HASH}))"$'\n'
+            else
+              OTHERS="${OTHERS}- ${MSG} ([${HASH:0:7}](https://github.com/${{ github.repository }}/commit/${HASH}))"$'\n'
+            fi
+          done <<< "$COMMITS"
+          
+          # 写入分类内容
+          if [ -n "$FEATURES" ]; then
+            echo "### ✨ 新功能 (Features)" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo -n "$FEATURES" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          if [ -n "$FIXES" ]; then
+            echo "### 🐛 问题修复 (Bug Fixes)" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo -n "$FIXES" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          if [ -n "$DOCS" ]; then
+            echo "### 📝 文档更新 (Documentation)" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo -n "$DOCS" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          if [ -n "$REFACTORS" ]; then
+            echo "### ♻️ 代码重构 (Refactoring)" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo -n "$REFACTORS" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          if [ -n "$PERFS" ]; then
+            echo "### ⚡ 性能优化 (Performance)" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo -n "$PERFS" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          if [ -n "$TESTS" ]; then
+            echo "### ✅ 测试相关 (Tests)" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo -n "$TESTS" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          if [ -n "$CHORES" ]; then
+            echo "### 🔧 构建/工具相关 (Chores)" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo -n "$CHORES" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          if [ -n "$STYLES" ]; then
+            echo "### 💄 样式调整 (Style)" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo -n "$STYLES" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          if [ -n "$OTHERS" ]; then
+            echo "### 📦 其他变更" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo -n "$OTHERS" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          # 如果没有变更，添加提示
+          if [ -z "$FEATURES$FIXES$DOCS$REFACTORS$PERFS$TESTS$CHORES$STYLES$OTHERS" ]; then
+            echo "### 📋 变更记录" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "此版本没有符合 Conventional Commits 规范的提交记录。" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          echo "---" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "### 📊 统计信息" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "**版本**: \`${TAG_NAME}\`" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "**提交范围**: \`${PREVIOUS_TAG}\` → \`${TAG_NAME}\`" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          TOTAL_COMMITS=$(git rev-list --count ${PREVIOUS_TAG}..HEAD)
+          echo "**总提交数**: ${TOTAL_COMMITS}" >> CHANGELOG.md
+      
+      - name: Display changelog
+        run: |
+          echo "Generated changelog:"
+          cat CHANGELOG.md
+      
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_info.outputs.tag_name }}
+          name: Release ${{ steps.tag_info.outputs.tag_name }}
+          body_path: CHANGELOG.md
+          draft: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
