@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" width="400" height="120">
+  <defs>
+    <linearGradient id="gradient-h" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7B68EE;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow-h">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Icon part -->
+  <g transform="translate(20, 20)">
+    <!-- V shape -->
+    <path d="M 0 20 L 30 60 L 60 20" 
+          stroke="url(#gradient-h)" 
+          stroke-width="6" 
+          fill="none" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"
+          filter="url(#glow-h)"/>
+    
+    <!-- Actor nodes -->
+    <circle cx="15" cy="30" r="4" fill="#4A90E2" opacity="0.8"/>
+    <circle cx="30" cy="10" r="4" fill="#7B68EE" opacity="0.8"/>
+    <circle cx="45" cy="30" r="4" fill="#4A90E2" opacity="0.8"/>
+    <circle cx="30" cy="50" r="4" fill="#7B68EE" opacity="0.8"/>
+    
+    <!-- Message flow -->
+    <line x1="15" y1="30" x2="30" y2="10" 
+          stroke="#4A90E2" 
+          stroke-width="1.5" 
+          opacity="0.4" 
+          stroke-dasharray="2,2"/>
+    <line x1="30" y1="10" x2="45" y2="30" 
+          stroke="#7B68EE" 
+          stroke-width="1.5" 
+          opacity="0.4" 
+          stroke-dasharray="2,2"/>
+    <line x1="15" y1="30" x2="30" y2="50" 
+          stroke="#4A90E2" 
+          stroke-width="1.5" 
+          opacity="0.4" 
+          stroke-dasharray="2,2"/>
+    <line x1="45" y1="30" x2="30" y2="50" 
+          stroke="#7B68EE" 
+          stroke-width="1.5" 
+          opacity="0.4" 
+          stroke-dasharray="2,2"/>
+    
+    <!-- Central hub -->
+    <circle cx="30" cy="40" r="3" fill="#FFFFFF" opacity="0.9"/>
+  </g>
+  
+  <!-- Text part -->
+  <text x="100" y="70" 
+        font-family="Arial, sans-serif" 
+        font-size="48" 
+        font-weight="bold" 
+        fill="url(#gradient-h)">
+    Vivid
+  </text>
+  
+  <!-- Subtitle -->
+  <text x="100" y="95" 
+        font-family="Arial, sans-serif" 
+        font-size="14" 
+        fill="#666666" 
+        opacity="0.8">
+    Actor Model for Go
+  </text>
+</svg>

@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="gradient-icon" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7B68EE;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow-icon">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="60" cy="60" r="55" fill="url(#gradient-icon)" opacity="0.1"/>
+  
+  <!-- Main V shape -->
+  <path d="M 30 36 L 60 84 L 90 36" 
+        stroke="url(#gradient-icon)" 
+        stroke-width="5" 
+        fill="none" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"
+        filter="url(#glow-icon)"/>
+  
+  <!-- Actor nodes -->
+  <circle cx="42" cy="48" r="4" fill="#4A90E2" opacity="0.8"/>
+  <circle cx="60" cy="30" r="4" fill="#7B68EE" opacity="0.8"/>
+  <circle cx="78" cy="48" r="4" fill="#4A90E2" opacity="0.8"/>
+  <circle cx="60" cy="72" r="4" fill="#7B68EE" opacity="0.8"/>
+  
+  <!-- Message flow lines -->
+  <line x1="42" y1="48" x2="60" y2="30" 
+        stroke="#4A90E2" 
+        stroke-width="1.5" 
+        opacity="0.4" 
+        stroke-dasharray="2,2"/>
+  <line x1="60" y1="30" x2="78" y2="48" 
+        stroke="#7B68EE" 
+        stroke-width="1.5" 
+        opacity="0.4" 
+        stroke-dasharray="2,2"/>
+  <line x1="42" y1="48" x2="60" y2="72" 
+        stroke="#4A90E2" 
+        stroke-width="1.5" 
+        opacity="0.4" 
+        stroke-dasharray="2,2"/>
+  <line x1="78" y1="48" x2="60" y2="72" 
+        stroke="#7B68EE" 
+        stroke-width="1.5" 
+        opacity="0.4" 
+        stroke-dasharray="2,2"/>
+  
+  <!-- Central hub -->
+  <circle cx="60" cy="60" r="3" fill="#FFFFFF" opacity="0.9"/>
+</svg>
