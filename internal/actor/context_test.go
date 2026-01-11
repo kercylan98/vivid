@@ -12,27 +12,33 @@ import (
 
 func TestContext_ActorOf(t *testing.T) {
 	system := actor.NewTestSystem(t)
-	defer system.Stop()
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			wg.Done()
 		}
 	}))
+	assert.NoError(t, err)
+	assert.NotNil(t, ref)
 
 	wg.Wait()
 }
 
 func TestContext_Become(t *testing.T) {
 	system := actor.NewTestSystem(t)
-	defer system.Stop()
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			ctx.Become(func(ctx vivid.ActorContext) {
@@ -44,17 +50,21 @@ func TestContext_Become(t *testing.T) {
 			ctx.Tell(ctx.Ref(), 1)
 		}
 	}))
+	assert.NoError(t, err)
+	assert.NotNil(t, ref)
 
 	wg.Wait()
 }
 
 func TestContext_RevertBehavior(t *testing.T) {
 	system := actor.NewTestSystem(t)
-	defer system.Stop()
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			ctx.Become(func(ctx vivid.ActorContext) {
@@ -71,13 +81,17 @@ func TestContext_RevertBehavior(t *testing.T) {
 			wg.Done()
 		}
 	}))
+	assert.NoError(t, err)
+	assert.NotNil(t, ref)
 
 	wg.Wait()
 }
 
 func TestContext_Tell(t *testing.T) {
 	system := actor.NewTestSystem(t)
-	defer system.Stop()
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -99,13 +113,21 @@ func BenchmarkContext_Tell(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	defer func() {
+		if err := system.Stop(); err != nil {
+			b.Fatal(err)
+		}
+	}()
+
 	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
 	if err != nil {
 		b.Fatal(err)
 	}
+
+	message := struct{}{}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		system.Tell(ref, i)
+		system.Tell(ref, message)
 	}
 	b.StopTimer()
 	b.ReportAllocs()
@@ -113,7 +135,9 @@ func BenchmarkContext_Tell(b *testing.B) {
 
 func TestContext_Ask(t *testing.T) {
 	system := actor.NewTestSystem(t)
-	defer system.Stop()
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -172,7 +196,9 @@ func BenchmarkContext_Ask(b *testing.B) {
 
 func TestContext_Sender(t *testing.T) {
 	system := actor.NewTestSystem(t)
-	defer system.Stop()
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
 
 	var refAHeldRefB vivid.ActorRef
 	var wg sync.WaitGroup
@@ -204,19 +230,23 @@ func TestContext_Sender(t *testing.T) {
 
 func TestContext_Kill(t *testing.T) {
 	system := actor.NewTestSystem(t)
-	defer system.Stop()
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
 	var wg sync.WaitGroup
 	wg.Add(5)
 	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
-			ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			ref, err := ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 				switch ctx.Message().(type) {
 				case *vivid.OnKill, *vivid.OnKilled:
 					// self kill, self killed
 					wg.Done()
 				}
 			}))
+			assert.NoError(t, err)
+			assert.NotNil(t, ref)
 		case *vivid.OnKill, *vivid.OnKilled:
 			// self kill, child killed, self killed
 			wg.Done()
@@ -254,13 +284,15 @@ func TestContext_Watch(t *testing.T) {
 
 func TestContext_DeathLetter(t *testing.T) {
 	system := actor.NewTestSystem(t)
-	defer system.Stop()
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
 
 	var waitSub = make(chan struct{})
 	var waitKilled = make(chan struct{})
 	var waitDeathLetter = make(chan struct{})
 
-	_, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			ctx.EventStream().Subscribe(ctx, ves.DeathLetterEvent{})
@@ -270,9 +302,10 @@ func TestContext_DeathLetter(t *testing.T) {
 		}
 	}))
 	assert.NoError(t, err)
+	assert.NotNil(t, ref)
 
 	<-waitSub
-	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err = system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			ctx.Kill(ctx.Ref(), true, "test kill")
@@ -281,6 +314,7 @@ func TestContext_DeathLetter(t *testing.T) {
 		}
 	}))
 	assert.NoError(t, err)
+	assert.NotNil(t, ref)
 
 	<-waitKilled
 	system.Tell(ref, "test message")

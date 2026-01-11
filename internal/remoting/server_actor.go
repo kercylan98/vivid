@@ -77,6 +77,14 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 	addr, err = net.ResolveTCPAddr("tcp", s.bindAddr)
 	if err == nil {
 		s.acceptorListener, err = net.ListenTCP("tcp", addr)
+		if err != nil {
+			delay := s.backoff.Next()
+			ctx.Logger().Warn("server listener listen failed, restart later", log.String("bind_addr", s.bindAddr), log.Duration("delay", delay), log.Any("err", err))
+			s.backoffTimer = time.AfterFunc(delay, func() {
+				ctx.TellSelf(startAcceptorMessage)
+			})
+			return
+		}
 	} else {
 		delay := s.backoff.Next()
 		ctx.Logger().Warn("server listener resolve address failed, restart later", log.String("bind_addr", s.bindAddr), log.Duration("delay", delay), log.Any("err", err))

@@ -78,33 +78,17 @@ type PipeResult struct {
 func pipeResultReader(message any, reader *messages.Reader, codec messages.Codec) (err error) {
 	m := message.(*PipeResult)
 
-	var messageName string
-	var messageData []byte
 	var errorCode int32
 	var errorMessage string
-	var messageInstance any
 
-	// | data | messageName | errorCode | errorMessage |
-	if err = reader.ReadInto(&messageData, &messageName, &errorCode, &errorMessage); err != nil {
+	if m.Message, err = reader.ReadMessage(codec); err != nil {
 		return err
 	}
 
-	if messageDesc := messages.QueryMessageDescByName(messageName); !messageDesc.IsOutside() {
-		// 内部消息反序列化
-		reader.Reset(messageData)
-		messageInstance, err = messages.DeserializeRemotingMessage(codec, reader, messageDesc)
-		if err != nil {
-			return
-		}
-	} else {
-		// 外部消息反序列化
-		messageInstance, err = codec.Decode(messageData)
-		if err != nil {
-			return
-		}
+	if err = reader.ReadInto(&m.Id, &errorCode, &errorMessage); err != nil {
+		return err
 	}
 
-	m.Message = messageInstance
 	if errorCode != 0 {
 		var foundError = QueryError(errorCode)
 		if foundError == nil {
@@ -118,20 +102,8 @@ func pipeResultReader(message any, reader *messages.Reader, codec messages.Codec
 func pipeResultWriter(message any, writer *messages.Writer, codec messages.Codec) (err error) {
 	m := message.(*PipeResult)
 
-	var messageDesc = messages.QueryMessageDesc(m.Message)
-	if messageDesc.IsOutside() {
-		// 外部消息序列化
-		data, err := codec.Encode(m.Message)
-		if err != nil {
-			return err
-		}
-		writer.WriteBytesWithLength(data, 4)
-	} else {
-		// 内部消息序列化
-		err = messages.SerializeRemotingMessage(codec, writer, messageDesc, m.Message)
-		if err != nil {
-			return err
-		}
+	if err = writer.WriteMessage(m.Message, codec); err != nil {
+		return err
 	}
 
 	var errorCode int32
@@ -147,9 +119,8 @@ func pipeResultWriter(message any, writer *messages.Writer, codec messages.Codec
 	}
 
 	return writer.WriteFrom(
-		messageDesc.MessageName(), // 消息名称
-		m.Id,                      // PipeID
-		errorCode, errorMessage,   // 错误码和错误消息
+		m.Id,                    // PipeID
+		errorCode, errorMessage, // 错误码和错误消息
 	)
 }
 

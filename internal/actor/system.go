@@ -131,6 +131,9 @@ func (s *System) Stop(timeout ...time.Duration) error {
 		return fmt.Errorf("actor system stop timeout, %w", ctx.Err())
 	}
 
+	// 清理调度器
+	s.scheduler.Stop()
+
 	s.Logger().Debug("actor system stopped")
 	return nil
 }

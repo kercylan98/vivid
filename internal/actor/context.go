@@ -45,6 +45,7 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 		actor:         actor,
 		behaviorStack: NewBehaviorStack(),
 	}
+	ctx.scheduler = newScheduler(ctx)
 
 	// 初始化 ActorOptions
 	for _, option := range options {
@@ -98,6 +99,7 @@ type Context struct {
 	restarting    *RestartMessage                    // 正在重启的消息
 	watchers      map[string]vivid.ActorRef          // 正在监听该 Actor 终止事件的 ActorRef，其中 key 为 ActorRef 的完整路径
 	stash         []vivid.Envelop                    // 暂存区
+	scheduler     *Scheduler                         // 调度器
 }
 
 func (c *Context) Stash() {
@@ -168,6 +170,10 @@ func (c *Context) Name() string {
 
 func (c *Context) EventStream() vivid.EventStream {
 	return c.system.eventStream
+}
+
+func (c *Context) Scheduler() vivid.Scheduler {
+	return c.scheduler
 }
 
 func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {
@@ -313,18 +319,40 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 		c.onWatch(message)
 	case *messages.UnwatchMessage:
 		c.onUnwatch(message)
+	case *SchedulerMessage:
+		c.onScheduler(message, behavior)
 	default:
-		defer func() {
-			if r := recover(); r != nil {
-				stack := string(debug.Stack())
-				c.Logger().Error("unexpected error", log.Any("error", r), log.String("error_type", fmt.Sprintf("%T", r)), log.String("stack", stack))
-				fmt.Println(stack)
-				c.Failed(r)
-			}
-		}()
-		behavior(c)
+		c.executeBehaviorWithRecovery(behavior)
+	}
+}
+
+func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.Logger().Error("unexpected error", log.Any("error", r), log.String("error_type", fmt.Sprintf("%T", r)), log.String("stack", string(debug.Stack())))
+			fmt.Println(string(debug.Stack()))
+		}
+	}()
+	behavior(c)
+}
+
+func (c *Context) onScheduler(message *SchedulerMessage, behavior vivid.Behavior) {
+	// 检查是否过期
+	if !c.scheduler.Exists(message.Reference) {
+		c.Logger().Warn("scheduler message expired", log.String("reference", message.Reference))
+		return
 	}
 
+	// 消息替换
+	c.envelop = newReplacedEnvelop(c.envelop, message.Message)
+
+	// 执行调度
+	if message.Once {
+		if err := c.scheduler.Cancel(message.Reference); err != nil {
+			c.Logger().Error("failed to cancel scheduler", log.String("reference", message.Reference), log.Any("error", err))
+		}
+	}
+	c.executeBehaviorWithRecovery(behavior)
 }
 
 func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
@@ -526,6 +554,8 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 			Type:     reflect.TypeOf(c.actor),
 		})
 	}
+	// 清理调度器，重启也清理
+	c.scheduler.Clear()
 	c.Logger().Debug("actor killed", log.String("path", c.ref.GetPath()), log.Bool("restarting", restarting))
 
 	if restarting {

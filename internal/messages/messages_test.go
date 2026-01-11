@@ -6,22 +6,23 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type TestMessage struct {
+	Bytes   []byte
+	String  string
+	Int64   int64
+	Uint64  uint64
+	Float64 float64
+	Int32   int32
+	Uint32  uint32
+	Float32 float32
+	Int16   int16
+	Uint16  uint16
+	Int8    int8
+	Uint8   uint8
+	Bool    bool
+}
+
 func TestMessageReaderAndWriter(t *testing.T) {
-	type TestMessage struct {
-		Int8    int8
-		Int16   int16
-		Int32   int32
-		Int64   int64
-		Uint8   uint8
-		Uint16  uint16
-		Uint32  uint32
-		Uint64  uint64
-		Float32 float32
-		Float64 float64
-		Bool    bool
-		String  string
-		Bytes   []byte
-	}
 
 	message := TestMessage{
 		Int8:    1,
@@ -40,7 +41,7 @@ func TestMessageReaderAndWriter(t *testing.T) {
 	}
 
 	writer := NewWriter()
-	writer.WriteFrom(
+	assert.NoError(t, writer.WriteFrom(
 		int8(1), int16(2), int32(3), int64(4),
 		uint8(5), uint16(6), uint32(7), uint64(8),
 		float32(9), float64(10),
@@ -50,7 +51,7 @@ func TestMessageReaderAndWriter(t *testing.T) {
 		[]TestMessage{message, message, message},
 		[]byte{1, 2, 3, 4, 5, 6, 7, 8},
 		message,
-	)
+	))
 
 	assert.Empty(t, writer.Err(), "writer should not return error")
 
@@ -102,22 +103,6 @@ func TestMessageReaderAndWriter(t *testing.T) {
 }
 
 func BenchmarkReader_WriteAndRead(b *testing.B) {
-	type TestMessage struct {
-		Int8    int8
-		Int16   int16
-		Int32   int32
-		Int64   int64
-		Uint8   uint8
-		Uint16  uint16
-		Uint32  uint32
-		Uint64  uint64
-		Float32 float32
-		Float64 float64
-		Bool    bool
-		String  string
-		Bytes   []byte
-	}
-
 	message := TestMessage{
 		Int8:    1,
 		Int16:   2,
@@ -136,7 +121,7 @@ func BenchmarkReader_WriteAndRead(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		writer := NewWriter()
-		writer.WriteFrom(
+		assert.NoError(b, writer.WriteFrom(
 			int8(1), int16(2), int32(3), int64(4),
 			uint8(5), uint16(6), uint32(7), uint64(8),
 			float32(9), float64(10),
@@ -146,7 +131,7 @@ func BenchmarkReader_WriteAndRead(b *testing.B) {
 			[]TestMessage{message, message, message},
 			[]byte{1, 2, 3, 4, 5, 6, 7, 8},
 			message,
-		)
+		))
 		assert.Empty(b, writer.Err(), "writer should not return error")
 		reader := NewReader(writer.Bytes())
 		var i8 int8

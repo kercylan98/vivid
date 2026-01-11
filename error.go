@@ -18,7 +18,9 @@ var (
 	// 常见于查询不存在的资源时。
 	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
 	ErrorNotFound = RegisterError(100000, "not found")
+)
 
+var (
 	// ErrFutureTimeout 表示 Future 等待超时异常。
 	// 常见于调用 Future.Result()/Wait() 时，在指定的超时时间内未等到目标应答消息，导致操作超时。
 	// 业务代码可通过判定该错误，实现超时兜底、重试机制等。
@@ -28,6 +30,41 @@ var (
 	// 当通过泛型声明的 Future[期望类型]，但实际收到的消息类型与声明不符时抛出该异常。
 	// 业务方可通过判定该错误实现类型安全保护与异常处理。
 	ErrorFutureMessageTypeMismatch = RegisterError(110001, "future message type mismatch")
+)
+
+var (
+	// ErrorJobNotFound 表示调度器中未找到指定 Job 的错误。
+	// 常用于取消、暂停或恢复任务时目标任务不存在的场景。
+	ErrorJobNotFound = RegisterError(120000, "job not found")
+
+	// ErrorIllegalArgument 表示传递给某方法或构造器的参数不合法。
+	// 例如配置无效参数、必需参数缺失等场景。
+	ErrorIllegalArgument = RegisterError(120001, "illegal argument")
+
+	// ErrorCronParse 表示解析 Cron 表达式失败的错误。
+	// 常用于调度任务配置不正确的 cron 表达式时。
+	ErrorCronParse = RegisterError(120002, "parse cron expression")
+
+	// ErrorTriggerExpired 表示触发器已过期或不可用的错误。
+	// 通常用于任务调度触发超出有效期等场景。
+	ErrorTriggerExpired = RegisterError(120003, "trigger has expired")
+
+	// ErrorIllegalState 表示操作违背当前状态机或上下文逻辑的错误。
+	// 例如状态变更非法、资源不可用等场景。
+	ErrorIllegalState = RegisterError(120004, "illegal state")
+
+	// ErrorQueueEmpty 表示队列为空导致无法继续操作的异常。
+	// 常用于队列消费、任务弹出、资源获取等为空时。
+	ErrorQueueEmpty = RegisterError(120005, "queue is empty")
+
+	// ErrorJobAlreadyExists 表示尝试注册或调度一个已存在的任务时的异常。
+	ErrorJobAlreadyExists = RegisterError(120006, "job already exists")
+
+	// ErrorJobIsSuspended 表示对已处于挂起状态的 Job 执行挂起等操作时的异常。
+	ErrorJobIsSuspended = RegisterError(120007, "job is suspended")
+
+	// ErrorJobIsActive 表示对已处于活动状态的 Job 执行激活等操作时的异常。
+	ErrorJobIsActive = RegisterError(120008, "job is active")
 )
 
 var _ error = (*Error)(nil)
@@ -98,6 +135,14 @@ func (e *Error) With(err error) *Error {
 		code: e.code,
 		msg:  fmt.Sprintf("%s: %s", e.msg, err.Error()),
 		err:  fmt.Errorf("%s: %w", e.msg, err),
+	}
+}
+
+func (e *Error) WithMessage(msg string) *Error {
+	return &Error{
+		code: e.code,
+		msg:  fmt.Sprintf("%s: %s", e.msg, msg),
+		err:  fmt.Errorf("%w: %s", e, msg),
 	}
 }
 

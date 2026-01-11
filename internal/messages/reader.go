@@ -517,6 +517,33 @@ func (r *Reader) ReadInto(vals ...interface{}) error {
 	return nil
 }
 
+func (r *Reader) ReadMessage(codec Codec) (messageInstance any, err error) {
+	var messageName string
+	var messageData []byte
+
+	// | data | messageName
+	if err = r.ReadInto(&messageData, &messageName); err != nil {
+		return nil, err
+	}
+
+	if messageDesc := QueryMessageDescByName(messageName); !messageDesc.IsOutside() {
+		// 内部消息反序列化
+		internalReader := NewReaderFromPool(messageData)
+		defer ReleaseReaderToPool(internalReader)
+		messageInstance, err = DeserializeRemotingMessage(codec, internalReader, messageDesc)
+		if err != nil {
+			return
+		}
+	} else {
+		// 外部消息反序列化
+		messageInstance, err = codec.Decode(messageData)
+		if err != nil {
+			return
+		}
+	}
+	return messageInstance, nil
+}
+
 // Remaining 获取剩余未读取的数据
 //
 // 返回的切片直接引用底层缓冲区，修改它可能会影响 Reader 的行为

@@ -17,7 +17,7 @@ func TestSystem_Stop(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(3)
-	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			wg.Done()
@@ -25,8 +25,9 @@ func TestSystem_Stop(t *testing.T) {
 			wg.Done()
 		}
 	}))
-
-	system.Stop()
+	assert.NoError(t, err)
+	assert.NotNil(t, ref)
+	assert.NoError(t, system.Stop())
 	wg.Wait()
 }
 
@@ -47,12 +48,13 @@ func TestSystem_RemotingAsk(t *testing.T) {
 			ctx.Reply(v)
 		}
 	}))
+	assert.NotNil(t, ref)
 	assert.NoError(t, err)
 	ref = ref.Clone()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	system2.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	_, err = system2.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			f := ctx.Ask(ref, &TestInternalMessage{Text: "hello"}, time.Second*5)
@@ -64,20 +66,23 @@ func TestSystem_RemotingAsk(t *testing.T) {
 			wg.Done()
 		}
 	}))
+	assert.NoError(t, err)
 
 	wg.Wait()
 
-	system1.Stop()
-	system2.Stop()
+	assert.NoError(t, system1.Stop())
+	assert.NoError(t, system2.Stop())
 }
 
 func TestSystem_Metrics(t *testing.T) {
 	system := actor.NewTestSystem(t, vivid.WithActorSystemEnableMetrics(true))
-	defer system.Stop()
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			ctx.Metrics().Counter("test_counter").Inc()
@@ -86,6 +91,8 @@ func TestSystem_Metrics(t *testing.T) {
 			wg.Done()
 		}
 	}))
+	assert.NoError(t, err)
+	assert.NotNil(t, ref)
 
 	wg.Wait()
 	snapshot := system.Metrics().Snapshot()

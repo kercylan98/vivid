@@ -122,23 +122,43 @@ func (w *Writer) ensureCapacity(n int) {
 	}
 }
 
-// WriteByte 写入一个字节
+// writeByte 写入一个字节
 //
 // 返回 Writer 自身，支持链式调用
-func (w *Writer) WriteByte(v byte) *Writer {
+func (w *Writer) writeByte(v byte) *Writer {
 	w.ensureCapacity(1)
 	w.buf = append(w.buf, v)
 	return w
 }
 
+func (w *Writer) WriteMessage(message any, codec Codec) (err error) {
+	var messageDesc = QueryMessageDesc(message)
+	if messageDesc.IsOutside() {
+		// 外部消息序列化
+		data, err := codec.Encode(message)
+		if err != nil {
+			return err
+		}
+		w.WriteBytesWithLength(data, 4)
+	} else {
+		// 内部消息序列化
+		err = SerializeRemotingMessage(codec, w, messageDesc, message)
+		if err != nil {
+			return err
+		}
+	}
+
+	return w.WriteFrom(messageDesc.MessageName())
+}
+
 // WriteBytePtr 写入一个字节指针
 func (w *Writer) WriteBytePtr(v *byte) *Writer {
-	return w.WriteByte(*v)
+	return w.writeByte(*v)
 }
 
 // WriteUint8 写入一个无符号 8 位整数
 func (w *Writer) WriteUint8(v uint8) *Writer {
-	return w.WriteByte(byte(v))
+	return w.writeByte(byte(v))
 }
 
 // WriteUint8Ptr 写入一个无符号 8 位整数指针
@@ -148,7 +168,7 @@ func (w *Writer) WriteUint8Ptr(v *uint8) *Writer {
 
 // WriteInt8 写入一个有符号 8 位整数
 func (w *Writer) WriteInt8(v int8) *Writer {
-	return w.WriteByte(byte(v))
+	return w.writeByte(byte(v))
 }
 
 // WriteInt8Ptr 写入一个有符号 8 位整数指针
@@ -232,9 +252,9 @@ func (w *Writer) WriteInt64Ptr(v *int64) *Writer {
 // true 编码为 1，false 编码为 0
 func (w *Writer) WriteBool(v bool) *Writer {
 	if v {
-		return w.WriteByte(1)
+		return w.writeByte(1)
 	}
-	return w.WriteByte(0)
+	return w.writeByte(0)
 }
 
 // WriteBoolPtr 写入一个布尔值指针
@@ -387,9 +407,9 @@ func (w *Writer) Write(v interface{}) *Writer {
 
 	switch val := v.(type) {
 	case *byte:
-		w.WriteByte(*val)
+		w.writeByte(*val)
 	case byte:
-		w.WriteByte(val)
+		w.writeByte(val)
 	case *int8:
 		w.WriteInt8(*val)
 	case int8:

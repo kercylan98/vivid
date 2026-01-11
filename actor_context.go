@@ -21,8 +21,46 @@ type ActorContext interface {
 	//   - 可通过该实例访问 Actor 系统级别配置（如全局默认 ask 超时）、顶级 Actor 资源、注册服务等功能。
 	System() ActorSystem
 
-	// EventStream 返回事件流实例。
+	// EventStream 方法用于获取当前 ActorContext 关联的事件流（EventStream）实例。
+	//
+	// 功能与用途说明：
+	//   - 事件流是 ActorSystem 的发布/订阅（Pub/Sub）基础设施，支持 Actor、外部组件等向系统内广播各种事件（如生命周期、业务通知等）。
+	//   - Actor 可通过事件流进行自定义事件的发布（Publish）与订阅（Subscribe），用于系统解耦、横切监控、事件驱动等场景。
+	//
+	// 适用场景实例：
+	//   - 监听 Actor 生命周期变更（如启动、终止）。
+	//   - 跨模块消息广播，减少直接依赖与耦合。
+	//   - 构建基于事件的扩展点、监控与告警等功能模块。
+	//
+	// 推荐用法：
+	//   - Publish：c.EventStream().Publish(sender, event)
+	//   - Subscribe：c.EventStream().Subscribe(eventType, handlerFunc)
+	//
+	// 返回值：
+	//   - EventStream：系统唯一的事件流对象，可用于事件发布与订阅管理。
 	EventStream() EventStream
+
+	// Scheduler 方法用于获取当前 ActorContext 独享的调度器（Scheduler）实例。
+	//
+	// 功能与用途说明：
+	//   - Scheduler 支持定时（Once）、周期性（Loop）、Cron 表达式等多种类型的异步消息调度与定时任务投递。
+	//   - 所有调度任务的回调投递均自动封装为 Actor 消息，确保线程安全、串行化处理，并支持伴随 Actor 生命周期自动清理。
+	//
+	// 典型应用场景：
+	//   - 定时发送心跳、延迟执行操作、定制定时业务逻辑。
+	//   - 复杂时间控制，如基于 Cron 的计划任务等。
+	//   - Actor 层自主管理子任务、定时触发自恢复/监控等。
+	//
+	// 推荐用法：
+	//   - 一次性延时投递：c.Scheduler().Once(c.Ref(), time.Second, MyMessage{})
+	//   - 周期性发送：c.Scheduler().Loop(c.Ref(), 10*time.Second, HealthCheck{})
+	//   - Cron 调度：c.Scheduler().Cron(c.Ref(), "0 0 * * *", DoSomething{})
+	//   - 取消定时任务：c.Scheduler().Cancel(reference)
+	//   - 全部取消：c.Scheduler().CancelAll()
+	//
+	// 返回值：
+	//   - Scheduler：面向当前 ActorContext 生命周期、隔离的调度器实例。
+	Scheduler() Scheduler
 
 	// Message 返回当前 ActorContext 正在处理的消息实例。
 	//

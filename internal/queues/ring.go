@@ -13,10 +13,9 @@ type ringBuffer struct {
 }
 
 type RingQueue struct {
-	len            int64
-	content        *ringBuffer
-	lock           sync.Mutex
-	lastShrinkTime int64
+	len     int64
+	content *ringBuffer
+	lock    sync.Mutex
 }
 
 func New(initialSize int64) *RingQueue {
