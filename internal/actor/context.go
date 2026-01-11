@@ -331,6 +331,7 @@ func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 		if r := recover(); r != nil {
 			c.Logger().Error("unexpected error", log.Any("error", r), log.String("error_type", fmt.Sprintf("%T", r)), log.String("stack", string(debug.Stack())))
 			fmt.Println(string(debug.Stack()))
+			c.Failed(r)
 		}
 	}()
 	behavior(c)
