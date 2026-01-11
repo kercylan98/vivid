@@ -16,16 +16,11 @@ var (
 	startAcceptorMessage             = new(startAcceptor)
 )
 
-type ServerActorOptions struct {
-	ListenerCreatedHandler func(listener net.Listener)
-}
-
 type startAcceptor struct{}
 
 // NewServerActor 创建新的服务器
-func NewServerActor(bindAddr string, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, options ServerActorOptions) *ServerActor {
+func NewServerActor(bindAddr string, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler) *ServerActor {
 	sa := &ServerActor{
-		options:           options,
 		bindAddr:          bindAddr,
 		advertiseAddr:     advertiseAddr,
 		codec:             codec,
@@ -39,7 +34,6 @@ func NewServerActor(bindAddr string, advertiseAddr string, codec vivid.Codec, en
 
 // ServerActor 管理TCP服务器
 type ServerActor struct {
-	options                  ServerActorOptions             // 服务器选项
 	bindAddr                 string                         // TCP服务器绑定的本地监听地址（如 "0.0.0.0:8080"），只绑定本地，不对外暴露
 	advertiseAddr            string                         // 对外宣称的服务地址（如 "public.ip:port"），用于服务注册和远程节点发现
 	acceptorRef              vivid.ActorRef                 // 当前正在负责被动接收和管理新 TCP 连接的 Acceptor Actor 的引用
@@ -105,9 +99,6 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 	if err != nil {
 		// 此步不应产生错误，如有则为系统重大变更，需整体review
 		panic(fmt.Errorf("unexpected error occurred when creating acceptor: %v; this indicates a major system change, please perform a thorough system review", err))
-	}
-	if s.options.ListenerCreatedHandler != nil {
-		s.options.ListenerCreatedHandler(s.acceptorListener)
 	}
 }
 

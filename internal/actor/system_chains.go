@@ -1,8 +1,6 @@
 package actor
 
 import (
-	"net"
-
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/chain"
 	"github.com/kercylan98/vivid/internal/guard"
@@ -46,14 +44,7 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 			return nil
 		}
 
-		var remotingServerActorOptions = remoting.ServerActorOptions{}
-		if system.testSystem != nil {
-			remotingServerActorOptions.ListenerCreatedHandler = func(listener net.Listener) {
-				system.testSystem.onBindRemotingListener(listener)
-			}
-		}
-
-		system.remotingServer = remoting.NewServerActor(system.options.RemotingBindAddress, system.options.RemotingAdvertiseAddress, system.options.RemotingCodec, system, remotingServerActorOptions)
+		system.remotingServer = remoting.NewServerActor(system.options.RemotingBindAddress, system.options.RemotingAdvertiseAddress, system.options.RemotingCodec, system)
 		_, err = system.ActorOf(system.remotingServer, vivid.WithActorName("@remoting"))
 		return err
 	})
