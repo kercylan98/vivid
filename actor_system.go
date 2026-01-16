@@ -92,14 +92,15 @@ type ActorSystemOptions struct {
 	// 若未指定，则使用默认的上下文。
 	Context context.Context
 
-	// DefaultAskTimeout 指定所有 Actor 在调用 Ask 模式（请求-应答）时的默认超时时长。
-	// 若单次调用未特别指定，则将采用该超时时间，超时后会导致 Future 对象失败。
-	// 合理配置此值可防止消息"悬挂"导致资源泄漏，也可根据业务特性灵活设置。
-	DefaultAskTimeout time.Duration
-
 	// Logger 指定 ActorSystem 的日志记录器。
 	// 若未指定，则使用默认的日志记录器。
 	Logger log.Logger
+
+	// RemotingCodec 指定用于远程通讯的消息编解码器。
+	RemotingCodec Codec
+
+	// Metrics 指标收集器。
+	Metrics metrics.Metrics
 
 	// RemotingBindAddress 指定远程通信的绑定地址。
 	// 框架将在此地址上启动Listener接收连接。
@@ -110,21 +111,20 @@ type ActorSystemOptions struct {
 	// TCP和UDP将复用同一端口。
 	RemotingAdvertiseAddress string
 
-	// RemotingCodec 指定用于远程通讯的消息编解码器。
-	RemotingCodec Codec
-
-	// EnableMetrics 指定是否启用指标收集。
-	// 启用后，系统会自动创建 Metrics Actor 来收集和统计系统运行指标。
-	EnableMetrics bool
-
-	// Metrics 指标收集器。
-	Metrics metrics.Metrics
+	// DefaultAskTimeout 指定所有 Actor 在调用 Ask 模式（请求-应答）时的默认超时时长。
+	// 若单次调用未特别指定，则将采用该超时时间，超时后会导致 Future 对象失败。
+	// 合理配置此值可防止消息"悬挂"导致资源泄漏，也可根据业务特性灵活设置。
+	DefaultAskTimeout time.Duration
 
 	// EnableMetricsUpdatedNotify 指定是否启用指标收集更新通知。
 	EnableMetricsUpdatedNotify time.Duration
 
 	// StopTimeout 指定 ActorSystem 停止操作的超时时间。
 	StopTimeout time.Duration
+
+	// EnableMetrics 指定是否启用指标收集。
+	// 启用后，系统会自动创建 Metrics Actor 来收集和统计系统运行指标。
+	EnableMetrics bool
 }
 
 // WithActorSystemStopTimeout 返回一个 ActorSystemOption，用于指定 ActorSystem 停止操作的超时时间。
@@ -240,31 +240,44 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 	}
 }
 
-// WithRemoting 提供 ActorSystemOption 用于配置远程通信组件的监听及广告地址。
+// WithRemoting 提供 ActorSystemOption，用于配置远程通信组件的监听及广告地址。
 //
-// 本方法可在创建 ActorSystem 实例时通过可选参数进行远程通信地址的专业配置，涵盖以下用途：
-//  1. 指定系统用于侦听远程连接的网络绑定地址（bindAddr），系统内部会基于该地址自动初始化和管理 Listener 生命周期，调用方无需自行管理 Listener 资源。
-//  2. 可选地设置对外公布（广告）的网络地址（advertiseAddr），主要用于分布式集群环境下节点间互相通信时的地址发现与解析，支持 NAT、端口映射或多网卡场景。若未显式指定，则默认采用绑定地址（bindAddr）作为对外广告地址。
+// 注意：如果需要跨网络进行消息序列化，必须通过 WithCodec 显式指定 Codec，
 //
-// 参数说明：
-//   - bindAddr: string，必选，指定远程 Listener 的实际网络绑定地址，通常为 TCP 或 UDP 地址，决定服务器侦听的本地端口与网卡。
-//   - advertiseAddr: ...string，变长可选参数，首个参数若给定，则作为对外节点地址广告给外部 ActorSystem 使用，否则以 bindAddr 作为默认广告地址。
+//	或者为所有自定义消息通过 RegisterCustomMessage 注册对应的消息读写器，
+//	否则消息无法被正确地序列化和反序列化，导致分布式或远程通信失败。
 //
-// 使用建议：
-//   - 当服务部署在 Cloud、Docker、Kubernetes、NAT 或复杂多地址网络环境时，推荐同时显式设置两者以确保外部系统或节点正常发现与通信。
-//   - 如本地直连或单一地址情境下，可仅配置 bindAddr，系统将自动设置广告地址一致。
-func WithRemoting(codec Codec, bindAddr string, advertiseAddr ...string) ActorSystemOption {
+// 用途说明：
+//  1. 指定系统用于侦听远程连接的网络绑定地址（bindAddr），系统内部会自动初始化并管理 Listener 生命周期。
+//  2. 可选设置对外公布（广告）的网络地址（advertiseAddr），常用于集群、NAT、端口映射等场景；若未指定，默认使用 bindAddr。
+//
+// 参数：
+//   - bindAddr: string，必选，远程 Listener 的本地绑定地址（如 TCP/UDP 地址）。
+//   - advertiseAddr: ...string，可选，对外广告地址（第一个参数有效），否则默认使用 bindAddr。
+func WithRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
-		if codec == nil {
-			panic("Remoting actor system option codec is required")
-		}
-
-		opts.RemotingCodec = codec
 		opts.RemotingBindAddress = bindAddr
 		if len(advertiseAddr) > 0 {
 			opts.RemotingAdvertiseAddress = advertiseAddr[0]
 		} else {
 			opts.RemotingAdvertiseAddress = bindAddr
 		}
+	}
+}
+
+// WithCodec 提供 ActorSystemOption，用于配置远程消息的序列化与反序列化 Codec。
+//
+// 如果希望 ActorSystem 支持跨网络或分布式消息传递，必须通过本选项显式设置 Codec，
+// 否则需要对所有自定义消息类型调用 RegisterCustomMessage 注册对应的消息读写器。
+// 否则系统无法完成消息的跨节点编解码，导致远程通信失败。
+//
+// 参数：
+//   - codec: Codec 实例，必需用于远程消息序列化；若为 nil 会 panic。
+func WithCodec(codec Codec) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		if codec == nil {
+			panic("ActorSystem Codec (WithCodec) must not be nil: required for cross-network message serialization or register custom message readers/writers with RegisterCustomMessage.")
+		}
+		opts.RemotingCodec = codec
 	}
 }

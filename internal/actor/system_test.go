@@ -39,8 +39,8 @@ func TestSystem_RemotingAsk(t *testing.T) {
 	codec := NewTestCodec().
 		Register("test_message", &TestInternalMessage{})
 
-	system1 := actor.NewTestSystem(t, vivid.WithRemoting(codec, "127.0.0.1:8080"))
-	system2 := actor.NewTestSystem(t, vivid.WithRemoting(codec, "127.0.0.1:8081"), vivid.WithActorSystemLogger(log.GetDefault()))
+	system1 := actor.NewTestSystem(t, vivid.WithRemoting("127.0.0.1:8080"), vivid.WithCodec(codec))
+	system2 := actor.NewTestSystem(t, vivid.WithRemoting("127.0.0.1:8081"), vivid.WithCodec(codec), vivid.WithActorSystemLogger(log.GetDefault()))
 
 	ref, err := system1.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch v := ctx.Message().(type) {
