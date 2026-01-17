@@ -8,15 +8,29 @@ import (
 	"github.com/kercylan98/vivid/internal/mailbox"
 )
 
+func newContextInitializer(ctx *Context, actor vivid.Actor, options ...vivid.ActorOption) *contextInitializer {
+	return &contextInitializer{
+		ctx:     ctx,
+		options: options,
+		actor:   actor,
+	}
+}
+
 type contextInitializer struct {
 	ctx     *Context
 	options []vivid.ActorOption
+	actor   vivid.Actor
 }
 
 func (i *contextInitializer) applyOptions() error {
 	for _, option := range i.options {
 		option(i.ctx.options)
 	}
+	return nil
+}
+
+func (i *contextInitializer) initActor() error {
+	i.ctx.actor = i.actor
 	return nil
 }
 

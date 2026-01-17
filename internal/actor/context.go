@@ -42,18 +42,15 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 		},
 		system:        system,
 		parent:        parent,
-		actor:         actor,
 		behaviorStack: NewBehaviorStack(),
 	}
 	ctx.scheduler = newScheduler(ctx)
 
-	initializer := &contextInitializer{
-		ctx:     ctx,
-		options: options,
-	}
+	initializer := newContextInitializer(ctx, actor, options...)
 
 	if err := chain.New().
 		Append(chain.ChainFN(initializer.applyOptions)).
+		Append(chain.ChainFN(initializer.initActor)).
 		Append(chain.ChainFN(initializer.initRef)).
 		Append(chain.ChainFN(initializer.prelaunch)).
 		Append(chain.ChainFN(initializer.initMailbox)).
@@ -577,13 +574,14 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 			atomic.StoreInt32(&c.state, running)
 			c.tell(true, c.parent, new(vivid.OnLaunch))
 			c.mailbox.Resume()
+
 			// 通知事件流
-			c.EventStream().Publish(c, ves.ActorRestartedEvent{
+			eventStream := c.EventStream()
+			eventStream.Publish(c, ves.ActorRestartedEvent{
 				ActorRef: c.ref,
 				Type:     reflect.TypeOf(c.actor),
 			})
-			// 通知事件流：邮箱恢复
-			c.EventStream().Publish(c, ves.ActorMailboxResumedEvent{
+			eventStream.Publish(c, ves.ActorMailboxResumedEvent{
 				ActorRef: c.ref,
 				Type:     reflect.TypeOf(c.actor),
 			})
