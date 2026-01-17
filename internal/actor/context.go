@@ -231,6 +231,33 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 	return futureIns
 }
 
+func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.Future[vivid.Message] {
+	if task == nil {
+		return future.NewFutureFail[vivid.Message](vivid.ErrorFutureInvalid.WithMessage("no task to be executed"))
+	}
+
+	futureIns := future.NewFuture[vivid.Message](timeout, nil)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				switch r := r.(type) {
+				case error:
+					futureIns.Close(vivid.ErrorFutureUnexpectedError.With(r))
+				default:
+					futureIns.Close(vivid.ErrorFutureUnexpectedError.With(fmt.Errorf("unexpected error: %v", r)))
+				}
+			}
+		}()
+		message, err := task.Run()
+		if err != nil {
+			futureIns.Close(err)
+		} else {
+			futureIns.EnqueueMessage(message)
+		}
+	}()
+	return futureIns
+}
+
 func (c *Context) PipeTo(recipient vivid.ActorRef, message vivid.Message, forwarders vivid.ActorRefs, timeout ...time.Duration) string {
 	pipeId := uuid.NewString()
 	pipeFuture := c.ask(false, recipient, message, timeout...)
@@ -650,6 +677,7 @@ func (c *Context) Children() vivid.ActorRefs {
 	return children
 }
 
+// Failed 对于 vivid.ActorContext 的实现，该函数是并发安全的
 func (c *Context) Failed(fault vivid.Message) {
 	// 挂起当前 Actor 的消息处理并且向父级 Actor 发送监督上下文以触发父级 Actor 的监督策略
 	c.mailbox.Pause()

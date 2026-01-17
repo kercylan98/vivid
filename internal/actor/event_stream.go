@@ -41,7 +41,7 @@ func (es *eventStream) Subscribe(ctx vivid.EventStreamContext, event any) {
 	}
 	subscriberPath := ctx.Ref().GetPath()
 	if _, ok := subscribers[subscriberPath]; ok {
-		ctx.Logger().Debug("event already subscribed", log.String("event_type", eventType.String()), log.String("subscriber_path", subscriberPath))
+		ctx.Logger().Warn("event already subscribed", log.String("event_type", eventType.String()), log.String("subscriber_path", subscriberPath))
 		return
 	}
 	subscribers[subscriberPath] = ctx.Ref()

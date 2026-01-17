@@ -13,15 +13,32 @@ var (
 	_ vivid.Mailbox               = (*Future[vivid.Message])(nil)
 )
 
+// NewFuture 创建并返回一个新的 Future，用于异步任务的结果处理与同步控制。
+//
+// 参数：
+//   - timeout：指定 Future 的超时时间。如果该值大于零，到达指定持续时间后 Future 会被自动关闭，并返回 vivid.ErrorFutureTimeout。
+//     如果设为零或负数，则不会自动超时关闭。
+//   - closer：可选的回调函数，在 Future 被关闭（无论是正常关闭还是超时关闭）时调用，通常用于资源清理或通知用途。如果不需要可传 nil。
+//
+// 行为说明：
+//   - 当 timeout 大于零时，Future 会在超时后自动调用 Close 并传递超时错误（vivid.ErrorFutureTimeout）。
+//   - 若传递了 closer，则 Future 关闭时会自动执行该回调。
+//   - 返回的 Future 实例可用于后续设置结果或错误，也可等待其完成。
+//
+// 示例：
+//
+//	future := NewFuture[MyMessageType](5*time.Second, func() { /* 清理逻辑 */ })
 func NewFuture[T vivid.Message](timeout time.Duration, closer func()) *Future[T] {
 	future := &Future[T]{
 		done:   make(chan struct{}),
 		closer: closer,
 	}
 
-	future.timer = time.AfterFunc(timeout, func() {
-		future.Close(vivid.ErrorFutureTimeout)
-	})
+	if timeout > 0 {
+		future.timer = time.AfterFunc(timeout, func() {
+			future.Close(vivid.ErrorFutureTimeout)
+		})
+	}
 
 	return future
 }
@@ -59,6 +76,10 @@ func (f *Future[T]) IsPaused() bool {
 // Enqueue 实现 Mailbox 的入列接口，用于 Future 接收消息响应
 func (f *Future[T]) Enqueue(envelop vivid.Envelop) {
 	f.close(envelop.Message())
+}
+
+func (f *Future[T]) EnqueueMessage(message T) {
+	f.close(message)
 }
 
 func (f *Future[T]) Close(err error) {

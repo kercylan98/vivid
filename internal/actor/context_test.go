@@ -1,6 +1,7 @@
 package actor_test
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
@@ -319,4 +320,26 @@ func TestContext_DeathLetter(t *testing.T) {
 	<-waitKilled
 	system.Tell(ref, "test message")
 	<-waitDeathLetter
+}
+
+func TestContext_Entrust(t *testing.T) {
+	system := actor.NewTestSystem(t)
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
+
+	t.Run("invalid task", func(t *testing.T) {
+		result, err := system.Entrust(-1, nil).Result()
+		assert.NotNil(t, err)
+		assert.Nil(t, result)
+		assert.True(t, errors.Is(err, vivid.ErrorFutureInvalid))
+	})
+
+	t.Run("valid task", func(t *testing.T) {
+		result, err := system.Entrust(-1, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+			return true, nil
+		})).Result()
+		assert.Nil(t, err)
+		assert.True(t, result.(bool))
+	})
 }

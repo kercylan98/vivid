@@ -30,6 +30,14 @@ var (
 	// 当通过泛型声明的 Future[期望类型]，但实际收到的消息类型与声明不符时抛出该异常。
 	// 业务方可通过判定该错误实现类型安全保护与异常处理。
 	ErrorFutureMessageTypeMismatch = RegisterError(110001, "future message type mismatch")
+
+	// ErrorFutureUnexpectedError 表示 Future 收到意外错误异常。
+	// 当 Future 收到意外错误时抛出该异常。
+	ErrorFutureUnexpectedError = RegisterError(110002, "future unexpected error")
+
+	// ErrorFutureInvalid 表示 Future 无效的错误。
+	// 当 Future 被创建时，传入的 timeout 参数不合法时抛出该异常。
+	ErrorFutureInvalid = RegisterError(110003, "future invalid")
 )
 
 var (
