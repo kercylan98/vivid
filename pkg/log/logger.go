@@ -1,17 +1,23 @@
 package log
 
 import (
+	"context"
+	"io"
 	"log/slog"
+	"os"
+	"runtime"
 	"sync/atomic"
+	"time"
 )
 
 var (
 	_             Logger = (*SLogLogger)(nil)
+	_             Logger = (*VividLogger)(nil)
 	defaultLogger atomic.Pointer[Logger]
 )
 
 func init() {
-	logger := NewSLogLogger(slog.Default())
+	logger := NewTextLogger()
 	SetDefault(logger)
 }
 
@@ -62,11 +68,75 @@ func NewSLogLogger(logger *slog.Logger) Logger {
 	return &SLogLogger{logger: logger}
 }
 
+// NewLogger 创建一个使用自定义 Handler 的日志记录器。
+// 若未传入任何配置项，则使用默认配置与输出目标。
+func NewLogger(options ...Option) Logger {
+	opts := NewHandlerConfig(options...)
+	handler := NewHandler(options...)
+
+	return &VividLogger{
+		handler:  handler,
+		callSkip: opts.CallSkip,
+	}
+}
+
+// NewTextLogger 创建文本格式的控制台日志记录器。
+// 该构造器默认启用颜色输出，可通过 WithConsoleOutput 覆盖输出细节。
+func NewTextLogger(options ...Option) Logger {
+	return NewLogger(append([]Option{
+		WithConsoleOutput(os.Stderr, OutputText, true),
+	}, options...)...)
+}
+
+// NewJSONLogger 创建 JSON 格式的控制台日志记录器。
+// 适用于结构化日志采集场景，可通过 WithConsoleOutput 覆盖输出细节。
+func NewJSONLogger(options ...Option) Logger {
+	return NewLogger(append([]Option{
+		WithConsoleOutput(os.Stderr, OutputJSON, false),
+	}, options...)...)
+}
+
+// NewFileLogger 创建文件输出的日志记录器。
+// 可通过 RotationOptions 配置轮转与保留策略。
+func NewFileLogger(path string, rotation RotationOptions, options ...Option) Logger {
+	return NewLogger(append([]Option{
+		WithFileOutput(FileOutputOptions{
+			Path:     path,
+			Rotation: rotation,
+			Format:   OutputText,
+		}),
+	}, options...)...)
+}
+
+// NewJSONFileLogger 创建 JSON 格式的文件日志记录器。
+// 可通过 RotationOptions 配置轮转与保留策略。
+func NewJSONFileLogger(path string, rotation RotationOptions, options ...Option) Logger {
+	return NewLogger(append([]Option{
+		WithFileOutput(FileOutputOptions{
+			Path:     path,
+			Rotation: rotation,
+			Format:   OutputJSON,
+		}),
+	}, options...)...)
+}
+
+// NewSilentLogger 创建静默日志记录器。
+// 该构造器会丢弃所有日志输出，适用于测试或禁用日志的场景。
+func NewSilentLogger(options ...Option) Logger {
+	return NewLogger(append([]Option{
+		WithOutput(OutputOptions{
+			Writer: io.Discard,
+			Format: OutputText,
+			Color:  false,
+		}),
+	}, options...)...)
+}
+
 // SetDefault 设置默认的日志记录器。
 // 若 logger 为 nil，则使用 slog.Default() 作为默认日志记录器。
 func SetDefault(logger Logger) {
 	if logger == nil {
-		logger = NewSLogLogger(slog.Default())
+		logger = NewLogger()
 	}
 	defaultLogger.Store(&logger)
 }
@@ -102,4 +172,76 @@ func (s *SLogLogger) With(args ...any) Logger {
 
 func (s *SLogLogger) WithGroup(group string) Logger {
 	return &SLogLogger{logger: s.logger.WithGroup(group)}
+}
+
+// VividLogger 基于可配置的 Handler 输出日志，支持调用栈跳过与增强能力。
+type VividLogger struct {
+	handler  slog.Handler
+	callSkip int
+}
+
+func (v *VividLogger) Debug(message string, args ...any) {
+	v.log(slog.LevelDebug, message, args...)
+}
+
+func (v *VividLogger) Error(message string, args ...any) {
+	v.log(slog.LevelError, message, args...)
+}
+
+func (v *VividLogger) Info(message string, args ...any) {
+	v.log(slog.LevelInfo, message, args...)
+}
+
+func (v *VividLogger) Warn(message string, args ...any) {
+	v.log(slog.LevelWarn, message, args...)
+}
+
+func (v *VividLogger) With(args ...any) Logger {
+	attrs := attrsFromArgs(args...)
+	return &VividLogger{
+		handler:  v.handler.WithAttrs(attrs),
+		callSkip: v.callSkip,
+	}
+}
+
+func (v *VividLogger) WithGroup(group string) Logger {
+	return &VividLogger{
+		handler:  v.handler.WithGroup(group),
+		callSkip: v.callSkip,
+	}
+}
+
+func (v *VividLogger) log(level slog.Level, message string, args ...any) {
+	if v.handler == nil {
+		return
+	}
+
+	if !v.handler.Enabled(context.Background(), level) {
+		return
+	}
+
+	record := slog.NewRecord(time.Now(), level, message, 0)
+	record.PC = callerPC(4 + v.callSkip)
+	record.Add(args...)
+	_ = v.handler.Handle(context.Background(), record)
+}
+
+func callerPC(skip int) uintptr {
+	var pcs [1]uintptr
+	if runtime.Callers(skip, pcs[:]) == 0 {
+		return 0
+	}
+	return pcs[0] - 1
+}
+
+func attrsFromArgs(args ...any) []slog.Attr {
+	record := slog.NewRecord(time.Time{}, 0, "", 0)
+	record.Add(args...)
+
+	var attrs []slog.Attr
+	record.Attrs(func(attr slog.Attr) bool {
+		attrs = append(attrs, attr)
+		return true
+	})
+	return attrs
 }

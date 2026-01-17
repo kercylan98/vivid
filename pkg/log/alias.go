@@ -9,6 +9,7 @@ import (
 type (
 	Level          = slog.Level
 	Leveler        = slog.Leveler
+	LevelVar       = slog.LevelVar
 	Attr           = slog.Attr
 	Handler        = slog.Handler
 	HandlerOptions = slog.HandlerOptions
@@ -30,6 +31,13 @@ func NewTextHandler(w io.Writer, opts *HandlerOptions) *TextHandler {
 
 func NewJSONHandler(w io.Writer, opts *HandlerOptions) *JSONHandler {
 	return slog.NewJSONHandler(w, opts)
+}
+
+// NewLevelVar 创建可动态调整日志级别的 LevelVar。
+func NewLevelVar(level Level) *LevelVar {
+	var lv LevelVar
+	lv.Set(level)
+	return &lv
 }
 
 func Any(key string, value any) Attr {

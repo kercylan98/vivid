@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/actor"
 )
 
@@ -92,7 +93,7 @@ func TestNewRefInvalidAddress(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ref, err := actor.NewRef(tt.address, tt.path)
-			if ref != nil || !errors.Is(err, actor.ErrRefInvalidAddress) {
+			if ref != nil || !errors.Is(err, vivid.ErrorRefInvalidAddress) {
 				t.Fatalf("expected ErrRefInvalidAddress, got ref=%v err=%v", ref, err)
 			}
 		})
@@ -115,7 +116,7 @@ func TestNewRefInvalidPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ref, err := actor.NewRef(tt.address, tt.path)
-			if ref != nil || err != actor.ErrRefInvalidPath {
+			if ref != nil || err != vivid.ErrorRefInvalidPath {
 				t.Fatalf("expected ErrRefInvalidPath, got ref=%v err=%v", ref, err)
 			}
 		})
@@ -130,9 +131,9 @@ func TestParseRef(t *testing.T) {
 		wantAdr string
 		wantPth string
 	}{
-		{name: "empty", input: "", wantErr: actor.ErrRefEmpty},
-		{name: "missing_path", input: "example.com", wantErr: actor.ErrRefFormat},
-		{name: "invalid_path", input: "example.com/|", wantErr: actor.ErrRefInvalidPath},
+		{name: "empty", input: "", wantErr: vivid.ErrorRefEmpty},
+		{name: "missing_path", input: "example.com", wantErr: vivid.ErrorRefFormat},
+		{name: "invalid_path", input: "example.com/|", wantErr: vivid.ErrorRefInvalidPath},
 		{name: "valid_domain", input: "example.com/abc@def", wantAdr: "example.com", wantPth: "/abc@def"},
 		{name: "valid_localhost", input: "localhost/local", wantAdr: "localhost", wantPth: "/local"},
 		{name: "valid_ipv4_slash", input: "127.0.0.1:80/a", wantAdr: "127.0.0.1:80", wantPth: "/a"},
@@ -167,7 +168,7 @@ func TestParseRef(t *testing.T) {
 func TestNewAgentRef(t *testing.T) {
 	t.Run("nil_agent", func(t *testing.T) {
 		ref, err := actor.NewAgentRef(nil)
-		if ref != nil || err != actor.ErrRefNilAgent {
+		if ref != nil || err != vivid.ErrorRefNilAgent {
 			t.Fatalf("expected ErrRefNilAgent, got ref=%v err=%v", ref, err)
 		}
 	})

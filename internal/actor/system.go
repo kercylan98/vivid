@@ -170,6 +170,17 @@ func (s *System) removeActorContext(ctx *Context) {
 	s.actorContexts.Delete(ctx.Ref().GetPath())
 }
 
+func (s *System) FindActorRef(actorRef string) (vivid.ActorRef, error) {
+	ref, err := ParseRef(actorRef)
+	if err != nil {
+		return nil, err
+	}
+	if ref.GetAddress() != s.Ref().GetAddress() {
+		return nil, vivid.ErrorActorRefAddressMismatch
+	}
+	return ref, nil
+}
+
 func (s *System) Metrics() metrics.Metrics {
 	if s.metrics == nil {
 		s.Logger().Warn("metrics not enabled, returning temporary metrics collector, should use vivid.WithActorSystemEnableMetrics to enable metrics")

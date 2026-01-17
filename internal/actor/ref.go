@@ -1,7 +1,6 @@
 package actor
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -13,12 +12,6 @@ import (
 
 var (
 	_ vivid.ActorRef = (*Ref)(nil)
-
-	ErrRefEmpty          = errors.New("actor ref is empty")
-	ErrRefFormat         = errors.New("actor ref must contain address and path")
-	ErrRefInvalidAddress = errors.New("actor ref address is invalid")
-	ErrRefInvalidPath    = errors.New("actor ref path is invalid")
-	ErrRefNilAgent       = errors.New("agent ref is nil")
 )
 
 const agentFutureMarker = "@future@"
@@ -30,11 +23,11 @@ func NewRef(address, path string) (*Ref, error) {
 		if address == "" {
 			address = "<empty>"
 		}
-		return nil, fmt.Errorf("%w: %s", ErrRefInvalidAddress, address)
+		return nil, fmt.Errorf("%w: %s", vivid.ErrorRefInvalidAddress, address)
 	}
 	path, ok = utils.NormalizePath(path)
 	if !ok {
-		return nil, ErrRefInvalidPath
+		return nil, vivid.ErrorRefInvalidPath
 	}
 	return &Ref{
 		address: address,
@@ -45,14 +38,14 @@ func NewRef(address, path string) (*Ref, error) {
 // ParseRef 将字符串解析为 *Ref，支持 "domain/path" 与 "host:port:path"。
 func ParseRef(value string) (*Ref, error) {
 	if value == "" {
-		return nil, ErrRefEmpty
+		return nil, vivid.ErrorRefEmpty
 	}
 	if split := strings.Index(value, ":/"); split > 0 && strings.Contains(value[:split], ":") {
 		return NewRef(value[:split], value[split+1:])
 	}
 	slash := strings.IndexByte(value, '/')
 	if slash <= 0 {
-		return nil, ErrRefFormat
+		return nil, vivid.ErrorRefFormat
 	}
 	return NewRef(value[:slash], value[slash:])
 }
@@ -96,7 +89,7 @@ func (r *Ref) String() string {
 
 func NewAgentRef(agent *Ref) (*AgentRef, error) {
 	if agent == nil {
-		return nil, ErrRefNilAgent
+		return nil, vivid.ErrorRefNilAgent
 	}
 	ref, err := agent.Child(agentFutureMarker + uuid.NewString())
 	if err != nil {
@@ -124,7 +117,7 @@ func (a *AgentRef) Agent() *Ref {
 // Child 基于当前 Ref 快速生成子 Ref。
 func (r *Ref) Child(path string) (*Ref, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, ErrRefInvalidPath
+		return nil, vivid.ErrorRefInvalidPath
 	}
 	return NewRef(r.address, utils.JoinPath(r.path, path))
 }

@@ -39,6 +39,16 @@ type ActorSystem interface {
 	//   - 多次调用 Stop() 并无额外副作用，仅首个调用会触发实际终止流程，其余调用会在等待终止完成后直接返回。
 	//   - 停止操作一经触发，不可逆转，系统不可再用于消息接收、Actor 创建等操作。
 	Stop(timeout ...time.Duration) error
+
+	// FindActorRef 根据字符串解析生成 ActorRef 实例。
+	// 参数：
+	//   - actorRef: actor 引用字符串（如 "example.com:8080/user/a"）。
+	// 返回值：
+	//   - vivid.ActorRef: 解析得到的 actor 引用对象，若解析失败则为 nil。
+	//   - error: 字符串格式、地址或路径非法时返回对应错误。
+	//
+	// 用于把存储、传输的字符串形式 actor ref 转为可用的 ActorRef 对象。
+	FindActorRef(actorRef string) (ActorRef, error)
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。

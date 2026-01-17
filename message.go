@@ -157,7 +157,19 @@ func pipeResultReader(message any, reader *messages.Reader, codec messages.Codec
 		var foundError = QueryError(errorCode)
 		if foundError == nil {
 			foundError = ErrorException.With(fmt.Errorf("error code %d not found, message: %s", errorCode, errorMessage))
+			m.Error = foundError
+			return nil
 		}
+
+		if errorMessage != "" && errorMessage != foundError.GetMessage() {
+			m.Error = &Error{
+				code: foundError.code,
+				msg:  errorMessage,
+				err:  foundError,
+			}
+			return nil
+		}
+
 		m.Error = foundError
 	}
 	return nil
