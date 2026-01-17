@@ -3,13 +3,16 @@ package remoting
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
+	"reflect"
 	"sync"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/remoting/serialize"
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler) *tcpConnectionActor {
@@ -24,13 +27,13 @@ func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, cod
 
 // tcpConnectionActor TCP连接实现
 type tcpConnectionActor struct {
-	client         bool
-	advertiseAddr  string
-	envelopHandler NetworkEnvelopHandler
-	writeCloseLock sync.RWMutex
 	conn           net.Conn
-	closed         bool
 	codec          vivid.Codec
+	envelopHandler NetworkEnvelopHandler
+	advertiseAddr  string
+	writeCloseLock sync.RWMutex
+	client         bool
+	closed         bool
 }
 
 func (c *tcpConnectionActor) OnPrelaunch() (err error) {
@@ -77,6 +80,14 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) {
 	lengthBuf := make([]byte, 4)
 	if _, err := io.ReadFull(reader, lengthBuf); err != nil {
 		// 当消息读取失败时，意味着连接已断开，终止 Actor
+		ctx.EventStream().Publish(ctx, ves.RemotingConnectionClosedEvent{
+			ConnectionRef: ctx.Ref(),
+			RemoteAddr:    c.conn.RemoteAddr().String(),
+			LocalAddr:     c.conn.LocalAddr().String(),
+			AdvertiseAddr: c.advertiseAddr,
+			IsClient:      c.client,
+			Reason:        fmt.Sprintf("read failed: %v", err),
+		})
 		ctx.Kill(ctx.Ref(), false, err.Error())
 		return
 	}
@@ -89,6 +100,14 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) {
 	msgBuf := make([]byte, msgLen)
 	if _, err := io.ReadFull(reader, msgBuf); err != nil {
 		// 当消息读取失败时，意味着连接已断开，终止 Actor
+		ctx.EventStream().Publish(ctx, ves.RemotingConnectionClosedEvent{
+			ConnectionRef: ctx.Ref(),
+			RemoteAddr:    c.conn.RemoteAddr().String(),
+			LocalAddr:     c.conn.LocalAddr().String(),
+			AdvertiseAddr: c.advertiseAddr,
+			IsClient:      c.client,
+			Reason:        fmt.Sprintf("read message body failed: %v", err),
+		})
 		ctx.Kill(ctx.Ref(), false, err.Error())
 		return
 	}
@@ -99,8 +118,27 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) {
 		receiverAddr, receiverPath,
 		messageInstance,
 		err := serialize.DecodeEnvelopWithRemoting(c.codec, msgBuf); err != nil {
+		// 发布消息解码失败事件
+		ctx.EventStream().Publish(ctx, ves.RemotingMessageDecodeFailedEvent{
+			ConnectionRef: ctx.Ref(),
+			RemoteAddr:    c.conn.RemoteAddr().String(),
+			MessageSize:   int(msgLen),
+			Error:         err,
+		})
 		ctx.Logger().Warn("decode Remoting envelop failed", log.Any("err", err))
 	} else {
+		// 发布消息接收成功事件
+		messageType := "unknown"
+		if messageInstance != nil {
+			messageType = reflect.TypeOf(messageInstance).String()
+		}
+		ctx.EventStream().Publish(ctx, ves.RemotingMessageReceivedEvent{
+			ConnectionRef: ctx.Ref(),
+			RemoteAddr:    c.conn.RemoteAddr().String(),
+			MessageType:   messageType,
+			MessageSize:   int(msgLen),
+			ReceiverPath:  receiverPath,
+		})
 		c.envelopHandler.HandleRemotingEnvelop(system, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath, messageInstance)
 	}
 

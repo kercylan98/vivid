@@ -4,12 +4,15 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"reflect"
 	"sync"
 	"time"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/remoting/serialize"
 	"github.com/kercylan98/vivid/internal/utils"
+	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/ves"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -17,11 +20,25 @@ const (
 	poolSize = 10
 )
 
+// eventStreamContext 实现 EventStreamContext 接口，用于在 Mailbox 中发布事件
+type eventStreamContext struct {
+	ref    vivid.ActorRef
+	logger log.Logger
+}
+
+func (e *eventStreamContext) Ref() vivid.ActorRef {
+	return e.ref
+}
+
+func (e *eventStreamContext) Logger() log.Logger {
+	return e.logger
+}
+
 var (
 	_ vivid.Mailbox = &Mailbox{}
 )
 
-func newMailbox(advertiseAddress string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, actorLiaison vivid.ActorLiaison, remotingServerRef vivid.ActorRef) *Mailbox {
+func newMailbox(advertiseAddress string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, actorLiaison vivid.ActorLiaison, remotingServerRef vivid.ActorRef, eventStream vivid.EventStream) *Mailbox {
 	return &Mailbox{
 		advertiseAddress:  advertiseAddress,
 		sf:                &singleflight.Group{},
@@ -29,6 +46,7 @@ func newMailbox(advertiseAddress string, codec vivid.Codec, envelopHandler Netwo
 		actorLiaison:      actorLiaison,
 		remotingServerRef: remotingServerRef,
 		codec:             codec,
+		eventStream:       eventStream,
 		backoff:           utils.NewExponentialBackoffWithDefault(100*time.Millisecond, 3*time.Second),
 	}
 }
@@ -42,6 +60,7 @@ type Mailbox struct {
 	actorLiaison      vivid.ActorLiaison
 	remotingServerRef vivid.ActorRef
 	codec             vivid.Codec
+	eventStream       vivid.EventStream
 	backoff           *utils.ExponentialBackoff
 }
 
@@ -92,6 +111,22 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 
 				conn, err := net.Dial("tcp", m.advertiseAddress)
 				if err != nil {
+					// 发布连接失败事件
+					if m.eventStream != nil {
+						retryCount := 0
+						if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
+							eventCtx := &eventStreamContext{
+								ref:    m.remotingServerRef,
+								logger: ctx.Logger(),
+							}
+							m.eventStream.Publish(eventCtx, ves.RemotingConnectionFailedEvent{
+								RemoteAddr:  m.advertiseAddress,
+								AdvertiseAddr: m.advertiseAddress,
+								Error:      err,
+								RetryCount: retryCount,
+							})
+						}
+					}
 					return nil, err
 				}
 
@@ -101,8 +136,27 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 					if closeErr != nil {
 						return nil, fmt.Errorf("%w, %s", err, closeErr)
 					}
+					// 发布连接失败事件
+					if m.eventStream != nil {
+						if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
+							eventCtx := &eventStreamContext{
+								ref:    m.remotingServerRef,
+								logger: ctx.Logger(),
+							}
+							m.eventStream.Publish(eventCtx, ves.RemotingConnectionFailedEvent{
+								RemoteAddr:    m.advertiseAddress,
+								AdvertiseAddr: m.advertiseAddress,
+								Error:         err,
+								RetryCount:    0,
+							})
+						}
+					}
 					return nil, err
 				}
+				
+				// 尝试获取连接 Actor 的引用（通过 Ask 的回复）
+				// 注意：这里无法直接获取，因为 Ask 返回的是 nil
+				// 连接建立事件会在 server_actor.go 的 onConnection 中发布
 
 				m.connections[slot] = tcpConn
 				return tcpConn, nil
@@ -117,6 +171,25 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 		// 序列化消息，如果失败应当直接中断，重试毫无意义
 		data, err := serialize.EncodeEnvelopWithRemoting(m.codec, envelop)
 		if err != nil {
+			// 发布消息发送失败事件（序列化失败）
+			if m.eventStream != nil {
+				if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
+					eventCtx := &eventStreamContext{
+						ref:    m.remotingServerRef,
+						logger: ctx.Logger(),
+					}
+					messageType := "unknown"
+					if envelop.Message() != nil {
+						messageType = reflect.TypeOf(envelop.Message()).String()
+					}
+					m.eventStream.Publish(eventCtx, ves.RemotingMessageSendFailedEvent{
+						ConnectionRef: nil,
+						RemoteAddr:    m.advertiseAddress,
+						MessageType:   messageType,
+						Error:         err,
+					})
+				}
+			}
 			return true, err
 		}
 		// 写入消息长度
@@ -139,6 +212,25 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 		// 发送消息
 		_, err = conn.Write(data)
 		if err != nil {
+			// 发布消息发送失败事件
+			if m.eventStream != nil {
+				if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
+					eventCtx := &eventStreamContext{
+						ref:    m.remotingServerRef,
+						logger: ctx.Logger(),
+					}
+					messageType := "unknown"
+					if envelop.Message() != nil {
+						messageType = reflect.TypeOf(envelop.Message()).String()
+					}
+					m.eventStream.Publish(eventCtx, ves.RemotingMessageSendFailedEvent{
+						ConnectionRef: nil, // 连接已失效，无法获取引用
+						RemoteAddr:    m.advertiseAddress,
+						MessageType:   messageType,
+						Error:         err,
+					})
+				}
+			}
 			// 写入失败，可能是连接已关闭，清理连接并重试
 			m.connectionLock.Lock()
 			if m.connections[slot] == conn {
@@ -148,6 +240,29 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 			conn = nil
 			return false, err
 		}
+		
+		// 发布消息发送成功事件
+		if m.eventStream != nil {
+			if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
+				eventCtx := &eventStreamContext{
+					ref:    m.remotingServerRef,
+					logger: ctx.Logger(),
+				}
+				messageType := "unknown"
+				if envelop.Message() != nil {
+					messageType = reflect.TypeOf(envelop.Message()).String()
+				}
+				// 注意：这里无法直接获取 ConnectionRef，因为 conn 是 *tcpConnectionActor，不是 ActorRef
+				// 但我们可以尝试从连接中获取，或者使用 nil
+				m.eventStream.Publish(eventCtx, ves.RemotingMessageSentEvent{
+					ConnectionRef: nil, // Mailbox 中无法直接获取 ConnectionRef
+					RemoteAddr:    m.advertiseAddress,
+					MessageType:   messageType,
+					MessageSize:    len(data),
+				})
+			}
+		}
+		
 		return true, nil
 	})
 

@@ -9,6 +9,7 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 var (
@@ -108,11 +109,18 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 		// 此步不应产生错误，如有则为系统重大变更，需整体review
 		panic(fmt.Errorf("unexpected error occurred when creating acceptor: %v; this indicates a major system change, please perform a thorough system review", err))
 	}
+
+	// 发布服务器启动成功事件
+	ctx.EventStream().Publish(ctx, ves.RemotingServerStartedEvent{
+		BindAddr:      s.bindAddr,
+		AdvertiseAddr: s.advertiseAddr,
+		ServerRef:     ctx.Ref(),
+	})
 }
 
 func (s *ServerActor) onLaunch(ctx vivid.ActorContext) {
 	// 可能存在 Actor 还未启动完成旧投递网络消息，因此需要使用 WaitGroup 等待初始化完成
-	s.remotingMailboxCentral = newMailboxCentral(ctx.Ref(), ctx, s.codec)
+	s.remotingMailboxCentral = newMailboxCentral(ctx.Ref(), ctx, s.codec, ctx.EventStream())
 	s.remotingMailboxCentralWG.Done()
 
 	// 投递 Acceptor 作为启动消息，实现重试启动
@@ -137,6 +145,15 @@ func (s *ServerActor) onConnection(ctx vivid.ActorContext, connection *tcpConnec
 	if !connection.client {
 		s.acceptConnections[ref.GetPath()] = connection
 	}
+
+	// 发布连接建立成功事件
+	ctx.EventStream().Publish(ctx, ves.RemotingConnectionEstablishedEvent{
+		ConnectionRef:  ref,
+		RemoteAddr:     connection.conn.RemoteAddr().String(),
+		LocalAddr:      connection.conn.LocalAddr().String(),
+		AdvertiseAddr:  connection.advertiseAddr,
+		IsClient:       connection.client,
+	})
 }
 
 func (s *ServerActor) GetRemotingMailboxCentral() *MailboxCentral {
@@ -166,6 +183,13 @@ func (s *ServerActor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
 		s.backoffTimer.Stop()
 		s.backoffTimer = nil
 	}
+
+	// 发布服务器停止事件
+	ctx.EventStream().Publish(ctx, ves.RemotingServerStoppedEvent{
+		BindAddr:      s.bindAddr,
+		AdvertiseAddr: s.advertiseAddr,
+		ServerRef:     ctx.Ref(),
+	})
 }
 
 func (s *ServerActor) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
@@ -174,6 +198,17 @@ func (s *ServerActor) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) 
 		// 如果是维护的连接销毁，从集合中移除
 		tcpConn := s.acceptConnections[message.Ref.GetPath()]
 		delete(s.acceptConnections, message.Ref.GetPath())
+		
+		// 发布连接关闭事件
+		ctx.EventStream().Publish(ctx, ves.RemotingConnectionClosedEvent{
+			ConnectionRef: message.Ref,
+			RemoteAddr:    tcpConn.conn.RemoteAddr().String(),
+			LocalAddr:     tcpConn.conn.LocalAddr().String(),
+			AdvertiseAddr: tcpConn.advertiseAddr,
+			IsClient:      tcpConn.client,
+			Reason:        "connection actor killed",
+		})
+		
 		if err := tcpConn.Close(); err != nil {
 			ctx.Logger().Warn("server accept connect close fail",
 				log.String("advertise_addr", tcpConn.advertiseAddr),
