@@ -512,107 +512,18 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 }
 
 func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
+	handler := newKilledHandler(c, message, behavior)
 
-	// 处理子 Actor 死亡
-	if !message.Ref.Equals(c.ref) {
-		delete(c.children, message.Ref.GetPath())
-		behavior(c)
-	}
-
-	// 如果还有子 Actor，则不处理自身死亡
-	if len(c.children) != 0 || !atomic.CompareAndSwapInt32(&c.state, killing, killed) {
-		return
-	}
-
-	selfKilledMessage := &vivid.OnKilled{Ref: c.ref}
-	c.envelop = mailbox.NewEnvelop(true, c.Sender(), c.ref, selfKilledMessage)
-	if c.restarting != nil {
-		// 失败意味着资源可能无法正确释放，但不应阻止新实例的创建。
-		// 可能存在资源泄漏，应当记录警告
-		logger := c.Logger()
-		if !c.restarting.recoverExec(logger, "on killed", false, func() error {
-			behavior(c)
-			return nil
-		}) {
-			logger.Warn("restart killed failed; resources may not have been properly released", log.String("path", c.ref.GetPath()), log.String("reason", c.restarting.Reason), log.Any("fault", c.restarting.Fault), log.String("stack", string(c.restarting.Stack)))
-		}
-	} else {
-		behavior(c)
-	}
-
-	// 宣告父节点自身死亡，重启状态下并非真正死亡，不做移除和通知
-	restarting := c.restarting != nil
-	if !restarting {
-		c.EventStream().UnsubscribeAll(c)
-		c.system.removeActorContext(c)
-		// 通知所有监听者
-		for _, watcher := range c.watchers {
-			c.tell(true, watcher, selfKilledMessage)
-		}
-
-		// 通知父节点
-		if c.parent != nil {
-			c.tell(true, c.parent, selfKilledMessage)
-		}
-
-		// 通知事件流
-		c.EventStream().Publish(c, ves.ActorKilledEvent{
-			ActorRef: c.ref,
-			Type:     reflect.TypeOf(c.actor),
-		})
-	}
-	// 清理调度器，重启也清理
-	c.scheduler.Clear()
-	c.Logger().Debug("actor killed", log.String("path", c.ref.GetPath()), log.Bool("restarting", restarting))
-
-	if restarting {
-		// 如果提供了提供者，则使用提供者提供新的 Actor 实例
-		if c.options.Provider != nil {
-			c.actor = c.options.Provider.Provide()
-		}
-		c.behaviorStack.Clear().Push(c.actor.OnReceive)
-		c.Logger().Debug("actor restarted", log.String("path", c.ref.GetPath()))
-
-		// 触发重启后的回调
-		var success = true
-		if restartedActor, ok := c.actor.(vivid.RestartedActor); ok {
-			success = c.restarting.recoverExec(c.Logger(), "on restarted", true, func() error {
-				return restartedActor.OnRestarted(c)
-			})
-		}
-
-		// 触发生命周期
-		if preLaunchActor, ok := c.actor.(vivid.PrelaunchActor); ok && success {
-			success = c.restarting.recoverExec(c.Logger(), "on pre launch", true, func() error {
-				return preLaunchActor.OnPrelaunch(c)
-			})
-		}
-
-		// 当子 Actor 重启失败时，不再通知父 Actor 其死亡，而是让其进入“僵尸状态”，避免异常状态扩散。
-		if !success {
-			// 记录错误并释放资源
-			c.Logger().Error("restart failed; actor is now in zombie state", log.String("path", c.ref.GetPath()))
-			c.system.removeActorContext(c)
-
-			// 现有的 ActorRef 缓存中可能持有该邮箱，应当快速排空且进入死信息，避免内存长时间驻留
-			c.mailbox.Resume()
-		} else {
-			c.restarting = nil
-			atomic.StoreInt32(&c.state, running)
-			c.tell(true, c.parent, new(vivid.OnLaunch))
-			c.mailbox.Resume()
-
-			// 通知事件流
-			eventStream := c.EventStream()
-			eventStream.Publish(c, ves.ActorRestartedEvent{
-				ActorRef: c.ref,
-				Type:     reflect.TypeOf(c.actor),
-			})
-			eventStream.Publish(c, ves.ActorMailboxResumedEvent{
-				ActorRef: c.ref,
-				Type:     reflect.TypeOf(c.actor),
-			})
-		}
+	if err := chain.New().
+		Append(chain.ChainFN(handler.handleChildDeath)).
+		Append(chain.ChainFN(handler.checkAndMarkKilled)).
+		Append(chain.ChainFN(handler.prepareSelfKilledMessage)).
+		Append(chain.ChainFN(handler.executeBehavior)).
+		Append(chain.ChainFN(handler.cleanupIfNotRestarting)).
+		Append(chain.ChainFN(handler.cleanupScheduler)).
+		Append(chain.ChainFN(handler.handleRestart)).
+		Run(); err != nil {
+		c.Logger().Error("onKilled failed", log.Any("error", err))
 	}
 }
 
