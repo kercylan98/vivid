@@ -26,6 +26,15 @@ func NewFuture[T vivid.Message](timeout time.Duration, closer func()) *Future[T]
 	return future
 }
 
+// NewFutureFail 直接创建失败状态的 Future，用于快速返回错误结果。
+func NewFutureFail[T vivid.Message](err error) *Future[T] {
+	future := &Future[T]{
+		done: make(chan struct{}),
+	}
+	future.Close(err)
+	return future
+}
+
 type Future[T vivid.Message] struct {
 	done    chan struct{} // 用于通知 future 完成
 	timer   *time.Timer   // 超时定时器

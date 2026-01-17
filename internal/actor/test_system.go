@@ -2,6 +2,7 @@ package actor
 
 import (
 	"log/slog"
+	"os"
 	"testing"
 
 	"github.com/kercylan98/vivid"
@@ -10,7 +11,7 @@ import (
 
 func NewTestSystem(t *testing.T, options ...vivid.ActorSystemOption) *TestSystem {
 	options = append([]vivid.ActorSystemOption{
-		vivid.WithActorSystemLogger(log.NewSLogLogger(slog.New(log.NewTextHandler(t.Output(), &log.HandlerOptions{
+		vivid.WithActorSystemLogger(log.NewSLogLogger(slog.New(log.NewTextHandler(os.Stdout, &log.HandlerOptions{
 			AddSource:   true,
 			Level:       log.LevelDebug,
 			ReplaceAttr: nil,

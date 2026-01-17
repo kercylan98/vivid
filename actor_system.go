@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 )
@@ -261,6 +262,9 @@ func WithRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
 			opts.RemotingAdvertiseAddress = advertiseAddr[0]
 		} else {
 			opts.RemotingAdvertiseAddress = bindAddr
+		}
+		if utils.IsAddrMissingPort(opts.RemotingAdvertiseAddress) && !utils.IsDomainName(opts.RemotingAdvertiseAddress) {
+			panic("ActorSystem advertise address must be a domain when missing port")
 		}
 	}
 }

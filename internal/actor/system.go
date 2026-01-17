@@ -66,10 +66,23 @@ func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, sender
 	var agent, sender, receiver *Ref
 	if agentAddr != "" {
 		// Addr 不为空就一定存在 Path
-		agent = NewRef(agentAddr, agentPath)
+		var err error
+		agent, err = NewRef(agentAddr, agentPath)
+		if err != nil {
+			s.Logger().Warn("invalid agent ref", log.String("address", agentAddr), log.String("path", agentPath), log.Any("err", err))
+		}
 	}
-	sender = NewRef(senderAddr, senderPath)
-	receiver = NewRef(receiverAddr, receiverPath)
+	var err error
+	sender, err = NewRef(senderAddr, senderPath)
+	if err != nil {
+		s.Logger().Warn("invalid sender ref", log.String("address", senderAddr), log.String("path", senderPath), log.Any("err", err))
+		return
+	}
+	receiver, err = NewRef(receiverAddr, receiverPath)
+	if err != nil {
+		s.Logger().Warn("invalid receiver ref", log.String("address", receiverAddr), log.String("path", receiverPath), log.Any("err", err))
+		return
+	}
 	receiverMailbox := s.findMailbox(receiver)
 	receiverMailbox.Enqueue(mailbox.NewEnvelop(system, sender, receiver, messageInstance).WithAgent(agent))
 }

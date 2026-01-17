@@ -2,7 +2,6 @@ package actor
 
 import (
 	"fmt"
-	"net/url"
 	"reflect"
 	"runtime/debug"
 	"strings"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/chain"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/messages"
@@ -47,41 +47,20 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 	}
 	ctx.scheduler = newScheduler(ctx)
 
-	// 初始化 ActorOptions
-	for _, option := range options {
-		option(ctx.options)
+	initializer := &contextInitializer{
+		ctx:     ctx,
+		options: options,
 	}
 
-	// 初始化 ActorRef
-	var parentAddress = system.options.RemotingAdvertiseAddress
-	var path = ctx.options.Name
-	if path == "" && parent != nil {
-		path = fmt.Sprintf("%d", actorIncrementId.Add(1))
+	if err := chain.New().
+		Append(chain.ChainFN(initializer.applyOptions)).
+		Append(chain.ChainFN(initializer.initRef)).
+		Append(chain.ChainFN(initializer.prelaunch)).
+		Append(chain.ChainFN(initializer.initMailbox)).
+		Append(chain.ChainFN(initializer.initBehavior)).
+		Run(); err != nil {
+		return nil, err
 	}
-	if parent != nil {
-		parentAddress = parent.address
-		var err error
-		path, err = url.JoinPath(parent.path, path)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		path = "/"
-	}
-
-	ctx.ref = NewRef(parentAddress, path)
-
-	// 执行 PrelaunchActor 的 OnPrelaunch 方法
-	if preLaunchActor, ok := actor.(vivid.PrelaunchActor); ok {
-		if err := preLaunchActor.OnPrelaunch(ctx); err != nil {
-			return nil, err
-		}
-	}
-
-	ctx.mailbox = mailbox.NewUnboundedMailbox(256, ctx)
-
-	ctx.behaviorStack.Push(actor.OnReceive)
-
 	return ctx, nil
 }
 
@@ -239,7 +218,10 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 		askTimeout = timeout[0]
 	}
 
-	agentRef := NewAgentRef(c.ref)
+	agentRef, err := NewAgentRef(c.ref)
+	if err != nil {
+		return future.NewFutureFail[vivid.Message](err)
+	}
 	futureIns := future.NewFuture[vivid.Message](askTimeout, func() {
 		c.system.removeFuture(agentRef)
 	})
