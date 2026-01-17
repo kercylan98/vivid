@@ -65,6 +65,26 @@ var (
 
 	// ErrorJobIsActive 表示对已处于活动状态的 Job 执行激活等操作时的异常。
 	ErrorJobIsActive = RegisterError(120008, "job is active")
+
+	// ErrorActorRefAddressMismatch 表示 ActorRef 地址不匹配的错误。
+	ErrorActorRefAddressMismatch = RegisterError(120009, "actor ref address mismatch")
+)
+
+var (
+	// ErrorRefEmpty 表示 ActorRef 为空的错误。
+	ErrorRefEmpty = RegisterError(130001, "actor ref is empty")
+
+	// ErrorRefFormat 表示 ActorRef 格式非法（例如缺少地址或路径）的错误。
+	ErrorRefFormat = RegisterError(130002, "actor ref must contain address and path")
+
+	// ErrorRefInvalidAddress 表示 ActorRef 地址部分不合法的错误。
+	ErrorRefInvalidAddress = RegisterError(130003, "actor ref address is invalid")
+
+	// ErrorRefInvalidPath 表示 ActorRef 路径部分不合法的错误。
+	ErrorRefInvalidPath = RegisterError(130004, "actor ref path is invalid")
+
+	// ErrorRefNilAgent 表示 AgentRef 为空（无效引用）的错误。
+	ErrorRefNilAgent = RegisterError(130005, "agent ref is nil")
 )
 
 var _ error = (*Error)(nil)
@@ -131,42 +151,54 @@ func (e *Error) GetMessage() string {
 }
 
 func (e *Error) With(err error) *Error {
+	if err == nil {
+		return e
+	}
 	return &Error{
 		code: e.code,
 		msg:  fmt.Sprintf("%s: %s", e.msg, err.Error()),
-		err:  fmt.Errorf("%s: %w", e.msg, err),
+		err:  err,
 	}
 }
 
 func (e *Error) WithMessage(msg string) *Error {
+	if msg == "" {
+		return e
+	}
 	return &Error{
 		code: e.code,
 		msg:  fmt.Sprintf("%s: %s", e.msg, msg),
-		err:  fmt.Errorf("%w: %s", e, msg),
+		err:  e,
 	}
 }
 
 func (e *Error) Unwrap() error {
-	if e.err == nil {
-		return e
-	}
 	return e.err
 }
 
 func (e *Error) Is(target error) bool {
-	if e.err == nil {
-		var err *Error
-		if errors.As(target, &err) {
-			return e.code == err.code
-		}
-		return errors.Is(e, target)
+	if target == nil {
+		return false
 	}
-	return errors.Is(e.err, target)
+	if err, ok := target.(*Error); ok {
+		return e.code == err.code
+	}
+	if e.err != nil {
+		return errors.Is(e.err, target)
+	}
+	return false
 }
 
 func (e *Error) As(target any) bool {
-	if e.err == nil {
-		return errors.As(e, target)
+	if target == nil {
+		return false
 	}
-	return errors.As(e.err, target)
+	if errTarget, ok := target.(**Error); ok {
+		*errTarget = e
+		return true
+	}
+	if e.err != nil {
+		return errors.As(e.err, target)
+	}
+	return false
 }
