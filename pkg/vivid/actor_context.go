@@ -741,7 +741,8 @@ func (ctx *actorContext) AsPersistent() PersistenceContext {
 func (ctx *actorContext) withFatalRecover(handler func()) (recovered bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			ctx.Logger().Error("panic", log.Any("reason", r))
+			ctx.Logger().Error("panic", log.Any("reason", r), log.Stack("stack"))
+			debug.PrintStack()
 			switch ctx.message.(type) {
 			// 当发生此类消息如若作为致命错误会导致可能被监管策略反复重启从而引发不可预期的错误
 			case *OnKill:
