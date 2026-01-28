@@ -112,6 +112,8 @@ func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
 // 该结构体随着 ActorSystem 的创建流程被逐步填充，所有配置项均应通过 ActorSystemOption 配置函数进行设置。
 // 增加新配置时，只需在此结构体内扩展字段，能够保证向后兼容与良好的扩展性。
 type ActorSystemOptions struct {
+	RemotingOptions ActorSystemRemotingOptions
+
 	// Context 指定 ActorSystem 的上下文。
 	// 若未指定，则使用默认的上下文。
 	Context context.Context
@@ -264,7 +266,7 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 	}
 }
 
-// WithRemoting 提供 ActorSystemOption，用于配置远程通信组件的监听及广告地址。
+// WithActorSystemRemoting 提供 ActorSystemOption，用于配置远程通信组件的监听及广告地址。
 //
 // 注意：如果需要跨网络进行消息序列化，必须通过 WithCodec 显式指定 Codec，
 //
@@ -278,7 +280,7 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 // 参数：
 //   - bindAddr: string，必选，远程 Listener 的本地绑定地址（如 TCP/UDP 地址）。
 //   - advertiseAddr: ...string，可选，对外广告地址（第一个参数有效），否则默认使用 bindAddr。
-func WithRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
+func WithActorSystemRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		opts.RemotingBindAddress = bindAddr
 		if len(advertiseAddr) > 0 {
@@ -292,7 +294,7 @@ func WithRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
 	}
 }
 
-// WithCodec 提供 ActorSystemOption，用于配置远程消息的序列化与反序列化 Codec。
+// WithActorSystemCodec 提供 ActorSystemOption，用于配置远程消息的序列化与反序列化 Codec。
 //
 // 如果希望 ActorSystem 支持跨网络或分布式消息传递，必须通过本选项显式设置 Codec，
 // 否则需要对所有自定义消息类型调用 RegisterCustomMessage 注册对应的消息读写器。
@@ -300,11 +302,79 @@ func WithRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
 //
 // 参数：
 //   - codec: Codec 实例，必需用于远程消息序列化；若为 nil 会 panic。
-func WithCodec(codec Codec) ActorSystemOption {
+func WithActorSystemCodec(codec Codec) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		if codec == nil {
 			panic("ActorSystem Codec (WithCodec) must not be nil: required for cross-network message serialization or register custom message readers/writers with RegisterCustomMessage.")
 		}
 		opts.RemotingCodec = codec
+	}
+}
+
+// ActorSystemRemotingConnectionReadFailedHandler 定义远程连接读取失败的处理器接口。
+// 实现该接口的类型可用于自定义当系统检测到远程连接读取操作发生错误时的处理逻辑，例如网络异常、对端断开连接等，
+// 以实现自定义的重试、报警或容错策略。
+//
+// 方法说明：
+//   - HandleRemotingConnectionReadFailed: 当远程连接读取失败时被调用；
+//   - fatal: 表示此次错误是否为致命错误，若为 true 通常需要采取断开连接、关闭 ActorSystem 或自定义降级策略；
+//   - err:   捕获到的具体错误对象；
+//
+// 返回值：对于非致命错误（fatal=false），若返回非 nil error，系统会将当前远程连接停止，并将该 error 作为停止原因(StopReason)。
+//   - 若 fatal=true，error 作为致命错误处理（如关闭整个 ActorSystem）；
+//   - 可返回 nil 跳过后续处理。
+type ActorSystemRemotingConnectionReadFailedHandler interface {
+	HandleRemotingConnectionReadFailed(fatal bool, err error) error
+}
+
+// ActorSystemRemotingConnectionReadFailedHandlerFN 是适配函数式处理器的类型。
+// 允许使用函数直接实现 ActorSystemRemotingConnectionReadFailedHandler 接口，提升易用性和灵活性。
+type ActorSystemRemotingConnectionReadFailedHandlerFN func(fatal bool, err error) error
+
+// HandleRemotingConnectionReadFailed 调用底层函数本体，实现接口契约。
+func (h ActorSystemRemotingConnectionReadFailedHandlerFN) HandleRemotingConnectionReadFailed(fatal bool, err error) error {
+	return h(fatal, err)
+}
+
+// ActorSystemRemotingOption 定义一个用来配置 ActorSystemRemotingOptions 的函数签名。
+// 开发者可通过一组链式 Option 函数灵活配置远程通信相关的高级参数，实现高度可扩展的定制能力。
+type ActorSystemRemotingOption func(options *ActorSystemRemotingOptions)
+
+// ActorSystemRemotingOptions 封装了 ActorSystem 远程通信组件在运行时的选项参数。
+// 新增远程相关的可扩展参数时，建议集中在本结构体内按需扩展，以实现更好的向前兼容和配置集中管理。
+type ActorSystemRemotingOptions struct {
+	// ConnectionReadFailedHandler 用于处理系统级的远程连接读取失败事件。
+	// 可设置为自定义实现，或使用 ActorSystemRemotingConnectionReadFailedHandlerFN。
+	ConnectionReadFailedHandler ActorSystemRemotingConnectionReadFailedHandler
+}
+
+// WithActorSystemRemotingOptions 返回一个 ActorSystemOption，用于批量配置 ActorSystem 远程通信的高级选项。
+//
+// 用法说明：
+//   - 首个参数为一个 ActorSystemRemotingOptions 结构体，用于初始化远程选项的默认值；
+//   - 其余可变参数为 ActorSystemRemotingOption 函数，可链式定制具体配置；
+//   - 推荐通过该方法集中配置包括远程异常、错误处理、重连、连接池等扩展能力。
+//
+// 典型用法：
+//
+//	WithActorSystemRemotingOptions(
+//	    ActorSystemRemotingOptions{
+//	        ConnectionReadFailedHandler: myHandler,
+//	    },
+//	    func(opt *ActorSystemRemotingOptions) { /* 其它自定义扩展 */ },
+//	)
+//
+// 参数：
+//   - options:            远程通信选项的初始配置。
+//   - opts ...ActorSystemRemotingOption: 可选参数，链式扩展远程通信选项。
+//
+// 返回值：
+//   - ActorSystemOption:  可传给 NewActorSystem 或其它配置参数的 Option 函数。
+func WithActorSystemRemotingOptions(options ActorSystemRemotingOptions, opts ...ActorSystemRemotingOption) ActorSystemOption {
+	return func(o *ActorSystemOptions) {
+		o.RemotingOptions = options
+		for _, opt := range opts {
+			opt(&o.RemotingOptions)
+		}
 	}
 }

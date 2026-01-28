@@ -63,7 +63,7 @@ type System struct {
 }
 
 // HandleRemotingEnvelop implements remoting.NetworkEnvelopHandler.
-func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath string, messageInstance any) {
+func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath string, messageInstance any) error {
 	var agent, sender, receiver *Ref
 	if agentAddr != "" {
 		// Addr 不为空就一定存在 Path
@@ -71,26 +71,23 @@ func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, sender
 		agent, err = NewRef(agentAddr, agentPath)
 		if err != nil {
 			s.Logger().Warn("invalid agent ref", log.String("address", agentAddr), log.String("path", agentPath), log.Any("err", err))
+			return fmt.Errorf("%w: invalid agent ref, %s/%s", err, agentAddr, agentPath)
 		}
 	}
 	var err error
 	sender, err = NewRef(senderAddr, senderPath)
 	if err != nil {
 		s.Logger().Warn("invalid sender ref", log.String("address", senderAddr), log.String("path", senderPath), log.Any("err", err))
-		return
+		return fmt.Errorf("%w: invalid sender ref, %s/%s", err, senderAddr, senderPath)
 	}
 	receiver, err = NewRef(receiverAddr, receiverPath)
 	if err != nil {
 		s.Logger().Warn("invalid receiver ref", log.String("address", receiverAddr), log.String("path", receiverPath), log.Any("err", err))
-		return
+		return fmt.Errorf("%w: invalid receiver ref, %s/%s", err, receiverAddr, receiverPath)
 	}
 	receiverMailbox := s.findMailbox(receiver)
 	receiverMailbox.Enqueue(mailbox.NewEnvelop(system, sender, receiver, messageInstance).WithAgent(agent))
-}
-
-func (s *System) HandleEnvelop(envelop vivid.Envelop) {
-	receiverMailbox := s.findMailbox(envelop.Sender().(*Ref))
-	receiverMailbox.Enqueue(envelop)
+	return nil
 }
 
 func (s *System) Logger() log.Logger {
@@ -106,30 +103,33 @@ func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid
 
 func (s *System) Start() error {
 	if !atomic.CompareAndSwapInt32(&s.status, ready, start) {
-		s.Logger().Warn("actor system already started or stopped, ignore start")
-		return nil
+		s.Logger().Warn("actor system already started")
+		return vivid.ErrorActorSystemAlreadyStarted
 	}
 	s.Logger().Debug("actor system starting")
 
-	if err := chain.New(chain.WithContext(s.options.Context)).
+	if startErr := chain.New(chain.WithContext(s.options.Context)).
 		Append(systemChains.spawnGuardActor(s)).
 		Append(systemChains.initializeMetrics(s)).
 		Append(systemChains.initializeRemoting(s)).
-		Run(); err != nil {
-		s.Logger().Error("actor system start failed", log.Any("err", err))
-		err = s.Stop(s.options.StopTimeout)
-		if err != nil {
-			return err
+		Run(); startErr != nil {
+		s.Logger().Error("actor system start failed", log.Any("err", startErr))
+		stopErr := s.Stop(s.options.StopTimeout)
+		if stopErr != nil {
+			s.Logger().Error("actor system start failed, and stop failed", log.Any("err", stopErr))
+			return vivid.ErrorActorSystemStartFailed.With(stopErr)
 		}
-		return fmt.Errorf("actor system start failed, and stop failed: %w", err)
+		return vivid.ErrorActorSystemStartFailed.With(startErr)
 	}
+
+	s.Logger().Debug("actor system started")
 	return nil
 }
 
 func (s *System) Stop(timeout ...time.Duration) error {
 	if !atomic.CompareAndSwapInt32(&s.status, start, stop) {
-		s.Logger().Warn("actor system already stopped, ignore stop")
-		return nil
+		s.Logger().Warn("actor system already stopped")
+		return vivid.ErrorActorSystemAlreadyStopped
 	}
 
 	var stopTimeout = s.options.StopTimeout
@@ -138,18 +138,19 @@ func (s *System) Stop(timeout ...time.Duration) error {
 	}
 
 	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
-	s.Context.Kill(s.Context.Ref(), true, "actor system stop")
-
-	ctx, cancel := context.WithTimeout(s.options.Context, stopTimeout)
-	defer cancel()
-	select {
-	case <-s.guardClosedSignal:
-		cancel()
-	case <-ctx.Done():
-		s.actorContexts.Range(func(key, value any) bool {
-			return true
-		})
-		return fmt.Errorf("actor system stop timeout, %w", ctx.Err())
+	if s.Context != nil {
+		s.Context.Kill(s.Context.Ref(), true, "actor system stop")
+		ctx, cancel := context.WithTimeout(s.options.Context, stopTimeout)
+		defer cancel()
+		select {
+		case <-s.guardClosedSignal:
+			cancel()
+		case <-ctx.Done():
+			s.actorContexts.Range(func(key, value any) bool {
+				return true
+			})
+			return vivid.ErrorActorSystemStopFailed.With(ctx.Err())
+		}
 	}
 
 	// 清理调度器
@@ -184,9 +185,15 @@ func (s *System) FindActorRef(actorRef string) (vivid.ActorRef, error) {
 		return nil, err
 	}
 	if ref.GetAddress() != s.Ref().GetAddress() {
-		return nil, vivid.ErrorActorRefAddressMismatch
+		return nil, vivid.ErrorNotFound
 	}
-	return ref, nil
+
+	ctx, _ := s.actorContexts.Load(ref.GetPath())
+	if v, ok := ctx.(*Context); ok {
+		return v.ref, nil
+	}
+
+	return nil, vivid.ErrorNotFound
 }
 
 func (s *System) Metrics() metrics.Metrics {

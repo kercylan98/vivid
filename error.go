@@ -18,10 +18,30 @@ var (
 	// 常见于查询不存在的资源时。
 	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
 	ErrorNotFound = RegisterError(100000, "not found")
+
+	// ErrorActorSystemAlreadyStarted 表示已经启动的错误。
+	// 常见于系统已经启动时，重复调用 Start 方法时。
+	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
+	ErrorActorSystemAlreadyStarted = RegisterError(100001, "actor system already started")
+
+	// ErrorActorSystemAlreadyStopped 表示已经停止的错误。
+	// 常见于系统已经停止时，重复调用 Stop 方法时。
+	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
+	ErrorActorSystemAlreadyStopped = RegisterError(100002, "actor system already stopped")
+
+	// ErrorActorSystemStartFailed 表示启动失败的错误。
+	// 常见于系统启动失败时，返回的错误。
+	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
+	ErrorActorSystemStartFailed = RegisterError(100003, "actor system start failed")
+
+	// ErrorActorSystemStopFailed 表示停止失败的错误。
+	// 常见于系统停止失败时，返回的错误。
+	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
+	ErrorActorSystemStopFailed = RegisterError(100004, "actor system stop failed")
 )
 
 var (
-	// ErrFutureTimeout 表示 Future 等待超时异常。
+	// ErrorFutureTimeout 表示 Future 等待超时异常。
 	// 常见于调用 Future.Result()/Wait() 时，在指定的超时时间内未等到目标应答消息，导致操作超时。
 	// 业务代码可通过判定该错误，实现超时兜底、重试机制等。
 	ErrorFutureTimeout = RegisterError(110000, "future timeout")
@@ -38,44 +58,48 @@ var (
 	// ErrorFutureInvalid 表示 Future 无效的错误。
 	// 当 Future 被创建时，传入的 timeout 参数不合法时抛出该异常。
 	ErrorFutureInvalid = RegisterError(110003, "future invalid")
+
+	// ErrorInvalidMessageLength 表示消息长度不合法的错误。
+	// 当消息长度不合法时抛出该异常。
+	ErrorInvalidMessageLength = RegisterError(110004, "invalid message length")
+
+	// ErrorReadMessageBufferFailed 表示读取消息缓冲区失败时的错误。
+	// 当读取消息缓冲区失败时抛出该异常。
+	ErrorReadMessageBufferFailed = RegisterError(110005, "read message buffer failed")
 )
 
 var (
-	// ErrorJobNotFound 表示调度器中未找到指定 Job 的错误。
-	// 常用于取消、暂停或恢复任务时目标任务不存在的场景。
-	ErrorJobNotFound = RegisterError(120000, "job not found")
-
 	// ErrorIllegalArgument 表示传递给某方法或构造器的参数不合法。
 	// 例如配置无效参数、必需参数缺失等场景。
-	ErrorIllegalArgument = RegisterError(120001, "illegal argument")
+	ErrorIllegalArgument = RegisterError(120000, "illegal argument")
 
 	// ErrorCronParse 表示解析 Cron 表达式失败的错误。
 	// 常用于调度任务配置不正确的 cron 表达式时。
-	ErrorCronParse = RegisterError(120002, "parse cron expression")
+	ErrorCronParse = RegisterError(120001, "parse cron expression")
 
 	// ErrorTriggerExpired 表示触发器已过期或不可用的错误。
 	// 通常用于任务调度触发超出有效期等场景。
-	ErrorTriggerExpired = RegisterError(120003, "trigger has expired")
+	ErrorTriggerExpired = RegisterError(120002, "trigger has expired")
 
 	// ErrorIllegalState 表示操作违背当前状态机或上下文逻辑的错误。
 	// 例如状态变更非法、资源不可用等场景。
-	ErrorIllegalState = RegisterError(120004, "illegal state")
+	ErrorIllegalState = RegisterError(120003, "illegal state")
 
 	// ErrorQueueEmpty 表示队列为空导致无法继续操作的异常。
 	// 常用于队列消费、任务弹出、资源获取等为空时。
-	ErrorQueueEmpty = RegisterError(120005, "queue is empty")
+	ErrorQueueEmpty = RegisterError(120004, "queue is empty")
 
 	// ErrorJobAlreadyExists 表示尝试注册或调度一个已存在的任务时的异常。
-	ErrorJobAlreadyExists = RegisterError(120006, "job already exists")
+	ErrorJobAlreadyExists = RegisterError(120005, "job already exists")
 
 	// ErrorJobIsSuspended 表示对已处于挂起状态的 Job 执行挂起等操作时的异常。
-	ErrorJobIsSuspended = RegisterError(120007, "job is suspended")
+	ErrorJobIsSuspended = RegisterError(120006, "job is suspended")
 
 	// ErrorJobIsActive 表示对已处于活动状态的 Job 执行激活等操作时的异常。
-	ErrorJobIsActive = RegisterError(120008, "job is active")
+	ErrorJobIsActive = RegisterError(120007, "job is active")
 
 	// ErrorActorRefAddressMismatch 表示 ActorRef 地址不匹配的错误。
-	ErrorActorRefAddressMismatch = RegisterError(120009, "actor ref address mismatch")
+	ErrorActorRefAddressMismatch = RegisterError(120008, "actor ref address mismatch")
 )
 
 var (

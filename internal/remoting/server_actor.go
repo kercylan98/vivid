@@ -20,8 +20,9 @@ var (
 type startAcceptor struct{}
 
 // NewServerActor 创建新的服务器
-func NewServerActor(bindAddr string, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler) *ServerActor {
+func NewServerActor(bindAddr string, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions) *ServerActor {
 	sa := &ServerActor{
+		options:           options,
 		bindAddr:          bindAddr,
 		advertiseAddr:     advertiseAddr,
 		codec:             codec,
@@ -35,17 +36,18 @@ func NewServerActor(bindAddr string, advertiseAddr string, codec vivid.Codec, en
 
 // ServerActor 管理TCP服务器
 type ServerActor struct {
-	bindAddr                 string                         // TCP服务器绑定的本地监听地址（如 "0.0.0.0:8080"），只绑定本地，不对外暴露
-	advertiseAddr            string                         // 对外宣称的服务地址（如 "public.ip:port"），用于服务注册和远程节点发现
-	acceptorRef              vivid.ActorRef                 // 当前正在负责被动接收和管理新 TCP 连接的 Acceptor Actor 的引用
-	acceptorListener         net.Listener                   // 必须持有的 listener，避免 Acceptor 阻塞在 listener.Accept() 时无法正常退出
-	backoff                  *utils.ExponentialBackoff      // 指数退避器，用于监听端口失败时的重试延迟策略，防止过于频繁重试导致资源浪费
-	backoffTimer             *time.Timer                    // 指数退避重试定时器，用于重试启动服务器监听
-	acceptConnections        map[string]*tcpConnectionActor // 当前已建立并被服务器管理的连接集合，key为连接唯一标识
-	codec                    vivid.Codec                    // 消息编解码器，实现消息的序列化与反序列化
-	envelopHandler           NetworkEnvelopHandler          // 网络消息处理器，处理接收到的远程消息
-	remotingMailboxCentral   *MailboxCentral                // 远程邮箱中心，用于转发和分发网络层消息的核心模块
-	remotingMailboxCentralWG sync.WaitGroup                 // 用于等待远程邮箱中心初始化完成，保证远程相关操作在其准备好后再进行
+	options                  vivid.ActorSystemRemotingOptions // 远程通信选项
+	bindAddr                 string                           // TCP服务器绑定的本地监听地址（如 "0.0.0.0:8080"），只绑定本地，不对外暴露
+	advertiseAddr            string                           // 对外宣称的服务地址（如 "public.ip:port"），用于服务注册和远程节点发现
+	acceptorRef              vivid.ActorRef                   // 当前正在负责被动接收和管理新 TCP 连接的 Acceptor Actor 的引用
+	acceptorListener         net.Listener                     // 必须持有的 listener，避免 Acceptor 阻塞在 listener.Accept() 时无法正常退出
+	backoff                  *utils.ExponentialBackoff        // 指数退避器，用于监听端口失败时的重试延迟策略，防止过于频繁重试导致资源浪费
+	backoffTimer             *time.Timer                      // 指数退避重试定时器，用于重试启动服务器监听
+	acceptConnections        map[string]*tcpConnectionActor   // 当前已建立并被服务器管理的连接集合，key为连接唯一标识
+	codec                    vivid.Codec                      // 消息编解码器，实现消息的序列化与反序列化
+	envelopHandler           NetworkEnvelopHandler            // 网络消息处理器，处理接收到的远程消息
+	remotingMailboxCentral   *MailboxCentral                  // 远程邮箱中心，用于转发和分发网络层消息的核心模块
+	remotingMailboxCentralWG sync.WaitGroup                   // 用于等待远程邮箱中心初始化完成，保证远程相关操作在其准备好后再进行
 }
 
 func (s *ServerActor) OnReceive(ctx vivid.ActorContext) {
@@ -103,7 +105,7 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 	}
 	ctx.Logger().Info("server listener started", log.String("bind_addr", s.acceptorListener.Addr().String()))
 
-	acceptor := newServerAcceptActor(s.acceptorListener, s.advertiseAddr, s.envelopHandler, s.codec)
+	acceptor := newServerAcceptActor(s.acceptorListener, s.advertiseAddr, s.envelopHandler, s.codec, s.options)
 	s.acceptorRef, err = ctx.ActorOf(acceptor, vivid.WithActorName("acceptor"))
 	if err != nil {
 		// 此步不应产生错误，如有则为系统重大变更，需整体review
@@ -120,7 +122,7 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 
 func (s *ServerActor) onLaunch(ctx vivid.ActorContext) {
 	// 可能存在 Actor 还未启动完成旧投递网络消息，因此需要使用 WaitGroup 等待初始化完成
-	s.remotingMailboxCentral = newMailboxCentral(ctx.Ref(), ctx, s.codec, ctx.EventStream())
+	s.remotingMailboxCentral = newMailboxCentral(ctx.Ref(), ctx, s.codec, ctx.EventStream(), s.options)
 	s.remotingMailboxCentralWG.Done()
 
 	// 投递 Acceptor 作为启动消息，实现重试启动
@@ -148,11 +150,11 @@ func (s *ServerActor) onConnection(ctx vivid.ActorContext, connection *tcpConnec
 
 	// 发布连接建立成功事件
 	ctx.EventStream().Publish(ctx, ves.RemotingConnectionEstablishedEvent{
-		ConnectionRef:  ref,
-		RemoteAddr:     connection.conn.RemoteAddr().String(),
-		LocalAddr:      connection.conn.LocalAddr().String(),
-		AdvertiseAddr:  connection.advertiseAddr,
-		IsClient:       connection.client,
+		ConnectionRef: ref,
+		RemoteAddr:    connection.conn.RemoteAddr().String(),
+		LocalAddr:     connection.conn.LocalAddr().String(),
+		AdvertiseAddr: connection.advertiseAddr,
+		IsClient:      connection.client,
 	})
 }
 
@@ -198,7 +200,7 @@ func (s *ServerActor) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) 
 		// 如果是维护的连接销毁，从集合中移除
 		tcpConn := s.acceptConnections[message.Ref.GetPath()]
 		delete(s.acceptConnections, message.Ref.GetPath())
-		
+
 		// 发布连接关闭事件
 		ctx.EventStream().Publish(ctx, ves.RemotingConnectionClosedEvent{
 			ConnectionRef: message.Ref,
@@ -208,7 +210,7 @@ func (s *ServerActor) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) 
 			IsClient:      tcpConn.client,
 			Reason:        "connection actor killed",
 		})
-		
+
 		if err := tcpConn.Close(); err != nil {
 			ctx.Logger().Warn("server accept connect close fail",
 				log.String("advertise_addr", tcpConn.advertiseAddr),

@@ -44,7 +44,13 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 			return nil
 		}
 
-		system.remotingServer = remoting.NewServerActor(system.options.RemotingBindAddress, system.options.RemotingAdvertiseAddress, system.options.RemotingCodec, system)
+		system.remotingServer = remoting.NewServerActor(
+			system.options.RemotingBindAddress,
+			system.options.RemotingAdvertiseAddress,
+			system.options.RemotingCodec,
+			system, // NetworkEnvelopHandler 实现
+			system.options.RemotingOptions,
+		)
 		_, err = system.ActorOf(system.remotingServer, vivid.WithActorName("@remoting"))
 		return err
 	})

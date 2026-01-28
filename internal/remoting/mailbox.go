@@ -38,8 +38,17 @@ var (
 	_ vivid.Mailbox = &Mailbox{}
 )
 
-func newMailbox(advertiseAddress string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, actorLiaison vivid.ActorLiaison, remotingServerRef vivid.ActorRef, eventStream vivid.EventStream) *Mailbox {
+func newMailbox(
+	advertiseAddress string,
+	codec vivid.Codec,
+	envelopHandler NetworkEnvelopHandler,
+	actorLiaison vivid.ActorLiaison,
+	remotingServerRef vivid.ActorRef,
+	eventStream vivid.EventStream,
+	options vivid.ActorSystemRemotingOptions,
+) *Mailbox {
 	return &Mailbox{
+		options:           options,
 		advertiseAddress:  advertiseAddress,
 		sf:                &singleflight.Group{},
 		envelopHandler:    envelopHandler,
@@ -52,6 +61,7 @@ func newMailbox(advertiseAddress string, codec vivid.Codec, envelopHandler Netwo
 }
 
 type Mailbox struct {
+	options           vivid.ActorSystemRemotingOptions
 	advertiseAddress  string
 	connections       [poolSize]*tcpConnectionActor
 	connectionLock    sync.RWMutex
@@ -120,17 +130,19 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 								logger: ctx.Logger(),
 							}
 							m.eventStream.Publish(eventCtx, ves.RemotingConnectionFailedEvent{
-								RemoteAddr:  m.advertiseAddress,
+								RemoteAddr:    m.advertiseAddress,
 								AdvertiseAddr: m.advertiseAddress,
-								Error:      err,
-								RetryCount: retryCount,
+								Error:         err,
+								RetryCount:    retryCount,
 							})
 						}
 					}
 					return nil, err
 				}
 
-				tcpConn := newTCPConnectionActor(true, conn, m.advertiseAddress, m.codec, m.envelopHandler)
+				tcpConn := newTCPConnectionActor(true, conn, m.advertiseAddress, m.codec, m.envelopHandler,
+					withTCPConnectionActorReadFailedHandler(m.options.ConnectionReadFailedHandler),
+				)
 				if err = m.actorLiaison.Ask(m.remotingServerRef, tcpConn).Wait(); err != nil {
 					closeErr := tcpConn.Close()
 					if closeErr != nil {
@@ -153,7 +165,7 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 					}
 					return nil, err
 				}
-				
+
 				// 尝试获取连接 Actor 的引用（通过 Ask 的回复）
 				// 注意：这里无法直接获取，因为 Ask 返回的是 nil
 				// 连接建立事件会在 server_actor.go 的 onConnection 中发布
@@ -240,7 +252,7 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 			conn = nil
 			return false, err
 		}
-		
+
 		// 发布消息发送成功事件
 		if m.eventStream != nil {
 			if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
@@ -258,11 +270,11 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 					ConnectionRef: nil, // Mailbox 中无法直接获取 ConnectionRef
 					RemoteAddr:    m.advertiseAddress,
 					MessageType:   messageType,
-					MessageSize:    len(data),
+					MessageSize:   len(data),
 				})
 			}
 		}
-		
+
 		return true, nil
 	})
 

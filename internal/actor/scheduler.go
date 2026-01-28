@@ -85,7 +85,7 @@ func schedulerErrorConvert(err error) error {
 	}
 	switch {
 	case errors.Is(err, quartz.ErrJobNotFound):
-		return vivid.ErrorJobNotFound.WithMessage(err.Error())
+		return vivid.ErrorNotFound.WithMessage(err.Error())
 	case errors.Is(err, quartz.ErrCronParse):
 		return vivid.ErrorCronParse.WithMessage(err.Error())
 	case errors.Is(err, quartz.ErrTriggerExpired):
@@ -182,7 +182,7 @@ func (s *Scheduler) Loop(receiver vivid.ActorRef, interval time.Duration, messag
 func (s *Scheduler) Cancel(reference string) error {
 	jobKey, ok := s.jobKeys[reference]
 	if !ok {
-		return vivid.ErrorJobNotFound.WithMessage(reference)
+		return vivid.ErrorNotFound.WithMessage(reference)
 	}
 	delete(s.jobKeys, reference)
 	if err := s.scheduler.DeleteJob(jobKey); err != nil {

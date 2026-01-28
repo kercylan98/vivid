@@ -12,8 +12,9 @@ var (
 	_ vivid.Actor = (*serverAcceptActor)(nil)
 )
 
-func newServerAcceptActor(listener net.Listener, advertiseAddr string, envelopHandler NetworkEnvelopHandler, codec vivid.Codec) *serverAcceptActor {
+func newServerAcceptActor(listener net.Listener, advertiseAddr string, envelopHandler NetworkEnvelopHandler, codec vivid.Codec, options vivid.ActorSystemRemotingOptions) *serverAcceptActor {
 	return &serverAcceptActor{
+		options:        options,
 		listener:       listener,
 		advertiseAddr:  advertiseAddr,
 		envelopHandler: envelopHandler,
@@ -23,10 +24,11 @@ func newServerAcceptActor(listener net.Listener, advertiseAddr string, envelopHa
 
 // serverAcceptActor 是专用于接收远程连接的 Actor
 type serverAcceptActor struct {
-	listener       net.Listener          // 监听器
-	advertiseAddr  string                // 对外宣称的服务地址
-	envelopHandler NetworkEnvelopHandler // 网络消息处理器
-	codec          vivid.Codec           // 外部跨进程消息编解码器
+	options        vivid.ActorSystemRemotingOptions // 远程通信选项
+	listener       net.Listener                     // 监听器
+	advertiseAddr  string                           // 对外宣称的服务地址
+	envelopHandler NetworkEnvelopHandler            // 网络消息处理器
+	codec          vivid.Codec                      // 外部跨进程消息编解码器
 }
 
 func (a *serverAcceptActor) OnReceive(ctx vivid.ActorContext) {
@@ -56,7 +58,10 @@ func (a *serverAcceptActor) onAccept(ctx vivid.ActorContext) {
 	}(a.listener)
 
 	// 由 ServerActor 负责管理连接
-	connActor := newTCPConnectionActor(false, conn, a.advertiseAddr, a.codec, a.envelopHandler)
+	connActor := newTCPConnectionActor(false, conn, a.advertiseAddr, a.codec, a.envelopHandler,
+		withTCPConnectionActorReadFailedHandler(a.options.ConnectionReadFailedHandler),
+	)
+
 	// 此处存在 GOLAND 误报，必须使用 defer 或匿名函数处理，否则将提示：Potential resource leak: ensure the resource is closed on all execution paths
 	func(connActor *tcpConnectionActor) {
 		if err = ctx.Ask(ctx.Parent(), connActor).Wait(); err != nil {

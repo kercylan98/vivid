@@ -15,7 +15,12 @@ import (
 	"github.com/kercylan98/vivid/pkg/ves"
 )
 
-func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler) *tcpConnectionActor {
+func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, options ...tcpConnectionActorOption) *tcpConnectionActor {
+	opts := &tcpConnectionActorOptions{}
+	for _, option := range options {
+		option(opts)
+	}
+
 	return &tcpConnectionActor{
 		client:         client,
 		conn:           conn,
@@ -25,8 +30,27 @@ func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, cod
 	}
 }
 
+type tcpConnectionActorOption func(options *tcpConnectionActorOptions)
+
+func withTCPConnectionActorOptions(options tcpConnectionActorOptions) tcpConnectionActorOption {
+	return func(opts *tcpConnectionActorOptions) {
+		*opts = options
+	}
+}
+
+func withTCPConnectionActorReadFailedHandler(handler vivid.ActorSystemRemotingConnectionReadFailedHandler) tcpConnectionActorOption {
+	return func(options *tcpConnectionActorOptions) {
+		options.readFailedHandler = handler
+	}
+}
+
+type tcpConnectionActorOptions struct {
+	readFailedHandler vivid.ActorSystemRemotingConnectionReadFailedHandler
+}
+
 // tcpConnectionActor TCP连接实现
 type tcpConnectionActor struct {
+	options        tcpConnectionActorOptions
 	conn           net.Conn
 	codec          vivid.Codec
 	envelopHandler NetworkEnvelopHandler
@@ -66,7 +90,16 @@ func (c *tcpConnectionActor) OnReceive(ctx vivid.ActorContext) {
 	case *vivid.OnLaunch:
 		c.onLaunch(ctx)
 	case net.Conn:
-		c.onReadConn(ctx)
+		// 消息读取失败仅作回调，不影响连接的正常使用
+		// 假设连接需要关闭，内部会自动关闭连接
+		if fatal, err := c.onReadConn(ctx); err != nil && c.options.readFailedHandler != nil {
+			// 当非致命错误时，可通过返回 error 来决定是否关闭 Actor
+			if err := c.options.readFailedHandler.HandleRemotingConnectionReadFailed(fatal, err); err != nil && !fatal {
+				ctx.Kill(ctx.Ref(), false, err.Error())
+			}
+		} else {
+			ctx.Logger().Warn("read connection failed", log.Bool("fatal", fatal), log.Any("err", err))
+		}
 	}
 }
 
@@ -75,7 +108,7 @@ func (c *tcpConnectionActor) onLaunch(ctx vivid.ActorContext) {
 	ctx.TellSelf(c.conn)
 }
 
-func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) {
+func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err error) {
 	reader := bufio.NewReader(c.conn)
 	lengthBuf := make([]byte, 4)
 	if _, err := io.ReadFull(reader, lengthBuf); err != nil {
@@ -89,13 +122,13 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) {
 			Reason:        fmt.Sprintf("read failed: %v", err),
 		})
 		ctx.Kill(ctx.Ref(), false, err.Error())
-		return
+		return true, err
 	}
 	msgLen := binary.BigEndian.Uint32(lengthBuf)
 	if msgLen == 0 || msgLen > 4*1024*1024 {
 		ctx.Logger().Warn("invalid message length", log.Int64("length", int64(msgLen)))
 		ctx.TellSelf(c.conn)
-		return
+		return false, vivid.ErrorInvalidMessageLength.WithMessage(fmt.Sprintf("length: %d", msgLen))
 	}
 	msgBuf := make([]byte, msgLen)
 	if _, err := io.ReadFull(reader, msgBuf); err != nil {
@@ -109,7 +142,7 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) {
 			Reason:        fmt.Sprintf("read message body failed: %v", err),
 		})
 		ctx.Kill(ctx.Ref(), false, err.Error())
-		return
+		return true, vivid.ErrorReadMessageBufferFailed.With(err)
 	}
 
 	if system,
@@ -125,7 +158,10 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) {
 			MessageSize:   int(msgLen),
 			Error:         err,
 		})
+		// 消息解码不影响连接的正常使用，继续监听连接
 		ctx.Logger().Warn("decode Remoting envelop failed", log.Any("err", err))
+		ctx.TellSelf(c.conn)
+		return false, nil
 	} else {
 		// 发布消息接收成功事件
 		messageType := "unknown"
@@ -139,10 +175,11 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) {
 			MessageSize:   int(msgLen),
 			ReceiverPath:  receiverPath,
 		})
-		c.envelopHandler.HandleRemotingEnvelop(system, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath, messageInstance)
+		// 即便是远程消息处理失败，也继续监听连接
+		err = c.envelopHandler.HandleRemotingEnvelop(system, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath, messageInstance)
+		ctx.TellSelf(c.conn)
+		return false, err
 	}
-
-	ctx.TellSelf(c.conn)
 }
 
 // Write 暴露给外部的并发安全的写入方法，用于写入消息到连接。
