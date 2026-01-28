@@ -26,6 +26,16 @@ import (
 type ActorSystem interface {
 	actorBasic // 内嵌 actorCore 接口，继承 Actor 系统基础能力
 
+	// Start 启动当前 ActorSystem 实例。
+	//
+	// 主要功能与行为说明：
+	//   - 调用后会启动 ActorSystem 及其全部托管的 Actor（包括根 Actor 及所有子 Actor）。
+	//   - 方法实现采用同步阻塞（blocking）方式，调用者会被挂起，直到所有 Actor 启动完成并返回。
+	//   - 启动流程包括初始化 ActorSystem 及其内部组件，如远程通信、指标收集等。
+	//   - 用于应用生命周期管理，可保障启动前所有未处理消息与状态持久化等任务优雅完成，防止资源泄漏及并发冲突。
+	//   - 支持可选的超时参数，用于控制启动过程的时间限制。若超时，系统会立即终止并返回错误。
+	Start() error
+
 	// Stop 优雅地停止当前 ActorSystem 实例。
 	//
 	// 主要功能与行为说明：
@@ -49,6 +59,9 @@ type ActorSystem interface {
 	//
 	// 用于把存储、传输的字符串形式 actor ref 转为可用的 ActorRef 对象。
 	FindActorRef(actorRef string) (ActorRef, error)
+
+	// ActorOf 该方法的效果与 ActorContext.ActorOf 相同，但是它是并发安全的。
+	ActorOf(actor Actor, options ...ActorOption) (ActorRef, error)
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。

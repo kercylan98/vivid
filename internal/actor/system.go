@@ -50,6 +50,7 @@ func newSystem(testSystem *TestSystem, options ...vivid.ActorSystemOption) *Syst
 
 type System struct {
 	*Context                                    // ActorSystem 本身就表示了根 Actor
+	actorOfLock       sync.Mutex                // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
 	testSystem        *TestSystem               // 测试系统
 	options           *vivid.ActorSystemOptions // 系统选项
 	actorContexts     sync.Map                  // 用于加速访问的 ActorContext 缓存（含有 Future）
@@ -94,6 +95,13 @@ func (s *System) HandleEnvelop(envelop vivid.Envelop) {
 
 func (s *System) Logger() log.Logger {
 	return s.options.Logger
+}
+
+func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {
+	s.actorOfLock.Lock()
+	defer s.actorOfLock.Unlock()
+
+	return s.Context.ActorOf(actor, options...)
 }
 
 func (s *System) Start() error {
