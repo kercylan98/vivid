@@ -30,8 +30,9 @@ func (c *_systemChains) initializeMetrics(system *System) chain.Chain {
 		} else {
 			system.metrics = metrics.NewDefaultMetrics()
 		}
-		metricsActor := metricsActor.NewActor(system.options.EnableMetricsUpdatedNotify)
-		if _, err := system.ActorOf(metricsActor, vivid.WithActorName("@metrics")); err != nil {
+		if system.options.EnableMetrics {
+			ma := metricsActor.NewActor(system.options.EnableMetricsUpdatedNotify)
+			_, err = system.ActorOf(ma, vivid.WithActorName("@metrics"))
 			return err
 		}
 		return nil

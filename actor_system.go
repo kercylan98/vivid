@@ -153,6 +153,20 @@ type ActorSystemOptions struct {
 	EnableMetrics bool
 }
 
+// WithActorSystemOptions 返回一个 ActorSystemOption，用于设置 ActorSystem 的选项。
+//
+// 用法场景：
+//   - 在构建 ActorSystem 时，通过该 Option 明确设置 ActorSystem 的选项。
+//   - 支持灵活的业务需求（如部分场景需要设置 ActorSystem 的选项，或测试环境下设置 ActorSystem 的选项）。
+//
+// 参数：
+//   - options: 期望设置的选项。
+func WithActorSystemOptions(options *ActorSystemOptions) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		*opts = *options
+	}
+}
+
 // WithActorSystemStopTimeout 返回一个 ActorSystemOption，用于指定 ActorSystem 停止操作的超时时间。
 //
 // 用法场景：
@@ -161,9 +175,13 @@ type ActorSystemOptions struct {
 //
 // 参数：
 //   - timeout: 期望设置的超时时间，仅当 timeout > 0 时生效（不允许零值或负值；零/负值时忽略该配置）。
+//
+// 其他：假设通过直接构建 ActorSystemOptions 的情况设置了 <= 0 的值，将为导致停止后立刻触发超时。
 func WithActorSystemStopTimeout(timeout time.Duration) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
-		opts.StopTimeout = timeout
+		if timeout > 0 {
+			opts.StopTimeout = timeout
+		}
 	}
 }
 

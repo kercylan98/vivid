@@ -38,6 +38,11 @@ var (
 	// 常见于系统停止失败时，返回的错误。
 	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
 	ErrorActorSystemStopFailed = RegisterError(100004, "actor system stop failed")
+
+	// ErrorActorSystemNotStarted 表示系统未启动的错误。
+	// 常见于系统未启动时，重复调用 Stop 方法时。
+	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
+	ErrorActorSystemNotStarted = RegisterError(100005, "actor system not started")
 )
 
 var (

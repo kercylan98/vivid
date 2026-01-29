@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/kercylan98/vivid"
@@ -13,6 +12,7 @@ import (
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/internal/scheduler"
+	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 )
@@ -60,6 +60,7 @@ type System struct {
 	metrics           metrics.Metrics           // 指标收集器
 	scheduler         *scheduler.Scheduler      // 调度器
 	status            int32                     // 系统状态
+	statusLock        sync.Mutex                // 系统状态锁
 }
 
 // HandleRemotingEnvelop implements remoting.NetworkEnvelopHandler.
@@ -102,24 +103,36 @@ func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid
 }
 
 func (s *System) Start() error {
-	if !atomic.CompareAndSwapInt32(&s.status, ready, start) {
-		s.Logger().Warn("actor system already started")
-		return vivid.ErrorActorSystemAlreadyStarted
+	var stateError = func(s *System) error {
+		s.statusLock.Lock()
+		defer s.statusLock.Unlock()
+		switch s.status {
+		case start:
+			s.Logger().Warn("actor system already started")
+			return vivid.ErrorActorSystemAlreadyStarted
+		case stop:
+			s.Logger().Warn("actor system already stopped")
+			return vivid.ErrorActorSystemAlreadyStopped
+		default:
+			s.status = start
+			return nil
+		}
+	}(s)
+	if stateError != nil {
+		return stateError
 	}
+
 	s.Logger().Debug("actor system starting")
 
-	if startErr := chain.New(chain.WithContext(s.options.Context)).
+	startErr := chain.New(chain.WithContext(s.options.Context)).
 		Append(systemChains.spawnGuardActor(s)).
 		Append(systemChains.initializeMetrics(s)).
 		Append(systemChains.initializeRemoting(s)).
-		Run(); startErr != nil {
+		Run()
+
+	if startErr != nil {
 		s.Logger().Error("actor system start failed", log.Any("err", startErr))
-		stopErr := s.Stop(s.options.StopTimeout)
-		if stopErr != nil {
-			s.Logger().Error("actor system start failed, and stop failed", log.Any("err", stopErr))
-			return vivid.ErrorActorSystemStartFailed.With(stopErr)
-		}
-		return vivid.ErrorActorSystemStartFailed.With(startErr)
+		return vivid.ErrorActorSystemStartFailed.With(s.Stop(s.options.StopTimeout))
 	}
 
 	s.Logger().Debug("actor system started")
@@ -127,16 +140,27 @@ func (s *System) Start() error {
 }
 
 func (s *System) Stop(timeout ...time.Duration) error {
-	if !atomic.CompareAndSwapInt32(&s.status, start, stop) {
-		s.Logger().Warn("actor system already stopped")
-		return vivid.ErrorActorSystemAlreadyStopped
+	// 将锁范围限定在函数内部校验状态，避免每次 return 都重复编写锁释放代码
+	var stateError = func(s *System) error {
+		s.statusLock.Lock()
+		defer s.statusLock.Unlock()
+		switch s.status {
+		case ready:
+			s.Logger().Warn("actor system not started")
+			return vivid.ErrorActorSystemNotStarted
+		case stop:
+			s.Logger().Warn("actor system already stopped")
+			return vivid.ErrorActorSystemAlreadyStopped
+		default:
+			s.status = stop
+			return nil
+		}
+	}(s)
+	if stateError != nil {
+		return stateError
 	}
 
-	var stopTimeout = s.options.StopTimeout
-	if len(timeout) > 0 && timeout[0] > 0 {
-		stopTimeout = timeout[0]
-	}
-
+	var stopTimeout = sugar.Max(sugar.FirstOrDefault(timeout, s.options.StopTimeout), 0)
 	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
 	if s.Context != nil {
 		s.Context.Kill(s.Context.Ref(), true, "actor system stop")
@@ -197,7 +221,7 @@ func (s *System) FindActorRef(actorRef string) (vivid.ActorRef, error) {
 }
 
 func (s *System) Metrics() metrics.Metrics {
-	if s.metrics == nil {
+	if !s.options.EnableMetrics {
 		s.Logger().Warn("metrics not enabled, returning temporary metrics collector, should use vivid.WithActorSystemEnableMetrics to enable metrics")
 		return metrics.NewDefaultMetrics()
 	}

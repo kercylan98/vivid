@@ -201,7 +201,8 @@ func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
 
 func (c *Context) tell(system bool, recipient vivid.ActorRef, message vivid.Message) {
 	envelop := mailbox.NewEnvelop(system, c.ref, recipient, message)
-	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
+	ref, _ := recipient.(*Ref)
+	receiverMailbox := c.system.findMailbox(ref)
 	receiverMailbox.Enqueue(envelop)
 }
 
