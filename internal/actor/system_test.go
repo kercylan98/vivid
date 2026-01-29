@@ -97,6 +97,11 @@ func TestSystem_Start(t *testing.T) {
 		system := actor.NewSystem(vivid.WithActorSystemRemoting("127.0.0.1"))
 		assert.ErrorIs(t, system.Start(), vivid.ErrorActorSystemStartFailed)
 	})
+	t.Run("stop after", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		assert.NoError(t, system.Stop())
+		assert.ErrorIs(t, system.Start(), vivid.ErrorActorSystemAlreadyStopped)
+	})
 }
 
 func TestSystem_Stop(t *testing.T) {
@@ -136,6 +141,11 @@ func TestSystem_Stop(t *testing.T) {
 		system := actor.NewTestSystem(t)
 		assert.NoError(t, system.Stop())
 		assert.ErrorIs(t, system.Stop(), vivid.ErrorActorSystemAlreadyStopped)
+	})
+
+	t.Run("not start", func(t *testing.T) {
+		system := actor.NewSystem()
+		assert.ErrorIs(t, system.Stop(), vivid.ErrorActorSystemNotStarted)
 	})
 }
 
@@ -183,30 +193,44 @@ func TestSystem_RemotingAsk(t *testing.T) {
 }
 
 func TestSystem_Metrics(t *testing.T) {
-	system := actor.NewTestSystem(t, vivid.WithActorSystemEnableMetrics(true))
-	defer func() {
-		assert.NoError(t, system.Stop())
-	}()
+	t.Run("metrics", func(t *testing.T) {
+		system := actor.NewTestSystem(t, vivid.WithActorSystemEnableMetrics(true))
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-		switch ctx.Message().(type) {
-		case *vivid.OnLaunch:
-			ctx.Metrics().Counter("test_counter").Inc()
-			ctx.Metrics().Gauge("test_gauge").Inc()
-			ctx.Metrics().Histogram("test_histogram").Observe(1)
-			wg.Done()
-		}
-	}))
-	assert.NoError(t, err)
-	assert.NotNil(t, ref)
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.Metrics().Counter("test_counter").Inc()
+				ctx.Metrics().Gauge("test_gauge").Inc()
+				ctx.Metrics().Histogram("test_histogram").Observe(1)
+				wg.Done()
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
 
-	wg.Wait()
-	snapshot := system.Metrics().Snapshot()
-	assert.Equal(t, uint64(1), snapshot.Counters["test_counter"])
-	assert.Equal(t, int64(1), snapshot.Gauges["test_gauge"])
-	assert.Equal(t, metrics.HistogramSnapshot{Count: 0x1, Sum: 1, Min: 1, Max: 1, Values: []float64{1}}, snapshot.Histograms["test_histogram"])
+		wg.Wait()
+		snapshot := system.Metrics().Snapshot()
+		assert.Equal(t, uint64(1), snapshot.Counters["test_counter"])
+		assert.Equal(t, int64(1), snapshot.Gauges["test_gauge"])
+		assert.Equal(t, metrics.HistogramSnapshot{Count: 0x1, Sum: 1, Min: 1, Max: 1, Values: []float64{1}}, snapshot.Histograms["test_histogram"])
+	})
+
+	t.Run("metrics disabled", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		snapshot := system.Metrics().Snapshot()
+		assert.Equal(t, 0, len(snapshot.Histograms))
+		assert.Equal(t, 0, len(snapshot.Gauges))
+		assert.Equal(t, 0, len(snapshot.Counters))
+	})
 }
 
 func TestSystem_HandleRemotingEnvelop_InvalidAgentRef(t *testing.T) {

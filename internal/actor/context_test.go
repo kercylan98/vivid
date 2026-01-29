@@ -89,23 +89,34 @@ func TestContext_RevertBehavior(t *testing.T) {
 }
 
 func TestContext_Tell(t *testing.T) {
-	system := actor.NewTestSystem(t)
-	defer func() {
-		assert.NoError(t, system.Stop())
-	}()
+	t.Run("tell", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-		switch ctx.Message().(type) {
-		case int:
-			wg.Done()
-		}
-	}))
-	assert.NoError(t, err)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case int:
+				wg.Done()
+			}
+		}))
+		assert.NoError(t, err)
 
-	system.Tell(ref, 1)
-	wg.Wait()
+		system.Tell(ref, 1)
+		wg.Wait()
+	})
+
+	t.Run("tell nil ref", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		system.Tell(nil, 0)
+	})
 }
 
 func BenchmarkContext_Tell(b *testing.B) {
