@@ -6,6 +6,12 @@ import (
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
+var (
+	_ PrelaunchActor  = (*prelaunchActor)(nil)
+	_ PreRestartActor = (*preRestartActor)(nil)
+	_ RestartedActor  = (*restartedActor)(nil)
+)
+
 // Actor 定义了所有 Actor 的核心接口。
 //
 // OnReceive 方法用于接收并处理传递给该 Actor 的消息。
@@ -44,6 +50,26 @@ type PrelaunchActor interface {
 	OnPrelaunch(ctx PrelaunchContext) error
 }
 
+type prelaunchActor struct {
+	Actor
+	prelaunchHandler func(ctx PrelaunchContext) error
+}
+
+func (a *prelaunchActor) OnPrelaunch(ctx PrelaunchContext) error {
+	return a.prelaunchHandler(ctx)
+}
+
+// NewPrelaunchActor 用于快速创建一个带有预启动逻辑（Prelaunch）的 Actor 实例。
+// prelaunchHandler 参数用于指定在 Actor 正式启动前需要执行的初始化逻辑，通常可用于依赖注入、配置校验、资源预加载等场景。
+// actor 参数为实际的业务 Actor 实现。
+// 返回值为实现了 PrelaunchActor 接口的 Actor 实例，系统会在启动 Actor 时优先执行 prelaunchHandler，若返回错误则中断启动。
+func NewPrelaunchActor(prelaunchHandler func(ctx PrelaunchContext) error, actor Actor) Actor {
+	return &prelaunchActor{
+		Actor:            actor,
+		prelaunchHandler: prelaunchHandler,
+	}
+}
+
 // PreRestartActor 扩展了 Actor 接口，允许 Actor 在重启前执行预处理逻辑。
 
 // OnPreRestart 实现可用于依赖注入、资源预加载、配置校验等初始化前操作。
@@ -54,10 +80,50 @@ type PreRestartActor interface {
 	OnPreRestart(ctx RestartContext) error
 }
 
+type preRestartActor struct {
+	Actor
+	preRestartHandler func(ctx RestartContext) error
+}
+
+func (a *preRestartActor) OnPreRestart(ctx RestartContext) error {
+	return a.preRestartHandler(ctx)
+}
+
+// NewPreRestartActor 用于快速创建一个带有预重启逻辑（PreRestart）的 Actor 实例。
+// preRestartHandler 参数用于指定在 Actor 重启前需要执行的初始化逻辑，通常可用于依赖注入、配置校验、资源预加载等场景。
+// actor 参数为实际的业务 Actor 实现。
+// 返回值为实现了 PreRestartActor 接口的 Actor 实例，系统会在重启 Actor 时优先执行 preRestartHandler，若返回错误则中断重启。
+func NewPreRestartActor(preRestartHandler func(ctx RestartContext) error, actor Actor) Actor {
+	return &preRestartActor{
+		Actor:             actor,
+		preRestartHandler: preRestartHandler,
+	}
+}
+
 type RestartedActor interface {
 	Actor
 	// OnRestarted 会在 Actor 重启后被调用，仅被调用一次。
 	OnRestarted(ctx RestartContext) error
+}
+
+type restartedActor struct {
+	Actor
+	restartedHandler func(ctx RestartContext) error
+}
+
+func (a *restartedActor) OnRestarted(ctx RestartContext) error {
+	return a.restartedHandler(ctx)
+}
+
+// NewRestartedActor 用于快速创建一个带有重启后逻辑（Restarted）的 Actor 实例。
+// restartedHandler 参数用于指定在 Actor 重启后需要执行的逻辑，通常可用于依赖注入、配置校验、资源预加载等场景。
+// actor 参数为实际的业务 Actor 实现。
+// 返回值为实现了 RestartedActor 接口的 Actor 实例，系统会在重启 Actor 后执行 restartedHandler。
+func NewRestartedActor(restartedHandler func(ctx RestartContext) error, actor Actor) Actor {
+	return &restartedActor{
+		Actor:            actor,
+		restartedHandler: restartedHandler,
+	}
 }
 
 // ActorFN 是基于函数适配的 Actor 实现方式。

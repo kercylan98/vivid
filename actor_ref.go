@@ -1,6 +1,9 @@
 package vivid
 
-import "strings"
+import (
+	"math/rand/v2"
+	"strings"
+)
 
 // ActorRef 定义了 Actor 的抽象引用类型，作为唯一标识和操作 Actor 实例的基本句柄。
 //
@@ -223,4 +226,12 @@ func (refs ActorRefs) String() string {
 	}
 	result.WriteString("]")
 	return strings.TrimSuffix(result.String(), ", ")
+}
+
+// Rand 返回当前 ActorRefs 的随机 ActorRef。当长度为 0 时，返回 nil。
+func (refs ActorRefs) Rand() ActorRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	return refs[rand.IntN(len(refs))]
 }

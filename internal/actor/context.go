@@ -14,6 +14,7 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/messages"
+	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/ves"
@@ -56,7 +57,7 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 		Append(chain.ChainFN(initializer.initMailbox)).
 		Append(chain.ChainFN(initializer.initBehavior)).
 		Run(); err != nil {
-		return nil, err
+		return nil, vivid.ErrorActorSpawnFailed.With(err)
 	}
 	return ctx, nil
 }
@@ -96,10 +97,7 @@ func (c *Context) Unstash(num ...int) {
 	}
 
 	// 批量恢复
-	popCount := num[0]
-	if popCount <= 0 {
-		popCount = stashCount
-	}
+	popCount := sugar.Max(sugar.Min(num[0], stashCount), 0)
 
 	for i := 0; i < popCount; i++ {
 		c.mailbox.Enqueue(c.stash[i])
@@ -155,7 +153,7 @@ func (c *Context) Scheduler() vivid.Scheduler {
 func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {
 	var status = atomic.LoadInt32(&c.state)
 	if status == killed {
-		return nil, fmt.Errorf("actor killed")
+		return nil, vivid.ErrorActorDeaded
 	}
 
 	childCtx, err := NewContext(c.system, c.ref, actor, options...)
@@ -164,7 +162,7 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivi
 	}
 
 	if c.system.appendActorContext(childCtx) {
-		return nil, fmt.Errorf("already exists")
+		return nil, vivid.ErrorActorAlreadyExists.WithMessage(childCtx.Ref().GetPath())
 	}
 
 	if c.children == nil {
@@ -216,10 +214,8 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 		askTimeout = timeout[0]
 	}
 
-	agentRef, err := NewAgentRef(c.ref)
-	if err != nil {
-		return future.NewFutureFail[vivid.Message](err)
-	}
+	// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
+	agentRef, _ := NewAgentRef(c.ref)
 	futureIns := future.NewFuture[vivid.Message](askTimeout, func() {
 		c.system.removeFuture(agentRef)
 	})
@@ -263,6 +259,7 @@ func (c *Context) PipeTo(recipient vivid.ActorRef, message vivid.Message, forwar
 	pipeId := uuid.NewString()
 	pipeFuture := c.ask(false, recipient, message, timeout...)
 
+	// 这种情况下虽然不会有任何目标收到消息，但是可以促使 recipient 执行任务
 	if len(forwarders) == 0 {
 		return pipeId
 	}
@@ -336,8 +333,9 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 	defer func() {
 		if r := recover(); r != nil {
-			c.Logger().Error("unexpected error", log.Any("error", r), log.String("error_type", fmt.Sprintf("%T", r)), log.String("stack", string(debug.Stack())))
-			fmt.Println(string(debug.Stack()))
+			stack := string(debug.Stack())
+			c.Logger().Error("unexpected error", log.Any("error", r), log.String("error_type", fmt.Sprintf("%T", r)), log.String("stack", stack))
+			fmt.Println(stack)
 			c.Failed(r)
 		}
 	}()

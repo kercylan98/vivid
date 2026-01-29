@@ -1,7 +1,6 @@
 package actor
 
 import (
-	"fmt"
 	"strings"
 	"sync/atomic"
 
@@ -23,11 +22,11 @@ func NewRef(address, path string) (*Ref, error) {
 		if address == "" {
 			address = "<empty>"
 		}
-		return nil, fmt.Errorf("%w: %s", vivid.ErrorRefInvalidAddress, address)
+		return nil, vivid.ErrorRefInvalidAddress.WithMessage(address)
 	}
 	path, ok = utils.NormalizePath(path)
 	if !ok {
-		return nil, vivid.ErrorRefInvalidPath
+		return nil, vivid.ErrorRefInvalidPath.WithMessage(path)
 	}
 	return &Ref{
 		address: address,

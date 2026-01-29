@@ -48,7 +48,7 @@ func (i *contextInitializer) initRef() error {
 		var err error
 		path, err = url.JoinPath(i.ctx.parent.path, path)
 		if err != nil {
-			return err
+			return vivid.ErrorRefInvalidPath.WithMessage(err.Error())
 		}
 	} else {
 		path = "/"
@@ -65,7 +65,7 @@ func (i *contextInitializer) initRef() error {
 func (i *contextInitializer) prelaunch() error {
 	if preLaunchActor, ok := i.ctx.actor.(vivid.PrelaunchActor); ok {
 		if err := preLaunchActor.OnPrelaunch(i.ctx); err != nil {
-			return err
+			return vivid.ErrorActorPrelaunchFailed.With(err)
 		}
 	}
 	return nil

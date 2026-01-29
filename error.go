@@ -8,120 +8,52 @@ import (
 	"github.com/kercylan98/vivid/internal/messages"
 )
 
+// 系统与资源相关错误。可用 errors.Is 判定并做兜底或日志处理。
 var (
-	// ErrorException 表示异常错误。
-	// 常见于系统内部错误、未预料到的异常情况等。
-	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
-	ErrorException = RegisterError(-1, "exception") // 异常错误
+	ErrorException                 = RegisterError(-1, "exception")                        // 未分类内部异常
+	ErrorNotFound                  = RegisterError(100000, "not found")                    // 资源不存在
+	ErrorActorSystemAlreadyStarted = RegisterError(100001, "actor system already started") // 重复 Start
+	ErrorActorSystemAlreadyStopped = RegisterError(100002, "actor system already stopped") // 重复 Stop
+	ErrorActorSystemStartFailed    = RegisterError(100003, "actor system start failed")    // 启动失败
+	ErrorActorSystemStopFailed     = RegisterError(100004, "actor system stop failed")     // 停止失败
+	ErrorActorSystemNotStarted     = RegisterError(100005, "actor system not started")     // 未启动时调用 Stop
 
-	// ErrorNotFound 表示未找到错误。
-	// 常见于查询不存在的资源时。
-	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
-	ErrorNotFound = RegisterError(100000, "not found")
-
-	// ErrorActorSystemAlreadyStarted 表示已经启动的错误。
-	// 常见于系统已经启动时，重复调用 Start 方法时。
-	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
-	ErrorActorSystemAlreadyStarted = RegisterError(100001, "actor system already started")
-
-	// ErrorActorSystemAlreadyStopped 表示已经停止的错误。
-	// 常见于系统已经停止时，重复调用 Stop 方法时。
-	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
-	ErrorActorSystemAlreadyStopped = RegisterError(100002, "actor system already stopped")
-
-	// ErrorActorSystemStartFailed 表示启动失败的错误。
-	// 常见于系统启动失败时，返回的错误。
-	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
-	ErrorActorSystemStartFailed = RegisterError(100003, "actor system start failed")
-
-	// ErrorActorSystemStopFailed 表示停止失败的错误。
-	// 常见于系统停止失败时，返回的错误。
-	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
-	ErrorActorSystemStopFailed = RegisterError(100004, "actor system stop failed")
-
-	// ErrorActorSystemNotStarted 表示系统未启动的错误。
-	// 常见于系统未启动时，重复调用 Stop 方法时。
-	// 业务代码可通过判定该错误，实现兜底处理、日志记录等。
-	ErrorActorSystemNotStarted = RegisterError(100005, "actor system not started")
+	ErrorActorDeaded          = RegisterError(100100, "actor deaded")           // Actor 已死亡
+	ErrorActorAlreadyExists   = RegisterError(100101, "actor already exists")   // Actor 已存在
+	ErrorActorSpawnFailed     = RegisterError(100102, "actor spawn failed")     // Actor 创建失败
+	ErrorActorPrelaunchFailed = RegisterError(100103, "actor prelaunch failed") // Actor 预启动失败
 )
 
+// Future 与消息相关错误。
 var (
-	// ErrorFutureTimeout 表示 Future 等待超时异常。
-	// 常见于调用 Future.Result()/Wait() 时，在指定的超时时间内未等到目标应答消息，导致操作超时。
-	// 业务代码可通过判定该错误，实现超时兜底、重试机制等。
-	ErrorFutureTimeout = RegisterError(110000, "future timeout")
-
-	// ErrorFutureMessageTypeMismatch 表示 Future 收到不符合预期类型的消息异常。
-	// 当通过泛型声明的 Future[期望类型]，但实际收到的消息类型与声明不符时抛出该异常。
-	// 业务方可通过判定该错误实现类型安全保护与异常处理。
-	ErrorFutureMessageTypeMismatch = RegisterError(110001, "future message type mismatch")
-
-	// ErrorFutureUnexpectedError 表示 Future 收到意外错误异常。
-	// 当 Future 收到意外错误时抛出该异常。
-	ErrorFutureUnexpectedError = RegisterError(110002, "future unexpected error")
-
-	// ErrorFutureInvalid 表示 Future 无效的错误。
-	// 当 Future 被创建时，传入的 timeout 参数不合法时抛出该异常。
-	ErrorFutureInvalid = RegisterError(110003, "future invalid")
-
-	// ErrorInvalidMessageLength 表示消息长度不合法的错误。
-	// 当消息长度不合法时抛出该异常。
-	ErrorInvalidMessageLength = RegisterError(110004, "invalid message length")
-
-	// ErrorReadMessageBufferFailed 表示读取消息缓冲区失败时的错误。
-	// 当读取消息缓冲区失败时抛出该异常。
-	ErrorReadMessageBufferFailed = RegisterError(110005, "read message buffer failed")
+	ErrorFutureTimeout             = RegisterError(110000, "future timeout")               // Result/Wait 超时未收到应答
+	ErrorFutureMessageTypeMismatch = RegisterError(110001, "future message type mismatch") // 应答类型与泛型声明不一致
+	ErrorFutureUnexpectedError     = RegisterError(110002, "future unexpected error")      // 收到非预期错误
+	ErrorFutureInvalid             = RegisterError(110003, "future invalid")               // 创建时 timeout 非法
+	ErrorInvalidMessageLength      = RegisterError(110004, "invalid message length")       // 消息长度非法
+	ErrorReadMessageBufferFailed   = RegisterError(110005, "read message buffer failed")   // 读消息缓冲失败
 )
 
+// 参数、调度与状态相关错误。
 var (
-	// ErrorIllegalArgument 表示传递给某方法或构造器的参数不合法。
-	// 例如配置无效参数、必需参数缺失等场景。
-	ErrorIllegalArgument = RegisterError(120000, "illegal argument")
-
-	// ErrorCronParse 表示解析 Cron 表达式失败的错误。
-	// 常用于调度任务配置不正确的 cron 表达式时。
-	ErrorCronParse = RegisterError(120001, "parse cron expression")
-
-	// ErrorTriggerExpired 表示触发器已过期或不可用的错误。
-	// 通常用于任务调度触发超出有效期等场景。
-	ErrorTriggerExpired = RegisterError(120002, "trigger has expired")
-
-	// ErrorIllegalState 表示操作违背当前状态机或上下文逻辑的错误。
-	// 例如状态变更非法、资源不可用等场景。
-	ErrorIllegalState = RegisterError(120003, "illegal state")
-
-	// ErrorQueueEmpty 表示队列为空导致无法继续操作的异常。
-	// 常用于队列消费、任务弹出、资源获取等为空时。
-	ErrorQueueEmpty = RegisterError(120004, "queue is empty")
-
-	// ErrorJobAlreadyExists 表示尝试注册或调度一个已存在的任务时的异常。
-	ErrorJobAlreadyExists = RegisterError(120005, "job already exists")
-
-	// ErrorJobIsSuspended 表示对已处于挂起状态的 Job 执行挂起等操作时的异常。
-	ErrorJobIsSuspended = RegisterError(120006, "job is suspended")
-
-	// ErrorJobIsActive 表示对已处于活动状态的 Job 执行激活等操作时的异常。
-	ErrorJobIsActive = RegisterError(120007, "job is active")
-
-	// ErrorActorRefAddressMismatch 表示 ActorRef 地址不匹配的错误。
-	ErrorActorRefAddressMismatch = RegisterError(120008, "actor ref address mismatch")
+	ErrorIllegalArgument         = RegisterError(120000, "illegal argument")           // 参数无效或缺失
+	ErrorCronParse               = RegisterError(120001, "parse cron expression")      // Cron 表达式解析失败
+	ErrorTriggerExpired          = RegisterError(120002, "trigger has expired")        // 触发器已过期
+	ErrorIllegalState            = RegisterError(120003, "illegal state")              // 违反当前状态或上下文
+	ErrorQueueEmpty              = RegisterError(120004, "queue is empty")             // 队列空无法出队
+	ErrorJobAlreadyExists        = RegisterError(120005, "job already exists")         // 任务已注册
+	ErrorJobIsSuspended          = RegisterError(120006, "job is suspended")           // Job 已挂起时再次挂起
+	ErrorJobIsActive             = RegisterError(120007, "job is active")              // Job 已激活时再次激活
+	ErrorActorRefAddressMismatch = RegisterError(120008, "actor ref address mismatch") // ActorRef 地址不一致
 )
 
+// ActorRef/AgentRef 相关错误。
 var (
-	// ErrorRefEmpty 表示 ActorRef 为空的错误。
-	ErrorRefEmpty = RegisterError(130001, "actor ref is empty")
-
-	// ErrorRefFormat 表示 ActorRef 格式非法（例如缺少地址或路径）的错误。
-	ErrorRefFormat = RegisterError(130002, "actor ref must contain address and path")
-
-	// ErrorRefInvalidAddress 表示 ActorRef 地址部分不合法的错误。
-	ErrorRefInvalidAddress = RegisterError(130003, "actor ref address is invalid")
-
-	// ErrorRefInvalidPath 表示 ActorRef 路径部分不合法的错误。
-	ErrorRefInvalidPath = RegisterError(130004, "actor ref path is invalid")
-
-	// ErrorRefNilAgent 表示 AgentRef 为空（无效引用）的错误。
-	ErrorRefNilAgent = RegisterError(130005, "agent ref is nil")
+	ErrorRefEmpty          = RegisterError(130001, "actor ref is empty")                      // ActorRef 为空
+	ErrorRefFormat         = RegisterError(130002, "actor ref must contain address and path") // 缺少 address 或 path
+	ErrorRefInvalidAddress = RegisterError(130003, "actor ref address is invalid")            // 地址非法
+	ErrorRefInvalidPath    = RegisterError(130004, "actor ref path is invalid")               // 路径非法
+	ErrorRefNilAgent       = RegisterError(130005, "agent ref is nil")                        // AgentRef 为 nil
 )
 
 var _ error = (*Error)(nil)
@@ -132,6 +64,11 @@ func init() {
 	messages.RegisterInternalMessage[*Error]("Error", errorReader, errorWriter)
 }
 
+// RegisterError 在全局注册一个错误类型并返回其实例。
+//
+// code 为唯一错误码，用于跨进程/节点识别；msg 为人类可读描述，会出现在 Error() 中。
+// 若 code 已被注册则 panic。返回的 *Error 可安全复用于 errors.Is/As 判定及序列化传播。
+// 通常仅在包 init 或启动阶段调用。
 func RegisterError(code int32, msg string) *Error {
 	codeOfErrorMu.Lock()
 	defer codeOfErrorMu.Unlock()
@@ -148,6 +85,9 @@ func RegisterError(code int32, msg string) *Error {
 	return e
 }
 
+// QueryError 根据错误码从全局注册表查找并返回对应的 *Error。
+//
+// 若 code 未注册则返回 nil。用于反序列化或跨节点错误码还原为 *Error 实例。
 func QueryError(code int32) *Error {
 	codeOfErrorMu.RLock()
 	defer codeOfErrorMu.RUnlock()
@@ -158,35 +98,42 @@ func QueryError(code int32) *Error {
 	return nil
 }
 
-// Error 是可以在分布式环境中传播的错误类型
+// Error 可在分布式环境中序列化传播，支持 errors.Is/As 与错误链。
 type Error struct {
 	code int32  // 错误码
-	msg  string // 错误消息
-	err  error  // 底层错误（用于错误链，不序列化）
+	msg  string // 可读描述
+	err  error  // 包装的底层错误（不参与序列化）
 }
 
+// errorReader 从 reader 反序列化 Error 的 code 与 msg 到 message，供内部消息框架使用。
 func errorReader(message any, reader *messages.Reader, codec messages.Codec) error {
 	m := message.(*Error)
 	return reader.ReadInto(&m.code, &m.msg)
 }
 
+// errorWriter 将 Error 的 code 与 msg 序列化写入 writer，供内部消息框架使用。
 func errorWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	m := message.(*Error)
 	return writer.WriteFrom(m.code, m.msg)
 }
 
+// Error 实现 error 接口，返回格式为 "[vivid: <code>] <msg>" 的字符串。
 func (e *Error) Error() string {
 	return fmt.Sprintf("[vivid: %d] %s", e.code, e.msg)
 }
 
+// GetCode 返回错误的数字码，用于日志、监控或跨节点一致判定。
 func (e *Error) GetCode() int32 {
 	return e.code
 }
 
+// GetMessage 返回错误的可读描述（不含前缀与错误码）。
 func (e *Error) GetMessage() string {
 	return e.msg
 }
 
+// With 包装底层错误 err，生成新的 *Error：msg 变为 "原 msg: err.Error()"，Unwrap 返回 err。
+// 若 err 为 nil 则返回接收者本身。用于构建错误链并保留 errors.Is/As 的递归判定。
 func (e *Error) With(err error) *Error {
 	if err == nil {
 		return e
@@ -198,6 +145,8 @@ func (e *Error) With(err error) *Error {
 	}
 }
 
+// WithMessage 在原有描述后追加一段说明 msg，生成新的 *Error，Unwrap 返回接收者。
+// 若 msg 为空则返回接收者本身。不改变错误码，仅丰富可读信息。
 func (e *Error) WithMessage(msg string) *Error {
 	if msg == "" {
 		return e
@@ -209,10 +158,12 @@ func (e *Error) WithMessage(msg string) *Error {
 	}
 }
 
+// Unwrap 返回通过 With 包装的底层错误，供 errors.Unwrap 及 errors.Is/As 使用；未包装时返回 nil。
 func (e *Error) Unwrap() error {
 	return e.err
 }
 
+// Is 实现 errors 包中的错误匹配：若 target 为 *Error 则比较错误码；否则对包装链递归调用 errors.Is。
 func (e *Error) Is(target error) bool {
 	if target == nil {
 		return false
@@ -226,6 +177,7 @@ func (e *Error) Is(target error) bool {
 	return false
 }
 
+// As 实现 errors 包中的类型断言：若 target 为 **Error 则赋值为当前 *Error；否则对包装链递归调用 errors.As。
 func (e *Error) As(target any) bool {
 	if target == nil {
 		return false

@@ -7,14 +7,20 @@ import (
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
+func UselessActor() vivid.Actor {
+	return vivid.ActorFN(func(ctx vivid.ActorContext) {})
+}
+
 func NewTestSystem(t *testing.T, options ...vivid.ActorSystemOption) *TestSystem {
 	options = append([]vivid.ActorSystemOption{
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
 	}, options...)
+
 	sys := &TestSystem{
-		T: t,
+		T:      t,
+		System: NewSystem(options...),
 	}
-	sys.System = newSystem(sys, options...)
+
 	if err := sys.System.Start(); err != nil {
 		t.Fatal(err)
 	}

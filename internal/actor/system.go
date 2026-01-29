@@ -30,14 +30,9 @@ var (
 )
 
 func NewSystem(options ...vivid.ActorSystemOption) *System {
-	return newSystem(nil, options...)
-}
-
-func newSystem(testSystem *TestSystem, options ...vivid.ActorSystemOption) *System {
 	opts := vivid.NewActorSystemOptions(options...)
 
 	system := &System{
-		testSystem:        testSystem,
 		options:           opts,
 		actorContexts:     sync.Map{},
 		guardClosedSignal: make(chan struct{}),
@@ -51,7 +46,6 @@ func newSystem(testSystem *TestSystem, options ...vivid.ActorSystemOption) *Syst
 type System struct {
 	*Context                                    // ActorSystem 本身就表示了根 Actor
 	actorOfLock       sync.Mutex                // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
-	testSystem        *TestSystem               // 测试系统
 	options           *vivid.ActorSystemOptions // 系统选项
 	actorContexts     sync.Map                  // 用于加速访问的 ActorContext 缓存（含有 Future）
 	guardClosedSignal chan struct{}             // 用于通知系统关闭的信号

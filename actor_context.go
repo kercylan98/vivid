@@ -557,17 +557,10 @@ type ActorLiaison interface {
 	// 返回值：
 	//   - string: 管道标识符（pipeline ID），可用于后续取消该管道操作（如需要）。
 	//
-	// 典型应用场景：
-	//   - 实现请求-响应-转发的消息管道，将上游 Actor 的响应自动传递给下游 Actor。
-	//   - 构建异步处理链，将多个 Actor 串联起来，实现复杂业务流程的编排。
-	//   - 在需要将同一响应同时发送给多个 Actor 的场景中，简化消息转发逻辑。
-	//
-	// 推荐用法示例：
-	//   pipelineID := ctx.PipeTo(downstreamActor, requestMsg, ActorRefs{loggerActor}, 5*time.Second)
-	//
 	// 注意事项：
 	//   - 若 Ask 请求超时或失败，不会触发任何转发操作，调用方需根据业务需求处理超时场景。
 	//   - 转发操作是异步的，调用方不应依赖转发完成的时机。
+	//   - forwarders 收到的消息为 *vivid.PipeResult 类型。
 	PipeTo(recipient ActorRef, message Message, forwarders ActorRefs, timeout ...time.Duration) string
 
 	// Logger 返回日志记录器。
