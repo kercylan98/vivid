@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/actor"
@@ -11,24 +12,289 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestContext_ActorOf(t *testing.T) {
+func TestContext_Name(t *testing.T) {
 	system := actor.NewTestSystem(t)
 	defer func() {
 		assert.NoError(t, system.Stop())
 	}()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
+	var wait = make(chan struct{})
 	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
-			wg.Done()
+			assert.Equal(t, "name", ctx.Name())
+			wait <- struct{}{}
+		}
+	}), vivid.WithActorName("name"))
+	assert.NoError(t, err)
+	assert.NotNil(t, ref)
+
+	select {
+	case <-wait:
+	case <-time.After(time.Second):
+		assert.Fail(t, "timeout")
+	}
+}
+
+func TestContext_System(t *testing.T) {
+	system := actor.NewSystem()
+	assert.NoError(t, system.Start())
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
+	wait := make(chan struct{})
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch ctx.Message().(type) {
+		case *vivid.OnLaunch:
+			assert.Equal(t, ctx.System(), system)
+			wait <- struct{}{}
+		}
+	}))
+	assert.NoError(t, err)
+	assert.NotNil(t, ref)
+	select {
+	case <-wait:
+	case <-time.After(1 * time.Second):
+		assert.Fail(t, "timeout")
+	}
+}
+
+func TestContext_StashCount(t *testing.T) {
+	system := actor.NewTestSystem(t)
+
+	var first bool
+	var wait = make(chan struct{})
+	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch ctx.Message().(type) {
+		case *vivid.OnLaunch:
+			if !first {
+				first = true
+				ctx.Stash()
+				assert.Equal(t, ctx.StashCount(), 1)
+				ctx.Unstash()
+				assert.Equal(t, ctx.StashCount(), 0)
+			} else {
+				wait <- struct{}{}
+			}
 		}
 	}))
 	assert.NoError(t, err)
 	assert.NotNil(t, ref)
 
-	wg.Wait()
+	select {
+	case <-wait:
+	case <-time.After(1 * time.Second):
+		assert.Fail(t, "timeout")
+	}
+}
+
+func TestContext_Unstash(t *testing.T) {
+	type Stash struct{}
+	type Unstash struct{}
+	var cases = []struct {
+		name  string
+		actor func(stashed *bool, wait chan<- struct{}) vivid.Actor
+	}{
+		{name: "unstash", actor: func(stashed *bool, wait chan<- struct{}) vivid.Actor {
+			return vivid.ActorFN(func(ctx vivid.ActorContext) {
+				switch ctx.Message().(type) {
+				case Stash:
+					if !*stashed {
+						*stashed = true
+						ctx.Stash()
+					} else {
+						wait <- struct{}{}
+					}
+				case Unstash:
+					ctx.Unstash(1)
+				}
+			})
+		}},
+
+		{name: "fast unstash", actor: func(stashed *bool, wait chan<- struct{}) vivid.Actor {
+			return vivid.ActorFN(func(ctx vivid.ActorContext) {
+				switch ctx.Message().(type) {
+				case Stash:
+					if !*stashed {
+						*stashed = true
+						ctx.Stash()
+					} else {
+						wait <- struct{}{}
+					}
+				case Unstash:
+					ctx.Unstash()
+				}
+			})
+		}},
+
+		{name: "batch unstash", actor: func(stashed *bool, wait chan<- struct{}) vivid.Actor {
+			count := 0
+			return vivid.ActorFN(func(ctx vivid.ActorContext) {
+				switch ctx.Message().(type) {
+				case Stash:
+					if !*stashed {
+						*stashed = true
+						ctx.Stash()
+						ctx.Stash()
+					} else {
+						count++
+						if count == 2 {
+							wait <- struct{}{}
+						}
+					}
+				case Unstash:
+					ctx.Unstash(3) // auto fix to 2
+				}
+			})
+		}},
+
+		{name: "empty unstash", actor: func(stashed *bool, wait chan<- struct{}) vivid.Actor {
+			return vivid.ActorFN(func(ctx vivid.ActorContext) {
+				switch ctx.Message().(type) {
+				case Unstash:
+					ctx.Unstash()
+					wait <- struct{}{}
+				}
+			})
+		}},
+	}
+
+	for _, s := range cases {
+		t.Run(s.name, func(t *testing.T) {
+			system := actor.NewTestSystem(t)
+			defer func() {
+				assert.NoError(t, system.Stop())
+			}()
+
+			var stashed bool
+			var wait = make(chan struct{})
+
+			ref, err := system.ActorOf(s.actor(&stashed, wait))
+
+			assert.NoError(t, err)
+			assert.NotNil(t, ref)
+
+			system.Tell(ref, Stash{})
+			system.Tell(ref, Unstash{})
+
+			select {
+			case <-wait:
+			case <-time.After(time.Second):
+				assert.Fail(t, "stash timeout")
+			}
+		})
+	}
+}
+
+func TestContext_ActorOf(t *testing.T) {
+	t.Run("actor_of", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				wg.Done()
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		wg.Wait()
+	})
+
+	t.Run("killed after", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnKilled:
+				ref, err := ctx.ActorOf(actor.UselessActor())
+				assert.ErrorIs(t, err, vivid.ErrorActorDeaded)
+				assert.Nil(t, ref)
+				close(wait)
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		system.Kill(ref, false)
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+
+	t.Run("spawn failed", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		ref, err := system.ActorOf(
+			vivid.NewPrelaunchActor(func(ctx vivid.PrelaunchContext) error {
+				return errors.New("test error")
+			},
+				actor.UselessActor(),
+			))
+
+		assert.ErrorIs(t, err, vivid.ErrorActorSpawnFailed)
+		assert.Nil(t, ref)
+	})
+
+	t.Run("repeated spawn", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		ref, err := system.ActorOf(actor.UselessActor(), vivid.WithActorName("test"))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		ref, err = system.ActorOf(actor.UselessActor(), vivid.WithActorName("test"))
+		assert.ErrorIs(t, err, vivid.ErrorActorAlreadyExists)
+		assert.Nil(t, ref)
+	})
+
+	t.Run("killing spawn", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnKill:
+				ref, err := ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+					switch ctx.Message().(type) {
+					case *vivid.OnKilled:
+						close(wait)
+					}
+				}))
+				assert.NoError(t, err)
+				assert.NotNil(t, ref)
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		system.Kill(ref, false)
+
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
 }
 
 func TestContext_Become(t *testing.T) {
@@ -253,14 +519,12 @@ func TestContext_Kill(t *testing.T) {
 			ref, err := ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 				switch ctx.Message().(type) {
 				case *vivid.OnKill, *vivid.OnKilled:
-					// self kill, self killed
 					wg.Done()
 				}
 			}))
 			assert.NoError(t, err)
 			assert.NotNil(t, ref)
 		case *vivid.OnKill, *vivid.OnKilled:
-			// self kill, child killed, self killed
 			wg.Done()
 		}
 	}))
@@ -352,5 +616,136 @@ func TestContext_Entrust(t *testing.T) {
 		})).Result()
 		assert.Nil(t, err)
 		assert.True(t, result.(bool))
+	})
+
+	t.Run("err task", func(t *testing.T) {
+		result, err := system.Entrust(-1, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+			return nil, errors.New("test error")
+		})).Result()
+		assert.NotNil(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("task recover err", func(t *testing.T) {
+		var err = errors.New("test panic error")
+		result, err := system.Entrust(-1, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+			panic(err)
+		})).Result()
+		assert.NotNil(t, err)
+		assert.Nil(t, result)
+		assert.True(t, errors.Is(err, err))
+		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpectedError))
+	})
+
+	t.Run("task recover panic", func(t *testing.T) {
+		result, err := system.Entrust(-1, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+			panic("test panic")
+		})).Result()
+		assert.NotNil(t, err)
+		assert.Nil(t, result)
+		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpectedError))
+	})
+}
+
+func TestContext_PipeTo(t *testing.T) {
+
+	type Query struct{ Text string }
+	type Response struct{ Text string }
+
+	t.Run("pipe to", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wait = make(chan Response)
+		var provider = vivid.ActorProviderFN(func() vivid.Actor {
+			return vivid.ActorFN(func(ctx vivid.ActorContext) {
+				switch m := ctx.Message().(type) {
+				case Query:
+					ctx.Reply(Response{Text: m.Text})
+				case *vivid.PipeResult:
+					wait <- m.Message.(Response)
+				}
+			})
+		})
+
+		var refs = make(vivid.ActorRefs, 0)
+		for i := 0; i < 10; i++ {
+			ref, err := system.ActorOf(provider.Provide())
+			assert.NoError(t, err)
+			assert.NotNil(t, ref)
+			refs = append(refs, ref)
+		}
+
+		pipeId := system.PipeTo(refs.Rand(), Query{Text: "test"}, refs, 1*time.Second)
+		assert.NotEmpty(t, pipeId)
+
+		var result []Response
+	loop:
+		for {
+			select {
+			case v := <-wait:
+				result = append(result, v)
+				if len(result) == refs.Len() {
+					break loop
+				}
+				continue
+			case <-time.After(1 * time.Second):
+				assert.Fail(t, "timeout")
+			}
+		}
+		assert.Equal(t, refs.Len(), len(result))
+		for _, r := range result {
+			assert.Equal(t, "test", r.Text)
+		}
+	})
+
+	t.Run("none forwarders", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch v := ctx.Message().(type) {
+			case Query:
+				ctx.Reply(Response{Text: v.Text})
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		pipeId := system.PipeTo(ref, Query{Text: "test"}, nil, 1*time.Second)
+		assert.NotEmpty(t, pipeId)
+	})
+
+	t.Run("forward to self", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				pipeId := ctx.PipeTo(ctx.Ref(), Query{Text: "test"}, ctx.Ref().ToActorRefs(), 1*time.Second)
+				assert.NotEmpty(t, pipeId)
+			case Query:
+				ctx.Reply(Response{Text: m.Text})
+			case *vivid.PipeResult:
+				assert.Equal(t, "test", m.Message.(Response).Text)
+				close(wait)
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		select {
+		case <-wait:
+		case <-time.After(1 * time.Second):
+			assert.Fail(t, "timeout")
+		}
 	})
 }
