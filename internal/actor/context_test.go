@@ -62,6 +62,38 @@ func TestContext_Restart(t *testing.T) {
 		}
 	})
 
+	t.Run("killing restart", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var waitChildKill = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				childRef, err := ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+					switch ctx.Message().(type) {
+					case *vivid.OnKill:
+						<-waitChildKill
+					}
+				}))
+				assert.NoError(t, err)
+				assert.NotNil(t, childRef)
+			case *vivid.OnKilled:
+				// 处理子 Actor 尝试失败，会导致从 killing 进入监管策略处理
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		system.Kill(ref, false)
+		select {
+		case <-waitChildKill:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+
 }
 
 func TestContext_Failed(t *testing.T) {
