@@ -10,7 +10,7 @@ import (
 
 // defaultSupervisionStrategy 是默认的监督策略，用于在监督过程中选择不同的处理方式。
 var defaultSupervisionStrategy = OneForOneStrategy(SupervisionStrategyDecisionMakerFN(func(ctx SupervisionContext) (SupervisionDecision, string) {
-	return SupervisionDecisionStop, "reached defalut top-level supervision strategy, can use WithActorSystemSupervisionStrategy to set a custom supervision strategy"
+	return SupervisionDecisionStop, "reached default top-level supervision strategy, can use WithActorSystemSupervisionStrategy to set a custom supervision strategy"
 }))
 
 // SupervisionDecision 定义了监督决策的类型，用于在监督过程中选择不同的处理方式。
