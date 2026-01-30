@@ -888,3 +888,56 @@ func TestContext_PipeTo(t *testing.T) {
 		}
 	})
 }
+
+func TestContext_Ping(t *testing.T) {
+	t.Run("ping", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		ref, err := system.ActorOf(actor.UselessActor())
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		pong, err := system.Ping(ref)
+		assert.NoError(t, err)
+		assert.NotNil(t, pong)
+	})
+
+	t.Run("remote ping", func(t *testing.T) {
+		system1 := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))
+		system2 := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8081"))
+		defer func() {
+			assert.NoError(t, system1.Stop())
+			assert.NoError(t, system2.Stop())
+		}()
+
+		pong, err := system1.Ping(system2.Ref())
+		assert.NoError(t, err)
+		assert.NotNil(t, pong)
+		system1.Logger().Info("pong", "pong", pong)
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wake = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				<-wake
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		pong, err := system.Ping(ref)
+		assert.ErrorIs(t, err, vivid.ErrorFutureTimeout)
+		assert.Nil(t, pong)
+		close(wake)
+	})
+}
