@@ -339,7 +339,7 @@ func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 				// 此刻已经在停止流程中，记录日志并且继续执行停止流程，不再触发监管策略
 				c.Logger().Error("on kill panic", log.String("path", c.ref.GetPath()), log.Any("error", r), log.String("stack", string(debug.Stack())))
 			case *vivid.OnKilled:
-				if m.Ref.Equals(c.ref) {
+				if atomic.LoadInt32(&c.state) != running || m.Ref.Equals(c.ref) {
 					// 此刻已经在停止流程中，记录日志并且继续执行停止流程，不再触发监管策略
 					c.Logger().Error("on kill panic", log.String("path", c.ref.GetPath()), log.Any("error", r), log.String("stack", string(debug.Stack())))
 				} else {
@@ -469,12 +469,26 @@ func (c *Context) onUnwatch(_ *messages.UnwatchMessage) {
 }
 
 func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
-	// restart 只允许从 running 进入，避免覆盖并发的 kill/stop 流程
-	if !atomic.CompareAndSwapInt32(&c.state, running, killing) {
-		return
-	}
+	// RestartMessage 仅来源于父 Actor 在处理 supervisionContext 后决定 Restart 时发送；
+	// supervisionContext 仅来源于子 Actor 调用 failed()。
+	//
+	// 为什么在非 running 状态下不可能收到 RestartMessage：
+	// 1. 同一失败链路：子失败时 state 仍为 running（failed() 不修改 state），父发 RestartMessage，
+	//    子处理时 state 为 running，CAS 会成功。
+	// 2. Restart 的 killing 过程：restarting!=nil 时，killed_handler 使用 recoverExec 处理 panic，
+	//    不会调用 failed()，不会产生新的 RestartMessage。
+	// 3. 普通 Kill 的 killing 过程：executeBehaviorWithRecovery 在 state!=running 时不再触发 failed()，
+	//    故处理子 OnKilled 时 panic 不会产生新的 RestartMessage。
+	//
+	// 结论：该分支在任何路径下均不可达，故注释。
+	// 注意：CAS 仍需执行以完成 running->killing 的状态转换。
+
+	// if !atomic.CompareAndSwapInt32(&c.state, running, killing) {
+	// 	return
+	// }
 
 	// 标记正在重启
+	atomic.StoreInt32(&c.state, killing) // 取代上方 CAS 注释
 	c.restarting = message
 	c.Logger().Debug("receive restart", log.String("path", c.ref.GetPath()), log.String("reason", message.Reason), log.Any("fault", message.Fault), log.String("stack", string(message.Stack)))
 
