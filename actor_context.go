@@ -438,6 +438,24 @@ type actorBasic interface {
 	// 警告：
 	//   - 如果你在未启用（未配置）全局指标采集时调用本方法，采集到的数据不会被纳入集中观察与管理，建议只在开发或测试场景下采用。
 	Metrics() metrics.Metrics
+
+	// Ping 向目标 ActorRef 发送系统级 Ping 消息，并同步等待返回其 Pong 响应，用于可达性检测与时延评估。
+	//
+	// 功能说明：
+	//   - 调用本方法会向指定的 target ActorRef 发送一条系统的 Ping 消息。
+	//   - 当前线程会阻塞，直到接收到目标 Actor 返回的 Pong 响应消息，或等待超时，超时情况下会返回 nil 及相应错误。
+	//   - 返回的 *Pong 消息对象中包含 Ping 消息的发送时间和 Pong 响应的到达时间，可用于计算往返时延。
+	//   - 该方法常用于健康检查、存活检测、探测 Actor 网络可用性，但不建议高频调用，防止性能受影响。
+	//   - 如果目标 Actor 不可达、超时或发生内部异常，将返回 nil 和相应错误类型（如 context.DeadlineExceeded）。
+	//
+	// 参数说明：
+	//   - target: 目标 Actor 的引用（ActorRef），为需要探测可达性的目标 Actor。
+	//   - timeout: （可选）等待 Pong 响应的超时时长；不指定时使用系统默认超时时长。
+	//
+	// 返回值说明：
+	//   - *Pong: 目标 Actor 返回的 Pong 响应消息（含发送与响应时间），超时或异常时为 nil。
+	//   - error: 若成功收到 Pong，返回 nil；如超时、目标不可达、系统故障等，返回具体错误类型。
+	Ping(target ActorRef, timeout ...time.Duration) (*Pong, error)
 }
 
 // ActorLiaison 定义了 Actor 间的消息通信接口，提供了 Tell、Ask、Entrust 等核心消息传递能力。

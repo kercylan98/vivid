@@ -377,6 +377,23 @@ func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
 	}
 }
 
+func (c *Context) Ping(target vivid.ActorRef, timeout ...time.Duration) (*vivid.Pong, error) {
+	pingMessage := &messages.PingMessage{
+		Time: time.Now(),
+	}
+
+	pongFuture := c.Ask(target, pingMessage, timeout...)
+	pongMessage, err := pongFuture.Result()
+	if err != nil {
+		return nil, err
+	}
+	onPong := pongMessage.(*messages.PongMessage)
+	return &vivid.Pong{
+		PingTime:    onPong.Ping.Time,
+		RespondTime: onPong.RespondTime,
+	}, nil
+}
+
 func (c *Context) onPing(message *messages.PingMessage) {
 	pongMessage := &messages.PongMessage{
 		Ping:        message,

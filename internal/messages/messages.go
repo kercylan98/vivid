@@ -170,7 +170,7 @@ func onPingMessageReader(message any, reader *Reader, codec Codec) error {
 	if err := reader.ReadInto(&unixNano); err != nil {
 		return err
 	}
-	m.Time = time.Unix(0, int64(unixNano))
+	m.Time = time.Unix(0, unixNano)
 	return nil
 }
 

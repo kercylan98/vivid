@@ -3,6 +3,7 @@ package remoting
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,12 +32,6 @@ func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, cod
 }
 
 type tcpConnectionActorOption func(options *tcpConnectionActorOptions)
-
-func withTCPConnectionActorOptions(options tcpConnectionActorOptions) tcpConnectionActorOption {
-	return func(opts *tcpConnectionActorOptions) {
-		*opts = options
-	}
-}
 
 func withTCPConnectionActorReadFailedHandler(handler vivid.ActorSystemRemotingConnectionReadFailedHandler) tcpConnectionActorOption {
 	return func(options *tcpConnectionActorOptions) {
@@ -97,8 +92,20 @@ func (c *tcpConnectionActor) OnReceive(ctx vivid.ActorContext) {
 			if err := c.options.readFailedHandler.HandleRemotingConnectionReadFailed(fatal, err); err != nil && !fatal {
 				ctx.Kill(ctx.Ref(), false, err.Error())
 			}
+		} else if err != nil {
+			ctx.Logger().Warn("read connection failed",
+				log.Bool("fatal", fatal),
+				log.Any("err", err),
+				log.String("remote_addr", c.conn.RemoteAddr().String()),
+				log.String("local_addr", c.conn.LocalAddr().String()),
+				log.String("advertise_addr", c.advertiseAddr),
+				log.Bool("is_client", c.client))
 		} else {
-			ctx.Logger().Warn("read connection failed", log.Bool("fatal", fatal), log.Any("err", err))
+			ctx.Logger().Debug("connection closed",
+				log.String("remote_addr", c.conn.RemoteAddr().String()),
+				log.String("local_addr", c.conn.LocalAddr().String()),
+				log.String("advertise_addr", c.advertiseAddr),
+				log.Bool("is_client", c.client))
 		}
 	}
 }
@@ -112,6 +119,10 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 	reader := bufio.NewReader(c.conn)
 	lengthBuf := make([]byte, 4)
 	if _, err := io.ReadFull(reader, lengthBuf); err != nil {
+		// 对等连接已关闭
+		if errors.Is(err, io.EOF) {
+			return false, nil
+		}
 		// 当消息读取失败时，意味着连接已断开，终止 Actor
 		ctx.EventStream().Publish(ctx, ves.RemotingConnectionClosedEvent{
 			ConnectionRef: ctx.Ref(),
@@ -125,7 +136,12 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 		return true, err
 	}
 	msgLen := binary.BigEndian.Uint32(lengthBuf)
-	if msgLen == 0 || msgLen > 4*1024*1024 {
+	if msgLen == 0 {
+		c.Write(lengthBuf)
+		ctx.Kill(ctx.Ref(), false, "peer closed")
+		return false, nil
+	}
+	if msgLen > 4*1024*1024 {
 		ctx.Logger().Warn("invalid message length", log.Int64("length", int64(msgLen)))
 		ctx.TellSelf(c.conn)
 		return false, vivid.ErrorInvalidMessageLength.WithMessage(fmt.Sprintf("length: %d", msgLen))
@@ -208,8 +224,17 @@ func (c *tcpConnectionActor) Close() error {
 	if c.closed {
 		return nil
 	}
-	c.closed = true
-	return c.conn.Close()
+
+	// 暂且以长度 0 的数据包作为关闭连接消息，写入成功后不再处理关闭，等待 ACK 关闭
+	data := make([]byte, 4)
+	binary.BigEndian.PutUint32(data, 0)
+	_, err := c.conn.Write(data)
+	if err != nil {
+		// 写入失败时强行关闭
+		c.closed = true
+		return c.conn.Close()
+	}
+	return nil
 }
 
 // Closed 返回连接是否已关闭。

@@ -2,6 +2,7 @@ package vivid
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/kercylan98/vivid/internal/messages"
 )
@@ -11,6 +12,7 @@ func init() {
 	messages.RegisterInternalMessage[*OnKill]("OnKill", onKillReader, onKillWriter)
 	messages.RegisterInternalMessage[*OnKilled]("OnKilled", onKilledReader, onKilledWriter)
 	messages.RegisterInternalMessage[*PipeResult]("PipeResult", pipeResultReader, pipeResultWriter)
+	messages.RegisterInternalMessage[*Pong]("Pong", onPongReader, onPongWriter)
 }
 
 // CustomMessageReader 定义了自定义消息的读取函数签名，用于自定义消息的解码过程。
@@ -112,6 +114,45 @@ func onKillReader(message any, reader *messages.Reader, codec messages.Codec) er
 func onKillWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	m := message.(*OnKill)
 	return writer.WriteFrom(m.Killer, m.Reason, m.Poison)
+}
+
+// Pong 表示 Ping 消息的响应。
+type Pong struct {
+	PingTime    time.Time // Ping 消息的发送时间
+	RespondTime time.Time // Pong 响应的到达时间
+}
+
+func onPongReader(message any, reader *messages.Reader, codec messages.Codec) error {
+	var pingTime int64
+	var respondTime int64
+	if err := reader.ReadInto(&pingTime, &respondTime); err != nil {
+		return err
+	}
+
+	m := message.(*Pong)
+	m.PingTime = time.Unix(0, pingTime)
+	m.RespondTime = time.Unix(0, respondTime)
+	return nil
+}
+
+func onPongWriter(message any, writer *messages.Writer, codec messages.Codec) error {
+	m := message.(*Pong)
+	return writer.WriteFrom(m.PingTime.UnixNano(), m.RespondTime.UnixNano())
+}
+
+// Duration 返回从 pingTime 到 respondTime 的持续时间。
+func (p *Pong) Duration() time.Duration {
+	return p.RespondTime.Sub(p.PingTime)
+}
+
+// GetPingTime 获取 Ping 消息的发送时间。
+func (p *Pong) GetPingTime() time.Time {
+	return p.PingTime
+}
+
+// GetRespondTime 获取 Pong 响应的到达时间。
+func (p *Pong) GetRespondTime() time.Time {
+	return p.RespondTime
 }
 
 // OnKilled 表示 Actor 已被终止后的系统事件通知。
