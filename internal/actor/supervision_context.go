@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime/debug"
 
+	"github.com/google/uuid"
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/pkg/log"
@@ -29,6 +30,7 @@ func newSupervisionContext(ref vivid.ActorRef, fault vivid.Message) *supervision
 	}
 
 	return &supervisionContext{
+		id:         uuid.New().String(),
 		child:      ref.ToActorRefs(),
 		fault:      fault,
 		faultStack: debug.Stack(),
@@ -83,6 +85,7 @@ func supervise(supervisor *Context, supervisionContext *supervisionContext) {
 }
 
 type supervisionContext struct {
+	id                    string              // 当前监督上下文的唯一标识
 	supervisorLogger      log.Logger          // 监督者 Actor 的日志记录器
 	supervisorChildren    vivid.ActorRefs     // 监督者 Actor 的子 ActorRefs
 	child                 vivid.ActorRefs     // 发生故障的 Actor 的子 ActorRefs
@@ -107,6 +110,8 @@ func (c *supervisionContext) broadcastAllTargets(ctx *Context, system bool, mess
 func (c *supervisionContext) applyDecision(ctx *Context, targets vivid.ActorRefs, decision vivid.SupervisionDecision, reason string) {
 	c.targets = targets
 	c.decisionReason = reason
+
+	ctx.Logger().Debug("supervision: apply decision", log.String("id", c.ID()), log.String("decision", decision.String()), log.String("reason", reason), log.Any("targets", targets))
 
 	switch {
 	case decision.IsRestart():
@@ -148,8 +153,11 @@ func (c *supervisionContext) applyDecision(ctx *Context, targets vivid.ActorRefs
 		subSupervisionContext := newSupervisionContext(ctx.ref, c.fault)
 		subSupervisionContext.subSupervisionContext = c
 		ctx.tell(true, ctx.parent, subSupervisionContext)
-
 	}
+}
+
+func (c *supervisionContext) ID() string {
+	return c.id
 }
 
 func (c *supervisionContext) Logger() log.Logger {

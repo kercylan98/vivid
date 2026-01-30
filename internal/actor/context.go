@@ -1,9 +1,9 @@
 package actor
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
-	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -333,9 +333,6 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 	defer func() {
 		if r := recover(); r != nil {
-			stack := string(debug.Stack())
-			c.Logger().Error("unexpected error", log.Any("error", r), log.String("error_type", fmt.Sprintf("%T", r)), log.String("stack", stack))
-			fmt.Println(stack)
 			c.Failed(r)
 		}
 	}()
@@ -415,7 +412,7 @@ func (c *Context) onWatch(_ *messages.WatchMessage) {
 	}
 
 	c.watchers[full] = sender
-	c.Logger().Debug("watcher added", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+	c.Logger().Debug("watcher added", log.String("ref", c.ref.GetPath()), log.String("watcher", sender.String()))
 	// 通知事件流
 	c.EventStream().Publish(c, ves.ActorWatchedEvent{
 		ActorRef: c.ref,
@@ -427,11 +424,11 @@ func (c *Context) onUnwatch(_ *messages.UnwatchMessage) {
 	sender := c.envelop.Sender()
 	full := fmt.Sprintf("%s@%s", sender.GetAddress(), sender.GetPath())
 	if _, exists := c.watchers[full]; !exists {
-		c.Logger().Debug("watcher not found", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+		c.Logger().Debug("watcher not found", log.String("ref", c.ref.GetPath()), log.String("watcher", sender.String()))
 		return
 	}
 	delete(c.watchers, full)
-	c.Logger().Debug("watcher removed", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+	c.Logger().Debug("watcher removed", log.String("ref", c.ref.GetPath()), log.String("watcher", sender.String()))
 	// 通知事件流
 	c.EventStream().Publish(c, ves.ActorUnwatchedEvent{
 		ActorRef: c.ref,
@@ -513,7 +510,7 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 	handler := newKilledHandler(c, message, behavior)
 
-	if err := chain.New().
+	err := chain.New().
 		Append(chain.ChainFN(handler.handleChildDeath)).
 		Append(chain.ChainFN(handler.checkAndMarkKilled)).
 		Append(chain.ChainFN(handler.prepareSelfKilledMessage)).
@@ -521,7 +518,8 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 		Append(chain.ChainFN(handler.cleanupIfNotRestarting)).
 		Append(chain.ChainFN(handler.cleanupScheduler)).
 		Append(chain.ChainFN(handler.handleRestart)).
-		Run(); err != nil {
+		Run()
+	if err != nil {
 		c.Logger().Error("onKilled failed", log.Any("error", err))
 	}
 }
@@ -589,9 +587,11 @@ func (c *Context) Children() vivid.ActorRefs {
 
 // Failed 对于 vivid.ActorContext 的实现，该函数是并发安全的
 func (c *Context) Failed(fault vivid.Message) {
-	// 挂起当前 Actor 的消息处理并且向父级 Actor 发送监督上下文以触发父级 Actor 的监督策略
+	// 记录第一现场，且挂起当前 Actor 的消息处理并且向父级 Actor 发送监督上下文以触发父级 Actor 的监督策略
 	c.mailbox.Pause()
 	supervisionContext := newSupervisionContext(c.ref, fault)
+	c.Logger().Error("supervision: actor failed", log.String("id", supervisionContext.ID()), log.String("path", c.ref.GetPath()), log.String("fault_type", fmt.Sprintf("%T", fault)), log.Any("fault", fault), log.Any("stack", errors.New(string(supervisionContext.FaultStack()))))
+
 	c.tell(true, c.parent, supervisionContext)
 	// 通知事件流
 	c.EventStream().Publish(c, ves.ActorFailedEvent{
@@ -607,6 +607,8 @@ func (c *Context) Failed(fault vivid.Message) {
 }
 
 func (c *Context) onSupervise(supervisionContext *supervisionContext) {
+	// 记录该 Actor 接管本次故障的后续处理
+	c.Logger().Debug("supervision: takeover", log.String("id", supervisionContext.ID()), log.String("supervisor_path", c.ref.GetPath()))
 	supervise(c, supervisionContext)
 	var (
 		targets  vivid.ActorRefs
@@ -615,7 +617,12 @@ func (c *Context) onSupervise(supervisionContext *supervisionContext) {
 	)
 
 	// 获取影响的目标和决策
-	targets, decision, reason = c.options.SupervisionStrategy.Supervise(supervisionContext)
+	supervisionStrategy := c.options.SupervisionStrategy
+	if supervisionStrategy == nil {
+		supervisionStrategy = c.system.options.SupervisionStrategy
+	}
+
+	targets, decision, reason = supervisionStrategy.Supervise(supervisionContext)
 
 	// 暂停所有目标的邮箱消息处理
 	mailboxPauseMessage := messages.CommandPauseMailbox.Build()

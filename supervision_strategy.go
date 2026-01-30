@@ -8,6 +8,11 @@ import (
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
+// defaultSupervisionStrategy 是默认的监督策略，用于在监督过程中选择不同的处理方式。
+var defaultSupervisionStrategy = OneForOneStrategy(SupervisionStrategyDecisionMakerFN(func(ctx SupervisionContext) (SupervisionDecision, string) {
+	return SupervisionDecisionStop, "reached defalut top-level supervision strategy, can use WithActorSystemSupervisionStrategy to set a custom supervision strategy"
+}))
+
 // SupervisionDecision 定义了监督决策的类型，用于在监督过程中选择不同的处理方式。
 //
 // 可通过常量 SupervisionDecisionRestart、SupervisionDecisionStop、SupervisionDecisionResume 和 SupervisionDecisionEscalate 访问具体的决策值。
@@ -84,10 +89,10 @@ type SupervisionStrategyDecisionMaker interface {
 }
 
 // SupervisionStrategyDecisionMakerFN 定义了监督策略决策器函数类型，用于根据当前监督上下文做出决策。
-type SupervisionStrategyDecisionMakerFN func(ctx SupervisionContext) SupervisionDecision
+type SupervisionStrategyDecisionMakerFN func(ctx SupervisionContext) (decision SupervisionDecision, reason string)
 
 // MakeDecision 实现 SupervisionStrategyDecisionMaker 接口。
-func (maker SupervisionStrategyDecisionMakerFN) MakeDecision(ctx SupervisionContext) SupervisionDecision {
+func (maker SupervisionStrategyDecisionMakerFN) MakeDecision(ctx SupervisionContext) (decision SupervisionDecision, reason string) {
 	return maker(ctx)
 }
 

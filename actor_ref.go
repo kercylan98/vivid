@@ -220,12 +220,14 @@ func (refs ActorRefs) DeepClone() ActorRefs {
 func (refs ActorRefs) String() string {
 	var result strings.Builder
 	result.WriteString("[")
-	for _, ref := range refs {
-		result.WriteString(ref.GetAddress() + "/" + ref.GetPath())
-		result.WriteString(", ")
+	for i, ref := range refs {
+		result.WriteString(ref.GetPath())
+		if i != len(refs)-1 {
+			result.WriteString(", ")
+		}
 	}
 	result.WriteString("]")
-	return strings.TrimSuffix(result.String(), ", ")
+	return result.String()
 }
 
 // Rand 返回当前 ActorRefs 的随机 ActorRef。当长度为 0 时，返回 nil。

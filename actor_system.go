@@ -92,6 +92,7 @@ func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
 		WithActorSystemLogger(log.GetDefault()),
 		WithActorSystemEnableMetricsUpdatedNotify(-1),
 		WithActorSystemStopTimeout(time.Minute),
+		WithActorSystemSupervisionStrategy(defaultSupervisionStrategy),
 	}, options...)
 
 	opts := &ActorSystemOptions{}
@@ -151,6 +152,27 @@ type ActorSystemOptions struct {
 	// EnableMetrics 指定是否启用指标收集。
 	// 启用后，系统会自动创建 Metrics Actor 来收集和统计系统运行指标。
 	EnableMetrics bool
+
+	// SupervisionStrategy 指定 ActorSystem 默认的监督策略。
+	SupervisionStrategy SupervisionStrategy
+}
+
+// WithActorSystemSupervisionStrategy 返回一个 ActorSystemOption，用于指定 ActorSystem 的监督策略。
+//
+// 用法场景：
+//   - 在构建 ActorSystem 时，通过该 Option 明确设置 ActorSystem 的监督策略。
+//   - 支持灵活的业务需求（如部分场景需要设置 ActorSystem 的监督策略，或测试环境下设置 ActorSystem 的监督策略）。
+//
+// 参数：
+//   - supervisionStrategy: 期望设置的监督策略。
+//     如果传入 nil，则会自动使用系统的默认监督策略（defaultSupervisionStrategy）。
+func WithActorSystemSupervisionStrategy(supervisionStrategy SupervisionStrategy) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		if supervisionStrategy == nil {
+			supervisionStrategy = defaultSupervisionStrategy
+		}
+		opts.SupervisionStrategy = supervisionStrategy
+	}
 }
 
 // WithActorSystemOptions 返回一个 ActorSystemOption，用于设置 ActorSystem 的选项。
