@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -301,7 +302,7 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 
 	switch message := c.envelop.Message().(type) {
 	case *vivid.OnLaunch:
-		behavior(c)
+		c.executeBehaviorWithRecovery(behavior)
 		// 通知事件流
 		c.EventStream().Publish(c, ves.ActorLaunchedEvent{
 			ActorRef: c.ref,
@@ -333,7 +334,21 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 	defer func() {
 		if r := recover(); r != nil {
-			c.Failed(r)
+			switch m := c.Message().(type) {
+			case *vivid.OnKill:
+				// 此刻已经在停止流程中，记录日志并且继续执行停止流程，不再触发监管策略
+				c.Logger().Error("on kill panic", log.String("path", c.ref.GetPath()), log.Any("error", r), log.String("stack", string(debug.Stack())))
+			case *vivid.OnKilled:
+				if m.Ref.Equals(c.ref) {
+					// 此刻已经在停止流程中，记录日志并且继续执行停止流程，不再触发监管策略
+					c.Logger().Error("on kill panic", log.String("path", c.ref.GetPath()), log.Any("error", r), log.String("stack", string(debug.Stack())))
+				} else {
+					// 其他 Actor 的死亡通知，触发监管策略
+					c.failed(r)
+				}
+			default:
+				c.failed(r)
+			}
 		}
 	}()
 	behavior(c)
@@ -410,12 +425,12 @@ func (c *Context) onWatch(_ *messages.WatchMessage) {
 		return
 	}
 
-	// 如果已死，直接告知死亡
-	if atomic.LoadInt32(&c.state) == killed {
-		c.Logger().Debug("watcher already killed", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
-		c.tell(false, sender, &vivid.OnKilled{Ref: c.ref})
-		return
-	}
+	// 如果已死，直接告知死亡（该路径可能永远无法触发，因为 Actor 死亡后，消息会被投递到死信）
+	//if atomic.LoadInt32(&c.state) == killed {
+	//	c.Logger().Debug("watcher already killed", log.String("ref", c.ref.GetPath()), log.String("address", sender.GetAddress()), log.String("path", sender.GetPath()))
+	//	c.tell(false, sender, &vivid.OnKilled{Ref: c.ref})
+	//	return
+	//}
 
 	// 检查是否已经监听
 	full := fmt.Sprintf("%s@%s", sender.GetAddress(), sender.GetPath())
@@ -517,7 +532,7 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 			logger.Warn("restart kill failed; resources may not have been properly released", log.String("path", c.ref.GetPath()), log.String("reason", c.restarting.Reason), log.Any("fault", c.restarting.Fault), log.String("stack", string(c.restarting.Stack)))
 		}
 	} else {
-		behavior(c)
+		c.executeBehaviorWithRecovery(behavior)
 	}
 
 	// 尝试确认死亡
@@ -527,18 +542,15 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 	handler := newKilledHandler(c, message, behavior)
 
-	err := chain.New().
-		Append(chain.ChainFN(handler.handleChildDeath)).
-		Append(chain.ChainFN(handler.checkAndMarkKilled)).
-		Append(chain.ChainFN(handler.prepareSelfKilledMessage)).
-		Append(chain.ChainFN(handler.executeBehavior)).
-		Append(chain.ChainFN(handler.cleanupIfNotRestarting)).
-		Append(chain.ChainFN(handler.cleanupScheduler)).
-		Append(chain.ChainFN(handler.handleRestart)).
+	chain.NewVoid().
+		Append(chain.ChainVoidFN(handler.handleChildDeath)).
+		Append(chain.ChainVoidFN(handler.checkAndMarkKilled)).
+		Append(chain.ChainVoidFN(handler.prepareSelfKilledMessage)).
+		Append(chain.ChainVoidFN(handler.executeBehavior)).
+		Append(chain.ChainVoidFN(handler.cleanupIfNotRestarting)).
+		Append(chain.ChainVoidFN(handler.cleanupScheduler)).
+		Append(chain.ChainVoidFN(handler.handleRestart)).
 		Run()
-	if err != nil {
-		c.Logger().Error("onKilled failed", log.Any("error", err))
-	}
 }
 
 func (c *Context) Message() vivid.Message {
@@ -602,8 +614,7 @@ func (c *Context) Children() vivid.ActorRefs {
 	return children
 }
 
-// Failed 对于 vivid.ActorContext 的实现，该函数是并发安全的
-func (c *Context) Failed(fault vivid.Message) {
+func (c *Context) failed(fault vivid.Message) {
 	// 记录第一现场，且挂起当前 Actor 的消息处理并且向父级 Actor 发送监督上下文以触发父级 Actor 的监督策略
 	c.mailbox.Pause()
 	supervisionContext := newSupervisionContext(c.ref, fault)
@@ -621,6 +632,11 @@ func (c *Context) Failed(fault vivid.Message) {
 		ActorRef: c.ref,
 		Type:     reflect.TypeOf(c.actor),
 	})
+}
+
+// Failed 对于 vivid.ActorContext 的实现，该函数是并发安全的
+func (c *Context) Failed(fault vivid.Message) {
+	panic(fault) // 确保 failed 后立刻触发 panic，避免在之后继续执行其他逻辑
 }
 
 func (c *Context) onSupervise(supervisionContext *supervisionContext) {

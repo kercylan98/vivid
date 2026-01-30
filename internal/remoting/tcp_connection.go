@@ -55,7 +55,7 @@ type tcpConnectionActor struct {
 	closed         bool
 }
 
-func (c *tcpConnectionActor) OnPrelaunch() (err error) {
+func (c *tcpConnectionActor) OnPrelaunch(ctx vivid.PrelaunchContext) (err error) {
 	handshakeProtocol := &Handshake{
 		AdvertiseAddr: c.advertiseAddr,
 	}

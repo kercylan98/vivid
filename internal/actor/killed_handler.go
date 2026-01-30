@@ -19,49 +19,46 @@ func newKilledHandler(ctx *Context, message *vivid.OnKilled, behavior vivid.Beha
 }
 
 type killedHandler struct {
-	ctx              *Context
-	message          *vivid.OnKilled
-	behavior         vivid.Behavior
+	ctx               *Context
+	message           *vivid.OnKilled
+	behavior          vivid.Behavior
 	selfKilledMessage *vivid.OnKilled
-	restarting       bool
-	shouldContinue   bool
+	restarting        bool
+	shouldContinue    bool
 }
 
 // handleChildDeath 处理子 Actor 死亡
-func (h *killedHandler) handleChildDeath() error {
+func (h *killedHandler) handleChildDeath() {
 	if !h.message.Ref.Equals(h.ctx.ref) {
 		delete(h.ctx.children, h.message.Ref.GetPath())
-		h.behavior(h.ctx)
+		h.ctx.executeBehaviorWithRecovery(h.behavior)
 	}
-	return nil
 }
 
 // checkAndMarkKilled 检查并标记为 killed
-func (h *killedHandler) checkAndMarkKilled() error {
+func (h *killedHandler) checkAndMarkKilled() {
 	// 如果还有子 Actor，则不处理自身死亡
 	if len(h.ctx.children) != 0 || !atomic.CompareAndSwapInt32(&h.ctx.state, killing, killed) {
 		h.shouldContinue = false
-		return nil
+		return
 	}
 	h.shouldContinue = true
-	return nil
 }
 
 // prepareSelfKilledMessage 准备自身死亡消息
-func (h *killedHandler) prepareSelfKilledMessage() error {
+func (h *killedHandler) prepareSelfKilledMessage() {
 	if !h.shouldContinue {
-		return nil
+		return
 	}
 	h.selfKilledMessage = &vivid.OnKilled{Ref: h.ctx.ref}
 	h.ctx.envelop = mailbox.NewEnvelop(true, h.ctx.Sender(), h.ctx.ref, h.selfKilledMessage)
 	h.restarting = h.ctx.restarting != nil
-	return nil
 }
 
 // executeBehavior 执行 behavior
-func (h *killedHandler) executeBehavior() error {
+func (h *killedHandler) executeBehavior() {
 	if !h.shouldContinue {
-		return nil
+		return
 	}
 
 	if h.restarting {
@@ -79,15 +76,14 @@ func (h *killedHandler) executeBehavior() error {
 				log.String("stack", string(h.ctx.restarting.Stack)))
 		}
 	} else {
-		h.behavior(h.ctx)
+		h.ctx.executeBehaviorWithRecovery(h.behavior)
 	}
-	return nil
 }
 
 // cleanupIfNotRestarting 如果不是重启状态，进行清理
-func (h *killedHandler) cleanupIfNotRestarting() error {
+func (h *killedHandler) cleanupIfNotRestarting() {
 	if !h.shouldContinue || h.restarting {
-		return nil
+		return
 	}
 
 	h.ctx.EventStream().UnsubscribeAll(h.ctx)
@@ -108,26 +104,24 @@ func (h *killedHandler) cleanupIfNotRestarting() error {
 		ActorRef: h.ctx.ref,
 		Type:     reflect.TypeOf(h.ctx.actor),
 	})
-	return nil
 }
 
 // cleanupScheduler 清理调度器
-func (h *killedHandler) cleanupScheduler() error {
+func (h *killedHandler) cleanupScheduler() {
 	if !h.shouldContinue {
-		return nil
+		return
 	}
 	// 清理调度器，重启也清理
 	h.ctx.scheduler.Clear()
 	h.ctx.Logger().Debug("actor killed",
 		log.String("path", h.ctx.ref.GetPath()),
 		log.Bool("restarting", h.restarting))
-	return nil
 }
 
 // handleRestart 如果是重启状态，处理重启逻辑
-func (h *killedHandler) handleRestart() error {
+func (h *killedHandler) handleRestart() {
 	if !h.shouldContinue || !h.restarting {
-		return nil
+		return
 	}
 
 	// 如果提供了提供者，则使用提供者提供新的 Actor 实例
@@ -177,5 +171,4 @@ func (h *killedHandler) handleRestart() error {
 			Type:     reflect.TypeOf(h.ctx.actor),
 		})
 	}
-	return nil
 }
