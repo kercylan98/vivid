@@ -12,6 +12,49 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestContext_Failed(t *testing.T) {
+
+	t.Run("failed", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.Failed(errors.New("on launch error"))
+			case *vivid.OnKilled:
+				close(wait)
+			}
+		}))
+
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+}
+
+func TestContext_Children(t *testing.T) {
+	system := actor.NewTestSystem(t)
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
+
+	var n = 10
+	for i := 0; i < n; i++ {
+		ref, err := system.ActorOf(actor.UselessActor())
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		assert.Equal(t, i+1, system.Children().Len())
+	}
+}
+
 func TestContext_Name(t *testing.T) {
 	system := actor.NewTestSystem(t)
 	defer func() {
@@ -324,34 +367,91 @@ func TestContext_Become(t *testing.T) {
 }
 
 func TestContext_RevertBehavior(t *testing.T) {
-	system := actor.NewTestSystem(t)
-	defer func() {
-		assert.NoError(t, system.Stop())
-	}()
+	t.Run("unbecome", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-		switch ctx.Message().(type) {
-		case *vivid.OnLaunch:
-			ctx.Become(func(ctx vivid.ActorContext) {
-				switch ctx.Message().(type) {
-				case int:
-					wg.Done()
-					ctx.UnBecome()
-					ctx.Tell(ctx.Ref(), 2)
-				}
-			})
-			ctx.Tell(ctx.Ref(), 1)
-		case int:
-			ctx.UnBecome()
-			wg.Done()
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.Become(func(ctx vivid.ActorContext) {})
+				ctx.Become(func(ctx vivid.ActorContext) {})
+				ctx.Become(func(ctx vivid.ActorContext) {})
+				ctx.UnBecome()
+			case int:
+				close(wait)
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		system.Tell(ref, 1)
+
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
 		}
-	}))
-	assert.NoError(t, err)
-	assert.NotNil(t, ref)
+	})
 
-	wg.Wait()
+	t.Run("not discard old", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.Become(func(ctx vivid.ActorContext) {})
+				ctx.Become(func(ctx vivid.ActorContext) {})
+				ctx.UnBecome(vivid.WithBehaviorDiscardOld(false))
+			case int:
+				close(wait)
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		system.Tell(ref, 1)
+
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+}
+
+func TestContext_Receive(t *testing.T) {
+	t.Run("panic", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case error:
+				panic(m)
+			case *vivid.OnKilled: // 触发默认监管策略后杀死
+				close(wait)
+			}
+		}))
+
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		system.Tell(ref, errors.New("test panic"))
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
 }
 
 func TestContext_Tell(t *testing.T) {
@@ -532,6 +632,45 @@ func TestContext_Kill(t *testing.T) {
 
 	system.Kill(ref, false, "test kill")
 	wg.Wait()
+}
+
+func TestContext_Unwatch(t *testing.T) {
+	t.Run("unwatch", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		ref, err := system.ActorOf(actor.UselessActor())
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		var wait = make(chan struct{})
+		watcherRef, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.Watch(ref)
+				ctx.Unwatch(ref)
+				ctx.Kill(ref, false)
+			case *vivid.OnKilled:
+				if m.Ref.Equals(ref) {
+					assert.Fail(t, "watcher ref mismatch")
+				} else {
+					time.Sleep(100 * time.Millisecond) // 等待可能的异步处理
+					close(wait)
+				}
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, watcherRef)
+		system.Kill(watcherRef, true)
+
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
 }
 
 func TestContext_Watch(t *testing.T) {
