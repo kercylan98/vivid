@@ -1,7 +1,6 @@
 package actor_test
 
 import (
-	"sync"
 	"testing"
 
 	"github.com/kercylan98/vivid"
@@ -11,31 +10,39 @@ import (
 )
 
 func TestEventStream_Subscribe(t *testing.T) {
-	system := actor.NewTestSystem(t)
-	defer func() {
-		assert.NoError(t, system.Stop())
-	}()
-	var waitSub = make(chan struct{})
-	var waitEvent = make(chan struct{})
-	var once sync.Once
-	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-		switch ctx.Message().(type) {
-		case *vivid.OnLaunch:
-			ctx.EventStream().Subscribe(ctx, ves.ActorSpawnedEvent{})
-			close(waitSub)
-		case vivid.StreamEvent:
-			once.Do(func() {
-				close(waitEvent)
-			})
-		}
-	}))
-	assert.NoError(t, err)
-	assert.NotNil(t, ref)
+	type TestEvent struct{}
 
-	<-waitSub
-	ref, err = system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
-	assert.NoError(t, err)
-	assert.NotNil(t, ref)
+	t.Run("repeated subscribe", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+		system.EventStream().Subscribe(system, ves.ActorSpawnedEvent{})
+		system.EventStream().Subscribe(system, ves.ActorSpawnedEvent{})
+	})
 
-	<-waitEvent
+	t.Run("unsubscribe", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.EventStream().Subscribe(ctx, TestEvent{})
+				ctx.EventStream().Unsubscribe(ctx, TestEvent{})
+				ctx.EventStream().Publish(ctx, TestEvent{})
+
+				// unsubscribe not subscribed event
+				ctx.EventStream().Unsubscribe(ctx, 1)
+			case TestEvent:
+				panic("test event received")
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+	})
+
 }
