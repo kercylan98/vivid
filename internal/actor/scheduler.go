@@ -25,7 +25,6 @@ func init() {
 type SchedulerMessage struct {
 	Reference string
 	Message   vivid.Message
-	Once      bool
 }
 
 func schedulerMessageReader(message any, reader *messages.Reader, codec messages.Codec) (err error) {
@@ -35,7 +34,7 @@ func schedulerMessageReader(message any, reader *messages.Reader, codec messages
 		return err
 	}
 
-	return reader.ReadInto(&m.Reference, &m.Once)
+	return reader.ReadInto(&m.Reference)
 }
 
 func schedulerMessageWriter(message any, writer *messages.Writer, codec messages.Codec) (err error) {
@@ -45,7 +44,7 @@ func schedulerMessageWriter(message any, writer *messages.Writer, codec messages
 		return err
 	}
 
-	return writer.WriteFrom(m.Reference, m.Once)
+	return writer.WriteFrom(m.Reference)
 }
 
 func newScheduler(ctx *Context) *Scheduler {

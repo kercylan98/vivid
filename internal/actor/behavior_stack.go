@@ -2,6 +2,8 @@ package actor
 
 import "github.com/kercylan98/vivid"
 
+var emptyBehavior = func(ctx vivid.ActorContext) {}
+
 func NewBehaviorStack(behaviors ...vivid.Behavior) *BehaviorStack {
 	return &BehaviorStack{
 		behaviors: behaviors,

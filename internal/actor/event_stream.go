@@ -40,7 +40,7 @@ func (es *eventStream) Subscribe(ctx vivid.EventStreamContext, event any) {
 		es.subscribers[eventType] = subscribers
 	}
 	subscriberPath := ctx.Ref().GetPath()
-	if _, ok := subscribers[subscriberPath]; ok {
+	if _, ok = subscribers[subscriberPath]; ok {
 		ctx.Logger().Warn("event already subscribed", log.String("event_type", eventType.String()), log.String("subscriber_path", subscriberPath))
 		return
 	}
@@ -66,6 +66,8 @@ func (es *eventStream) Publish(ctx vivid.EventStreamContext, event vivid.Message
 	for _, subscriber := range subscribers {
 		es.system.tell(false, subscriber, vivid.StreamEvent(event))
 	}
+
+	ctx.Logger().Debug("event published", log.String("event_type", eventType.String()), log.String("publisher_path", ctx.Ref().GetPath()))
 }
 
 func (es *eventStream) Unsubscribe(ctx vivid.EventStreamContext, event any) {

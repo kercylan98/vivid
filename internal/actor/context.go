@@ -74,6 +74,7 @@ type Context struct {
 	children      map[vivid.ActorPath]vivid.ActorRef // 懒加载的子 Actor 引用
 	envelop       vivid.Envelop                      // 当前 ActorContext 的消息
 	state         int32                              // 状态
+	zombie        bool                               // 是否为僵尸状态
 	restarting    *RestartMessage                    // 正在重启的消息
 	watchers      map[string]vivid.ActorRef          // 正在监听该 Actor 终止事件的 ActorRef，其中 key 为 ActorRef 的完整路径
 	stash         []vivid.Envelop                    // 暂存区
@@ -288,7 +289,8 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// - 普通消息一律推入死信队列
 	// - 系统消息在 killing 阶段仍需要处理（例如子 Actor 的 OnKilled 事件），否则终止流程无法闭环
 	currentState := atomic.LoadInt32(&c.state)
-	if (currentState == killed) || (!envelop.System() && currentState != running) {
+	killingOrKilled := (currentState == killed) || (!envelop.System() && currentState != running) // 是否处于停止中或死亡状态
+	if killingOrKilled && !c.zombie {                                                             // 是否处于僵尸状态
 		c.system.TellSelf(ves.DeathLetterEvent{
 			Envelope: envelop,
 			Time:     time.Now(),
@@ -297,8 +299,13 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	}
 
 	// 处理消息
+	// 对于僵尸状态，用户逻辑都是执行过的，不应该再继续执行，否则可能会导致异常状态扩散
+	// 僵尸状态的消息处理仅用作能正确的确保 Actor 被释放
 	c.envelop = envelop
 	behavior := c.behaviorStack.Peek()
+	if c.zombie {
+		behavior = emptyBehavior
+	}
 
 	switch message := c.envelop.Message().(type) {
 	case *vivid.OnLaunch:
@@ -342,10 +349,10 @@ func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 				if atomic.LoadInt32(&c.state) != running || m.Ref.Equals(c.ref) {
 					// 此刻已经在停止流程中，记录日志并且继续执行停止流程，不再触发监管策略
 					c.Logger().Error("on kill panic", log.String("path", c.ref.GetPath()), log.Any("error", r), log.String("stack", string(debug.Stack())))
-				} else {
-					// 其他 Actor 的死亡通知，触发监管策略
-					c.failed(r)
+					return
 				}
+				// 其他 Actor 的死亡通知，触发监管策略
+				c.failed(r)
 			default:
 				c.failed(r)
 			}
@@ -365,15 +372,11 @@ func (c *Context) onScheduler(message *SchedulerMessage, behavior vivid.Behavior
 	c.envelop = newReplacedEnvelop(c.envelop, message.Message)
 
 	// 执行调度
-	if message.Once {
-		if err := c.scheduler.Cancel(message.Reference); err != nil {
-			c.Logger().Error("failed to cancel scheduler", log.String("reference", message.Reference), log.Any("error", err))
-		}
-	}
 	c.executeBehaviorWithRecovery(behavior)
 }
 
 func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
+	c.Logger().Debug("receive command", log.String("path", c.ref.GetPath()), log.String("command", message.Command.String()))
 	switch message.Command {
 	case messages.CommandPauseMailbox:
 		c.mailbox.Pause()
@@ -520,14 +523,15 @@ func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
 }
 
 func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
-	if !atomic.CompareAndSwapInt32(&c.state, running, killing) {
+	if !c.zombie && !atomic.CompareAndSwapInt32(&c.state, running, killing) {
 		return
 	}
 	c.doKill(message, behavior)
 }
 
 func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
-	c.Logger().Debug("receive kill", log.String("path", c.ref.path), log.Bool("restarting", c.restarting != nil))
+	c.Logger().Debug("receive kill", log.String("path", c.ref.path), log.Bool("restarting", c.restarting != nil), log.Bool("zombie", c.zombie))
+
 	// 等待所有子 Actor 结束，假设是重启，子 Actor 不应该跟随重启，应该由父节点决定是否重启
 	for _, child := range c.children {
 		c.Logger().Debug("notify child kill", log.String("path", child.GetPath()))
@@ -556,8 +560,16 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 	handler := newKilledHandler(c, message, behavior)
 
-	chain.NewVoid().
-		Append(chain.ChainVoidFN(handler.handleChildDeath)).
+	v := chain.NewVoid()
+	if c.zombie {
+		handler.shouldContinue = true
+		handler.prepareSelfKilledMessage()
+		handler.restarting = false
+		handler.cleanupIfNotRestarting()
+		return
+	}
+
+	v.Append(chain.ChainVoidFN(handler.handleChildDeath)).
 		Append(chain.ChainVoidFN(handler.checkAndMarkKilled)).
 		Append(chain.ChainVoidFN(handler.prepareSelfKilledMessage)).
 		Append(chain.ChainVoidFN(handler.executeBehavior)).

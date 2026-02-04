@@ -43,20 +43,17 @@ func (i *contextInitializer) initRef() error {
 	if path == "" && i.ctx.parent != nil {
 		path = fmt.Sprintf("%d", actorIncrementId.Add(1))
 	}
+	var joinPathErr error
 	if i.ctx.parent != nil {
 		parentAddress = i.ctx.parent.address
-		var err error
-		path, err = url.JoinPath(i.ctx.parent.path, path)
-		if err != nil {
-			return vivid.ErrorRefInvalidPath.WithMessage(err.Error())
-		}
+		path, joinPathErr = url.JoinPath(i.ctx.parent.path, path)
 	} else {
 		path = "/"
 	}
 
-	ref, err := NewRef(parentAddress, path)
-	if err != nil {
-		return err
+	ref, newRefErr := NewRef(parentAddress, path)
+	if joinPathErr != nil || newRefErr != nil {
+		return vivid.ErrorRefInvalidPath.With(joinPathErr).With(newRefErr)
 	}
 	i.ctx.ref = ref
 	return nil

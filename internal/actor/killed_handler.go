@@ -12,9 +12,10 @@ import (
 
 func newKilledHandler(ctx *Context, message *vivid.OnKilled, behavior vivid.Behavior) *killedHandler {
 	return &killedHandler{
-		ctx:      ctx,
-		message:  message,
-		behavior: behavior,
+		ctx:            ctx,
+		message:        message,
+		behavior:       behavior,
+		shouldContinue: false,
 	}
 }
 
@@ -150,7 +151,11 @@ func (h *killedHandler) handleRestart() {
 	if !success {
 		// 记录错误并释放资源
 		h.ctx.Logger().Error("restart failed; actor is now in zombie state", log.String("path", h.ctx.ref.GetPath()))
-		h.ctx.system.removeActorContext(h.ctx)
+		h.ctx.zombie = true
+
+		// 不再移除 ActorContext，避免后续释放的消息无法被处理
+		// 僵尸 Actor 无法处理任何用户消息，但是会占用 Ref 标识
+		// h.ctx.system.removeActorContext(h.ctx)
 
 		// 现有的 ActorRef 缓存中可能持有该邮箱，应当快速排空且进入死信息，避免内存长时间驻留
 		h.ctx.mailbox.Resume()
