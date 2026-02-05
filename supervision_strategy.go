@@ -114,10 +114,7 @@ type SupervisionContext interface {
 	// Children 方法用于获取当前监督上下文的所有子 ActorRefs。
 	Children() ActorRefs
 
-	// Message 获取导致当前监督上下文触发的消息。
-	Message() Message
-
-	// 获取故障信息。
+	// Fault 获取导致当前监督上下文触发的消息。
 	Fault() Message
 
 	// FaultStack 获取故障堆栈。

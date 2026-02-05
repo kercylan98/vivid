@@ -33,6 +33,7 @@ func (h *killedHandler) handleChildDeath() {
 	if !h.message.Ref.Equals(h.ctx.ref) {
 		delete(h.ctx.children, h.message.Ref.GetPath())
 		h.ctx.executeBehaviorWithRecovery(h.behavior)
+		h.ctx.Logger().Debug("child death", log.Int("children_count", len(h.ctx.children)), log.String("ref", h.ctx.ref.GetPath()), log.String("child", h.message.Ref.GetPath()))
 	}
 }
 

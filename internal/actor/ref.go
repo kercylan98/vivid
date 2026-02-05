@@ -71,11 +71,10 @@ func (r *Ref) Equals(other vivid.ActorRef) bool {
 }
 
 func (r *Ref) Clone() vivid.ActorRef {
-	ref, err := NewRef(r.GetAddress(), r.GetPath())
-	if err != nil {
-		return nil
+	return &Ref{
+		address: r.address,
+		path:    r.path,
 	}
-	return ref
 }
 
 func (r *Ref) ToActorRefs() vivid.ActorRefs {
@@ -90,10 +89,8 @@ func NewAgentRef(agent *Ref) (*AgentRef, error) {
 	if agent == nil {
 		return nil, vivid.ErrorRefNilAgent
 	}
-	ref, err := agent.Child(agentFutureMarker + uuid.NewString())
-	if err != nil {
-		return nil, err
-	}
+	// agent 一定合法的，且 agentFutureMaker 及 uuid 的组合一定不会返回 error。
+	ref, _ := agent.Child(agentFutureMarker + uuid.NewString())
 	return &AgentRef{
 		ref:   ref,
 		agent: agent,
@@ -107,10 +104,6 @@ type AgentRef struct {
 
 func (a *AgentRef) Ref() *Ref {
 	return a.ref
-}
-
-func (a *AgentRef) Agent() *Ref {
-	return a.agent
 }
 
 // Child 基于当前 Ref 快速生成子 Ref。

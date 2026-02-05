@@ -22,13 +22,6 @@ var (
 // 返回:
 //   - *supervisionContext: 新的监督上下文。
 func newSupervisionContext(ref vivid.ActorRef, fault vivid.Message) *supervisionContext {
-	if ref == nil {
-		panic("ref is nil")
-	}
-	if fault == nil {
-		panic("fault is nil")
-	}
-
 	return &supervisionContext{
 		id:         uuid.New().String(),
 		child:      ref.ToActorRefs(),
@@ -51,9 +44,8 @@ func (m *RestartMessage) recoverExec(logger log.Logger, name string, alarm bool,
 	defer func() {
 		if r := recover(); r != nil {
 			result = r
-		} else {
-			success = true
 		}
+		success = result == nil
 		if !success {
 			var message = fmt.Sprintf("restart process '%s' failed", name)
 			var fields = []any{
@@ -70,11 +62,7 @@ func (m *RestartMessage) recoverExec(logger log.Logger, name string, alarm bool,
 			}
 		}
 	}()
-	err := handler()
-	success = err == nil
-	if !success {
-		result = err
-	}
+	result = handler()
 	return
 }
 
@@ -170,10 +158,6 @@ func (c *supervisionContext) Child() vivid.ActorRefs {
 
 func (c *supervisionContext) Children() vivid.ActorRefs {
 	return c.supervisorChildren
-}
-
-func (c *supervisionContext) Message() vivid.Message {
-	return c.fault
 }
 
 func (c *supervisionContext) Fault() vivid.Message {

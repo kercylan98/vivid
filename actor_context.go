@@ -667,4 +667,13 @@ type RestartContext interface {
 	// 返回值：
 	//   - log.Logger：当前上下文可用的日志记录器实例，保证非 nil。
 	Logger() log.Logger
+
+	// Ref 返回当前 Actor 的 ActorRef 实例。
+	//
+	// 功能说明：
+	//   - 返回当前正在重启的 Actor 的引用标识，用于在重启过程中获取自身引用。
+	//
+	// 返回值：
+	//   - ActorRef：当前 Actor 的引用实例，保证非 nil。
+	Ref() ActorRef
 }
