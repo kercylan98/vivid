@@ -1,0 +1,34 @@
+---
+title: Actor 配置
+description: ActorOptions 与 WithActorXxx 选项一览
+---
+
+创建 Actor 时可通过 **`vivid.ActorOption`** 配置行为，所有选项汇总在 **`vivid.ActorOptions`** 中。监督策略、邮箱与超时等专题见下方链接。
+
+## 配置项一览
+
+| 选项 | 说明 |
+|------|------|
+| **WithActorName** | 在当前父级下唯一标识该 Actor；未指定时由系统自动生成。同父下重复会返回 [ErrorActorAlreadyExists](/docs/config/errors) |
+| **WithActorMailbox** | 自定义邮箱实现（Enqueue、Pause、Resume、IsPaused）；未指定则使用系统默认无界队列 |
+| **WithActorDefaultAskTimeout** | 该 Actor 作为 Ask 接收方时的默认超时；仅 >0 时生效，优先级高于系统默认 |
+| **WithActorLogger** | 该 Actor 专用 Logger；未指定则继承系统 Logger |
+| **WithActorSupervisionStrategy** | 对该 Actor 的**子 Actor** 使用的监督策略；详见 [监督策略](/docs/config/supervision) |
+| **WithActorProvider** | 监督触发**重启**时用于提供新实例；未设置则重启不替换实例。与 [监督策略](/docs/config/supervision#与-actor-提供者provider-配合) 配合使用 |
+| **WithActorOptions** | 一次性应用整份 ActorOptions（多用于复用配置） |
+
+### Actor 提供者（Provider）
+
+**WithActorProvider(provider)** 用于在监督策略决定**重启**该 Actor 时，通过 **provider.Provide()** 获取新实例替换原实例；未设置则重启不替换。与 [监督策略 - 与 Actor 提供者配合](/docs/config/supervision#与-actor-提供者provider-配合) 一起使用。
+
+## 使用方式
+
+在 **ActorOf** 的可变参数中链式传入 Option，或先组装 **ActorOptions** 再通过 **WithActorOptions** 传入：
+
+```go
+ref, err := ctx.ActorOf(&MyActor{},
+    vivid.WithActorName("worker-1"),
+    vivid.WithActorDefaultAskTimeout(10*time.Second),
+    vivid.WithActorSupervisionStrategy(myStrategy),
+)
+```

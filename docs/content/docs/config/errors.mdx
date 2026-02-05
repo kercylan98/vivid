@@ -1,0 +1,83 @@
+---
+title: 错误
+description: vivid 错误体系、预定义错误码、errors.Is/As 与错误链
+---
+
+Vivid 使用 **`*vivid.Error`** 表示可序列化、支持错误码与错误链的异常，可与标准 **errors.Is** / **errors.As** 配合判定。本文汇总预定义错误及用法，监督与故障上报见 [监督策略](/docs/config/supervision)、[创建与生命周期 - Failed](/docs/basics/lifecycle#主动上报故障failed)。
+
+## Error 类型
+
+**`*vivid.Error`** 可在分布式环境中序列化传播，支持 **errors.Is** / **errors.As** 与错误链：
+
+- **GetCode()**：错误码，用于日志、监控或跨节点一致判定。
+- **GetMessage()**：可读描述。
+- **With(err error)**：包装底层错误，生成新 *Error，**Unwrap** 返回 err，便于错误链与 **errors.Is/As** 递归判定。
+- **WithMessage(msg string)**：在描述后追加说明，不改变错误码。
+
+判定示例：
+
+```go
+if errors.Is(err, vivid.ErrorActorAlreadyExists) {
+    // 同父下名称重复
+}
+if errors.Is(err, vivid.ErrorFutureTimeout) {
+    // Ask 超时
+}
+var vividErr *vivid.Error
+if errors.As(err, &vividErr) {
+    code := vividErr.GetCode()
+}
+```
+
+## 预定义错误（按类别）
+
+### 系统与资源
+
+| 变量 | 说明 |
+|------|------|
+| **ErrorException** | 未分类内部异常 |
+| **ErrorNotFound** | 资源不存在 |
+| **ErrorActorSystemAlreadyStarted** | 重复 Start |
+| **ErrorActorSystemAlreadyStopped** | 重复 Stop |
+| **ErrorActorSystemStartFailed** / **ErrorActorSystemStopFailed** | 启动/停止失败 |
+| **ErrorActorSystemNotStarted** | 未启动时调用 Stop |
+
+### Actor 创建与生命周期
+
+| 变量 | 说明 |
+|------|------|
+| **ErrorActorDeaded** | Actor 已死亡（如在已死亡父级上创建） |
+| **ErrorActorAlreadyExists** | 同父下名称重复 |
+| **ErrorActorSpawnFailed** | Actor 创建失败 |
+| **ErrorActorPrelaunchFailed** | 预启动失败 |
+
+### Future 与消息
+
+| 变量 | 说明 |
+|------|------|
+| **ErrorFutureTimeout** | Result/Wait 超时未收到应答 |
+| **ErrorFutureMessageTypeMismatch** | 应答类型与泛型声明不一致 |
+| **ErrorFutureUnexpectedError** / **ErrorFutureInvalid** | 非预期错误或参数非法 |
+| **ErrorInvalidMessageLength** / **ErrorReadMessageBufferFailed** | 消息长度或缓冲读取异常 |
+
+### 参数、调度与状态
+
+| 变量 | 说明 |
+|------|------|
+| **ErrorIllegalArgument** | 参数无效或缺失 |
+| **ErrorCronParse** | Cron 表达式解析失败 |
+| **ErrorTriggerExpired** | 触发器已过期 |
+| **ErrorIllegalState** | 违反当前状态或上下文 |
+| **ErrorQueueEmpty** / **ErrorJobAlreadyExists** 等 | 队列与调度相关 |
+
+### ActorRef
+
+| 变量 | 说明 |
+|------|------|
+| **ErrorRefEmpty** / **ErrorRefFormat** | ActorRef 为空或格式错误 |
+| **ErrorRefInvalidAddress** / **ErrorRefInvalidPath** | 地址或路径非法 |
+| **ErrorRefNilAgent** | AgentRef 为 nil |
+
+---
+
+完整列表与错误码见 [pkg.go.dev - vivid](https://pkg.go.dev/github.com/kercylan98/vivid#pkg-variables)。**RegisterError** 用于在包 init 或启动阶段注册自定义错误码，供跨节点一致识别。

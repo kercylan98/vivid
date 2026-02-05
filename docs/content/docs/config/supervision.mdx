@@ -1,0 +1,77 @@
+---
+title: 监督策略
+description: 监督决策、OneForOne/OneForAll、SupervisionContext 与决策器
+---
+
+当子 Actor 发生 **panic** 或主动调用 **ctx.Failed(fault)** 时，父级的**监督策略**会根据当前故障信息决定对该子 Actor（或所有子 Actor）采取何种动作：重启、停止、恢复或升级。本文说明决策类型、**OneForOne** / **OneForAll** 策略、**SupervisionContext** 与决策器写法。在创建 Actor 时通过 [Actor 配置](/docs/config/actor-config) 的 **WithActorSupervisionStrategy** 或系统级的 **WithActorSystemSupervisionStrategy** 注入。
+
+<Mermaid diagram={`flowchart LR
+  F[子 Actor 故障] --> D[决策器 MakeDecision]
+  D --> R[Restart]
+  D --> S[Stop]
+  D --> C[Resume]
+  D --> E[Escalate]
+  R --> O[OneForOne / OneForAll]
+  S --> O
+  O --> |仅故障子| Child[单个子 Actor]
+  O --> |全部子| All[所有子 Actor]
+`} title="监督流程：故障 → 决策 → 动作" />
+
+## 监督决策类型
+
+决策由（SupervisionDecision） **SupervisionStrategyDecisionMaker** 的 **MakeDecision(ctx)** 返回，可选常量如下：
+
+| 决策 | 含义 |
+|------|------|
+| **SupervisionDecisionRestart** | 重启子 Actor（立即，不处理剩余队列） |
+| **SupervisionDecisionGracefulRestart** | 优雅重启（处理完当前与队列后再重启） |
+| **SupervisionDecisionStop** | 停止子 Actor（立即） |
+| **SupervisionDecisionGracefulStop** | 优雅停止（处理完再停止） |
+| **SupervisionDecisionResume** | 恢复，不重启不停止，子 Actor 继续运行 |
+| **SupervisionDecisionEscalate** | 升级，由父级的父级（或系统顶层）处理；顶层默认行为为停止 |
+
+可通过 **decision.IsRestart()**、**IsStop()**、**IsResume()**、**IsEscalate()**、**IsGraceful()** 等辅助方法判断决策类型。
+
+## SupervisionContext
+
+决策器的 **MakeDecision(ctx SupervisionContext)** 会收到当前监督上下文，用于根据故障与子级信息做出决策：
+
+| 方法 | 说明 |
+|------|------|
+| **Logger()** | 当前日志，便于记录决策原因 |
+| **Child()** | 仅包含**触发本次监督**的子 ActorRef（单个） |
+| **Children()** | 当前父级下的**所有**子 ActorRefs |
+| **Fault()** | 导致触发的故障消息（panic 时可为 nil 或包装信息） |
+| **FaultStack()** | 故障时的堆栈（[]byte） |
+
+OneForOne 仅对 **Child()** 应用决策；OneForAll 对 **Children()** 全部应用同一决策。
+
+## OneForOne 与 OneForAll
+
+- **OneForOneStrategy(decisionMaker, options...)**：仅对**触发监督的那一个**子 Actor 应用决策。适用于子 Actor 彼此独立、故障隔离的场景。
+- **OneForAllStrategy(decisionMaker, options...)**：对**当前上下文下所有子 Actor** 应用同一决策。适用于需要整体重置或协调的场景。
+
+两者均接受 **SupervisionStrategyDecisionMakerFN** 或实现 **SupervisionStrategyDecisionMaker** 的决策器，以及可选的**退避选项**（InitialDelay、MaxDelay、Factor、Jitter），用于在重启/停止前加入延迟与抖动，避免 thundering herd。
+
+## 决策器示例
+
+根据故障类型或子级信息决定恢复或重启：
+
+```go
+maker := vivid.SupervisionStrategyDecisionMakerFN(func(ctx vivid.SupervisionContext) (vivid.SupervisionDecision, string) {
+    if ctx.Fault() == nil {
+        return vivid.SupervisionDecisionResume, "no fault"
+    }
+    // 可根据 Fault()、ctx.Child()、ctx.Children()、FaultStack() 等细化逻辑
+    return vivid.SupervisionDecisionRestart, "restart on fault"
+})
+strategy := vivid.OneForOneStrategy(maker)
+
+ref, _ := ctx.ActorOf(&MyActor{}, vivid.WithActorSupervisionStrategy(strategy))
+```
+
+系统顶层若不设置 **WithActorSystemSupervisionStrategy**，默认行为为**停止**（Stop），并记录“已达默认顶层监督策略”的说明。
+
+## 与 Actor 提供者（Provider）配合
+
+当决策为**重启**时，若该 Actor 创建时配置了 **WithActorProvider(provider)**，系统会通过 **provider.Provide()** 获取新实例替换原 Actor；未配置则重启不替换实例。详见 [Actor 配置 - Actor 提供者](/docs/config/actor-config#actor-提供者provider)。

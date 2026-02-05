@@ -1,0 +1,30 @@
+{
+  "title": "文档",
+  "pages": [
+    "---入门---",
+    "index",
+    "introduction/what-is-vivid",
+    "---Actor 基础---",
+    "basics/implementing-actor",
+    "basics/lifecycle",
+    "basics/message-delivery",
+    "---进阶---",
+    "basics/pipe-to",
+    "basics/entrust",
+    "basics/death-letter",
+    "basics/stash",
+    "basics/behavior-stack",
+    "basics/scheduler",
+    "basics/event-stream",
+    "config/remoting",
+    "---监督与容错---",
+    "config/supervision",
+    "---可观测性---",
+    "config/metrics",
+    "---配置参考---",
+    "config/actor-system-config",
+    "config/actor-config",
+    "---扩展---",
+    "config/errors"
+  ]
+}

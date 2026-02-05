@@ -1,0 +1,161 @@
+---
+title: 快速入门
+description: 从安装到运行第一个 Actor 的完整步骤
+---
+
+本文介绍如何安装 Vivid、创建 Actor 系统与第一个 Actor，并完成一次消息收发。更多概念与配置见各指南与配置章节；完整 API 见 [pkg.go.dev](https://pkg.go.dev/github.com/kercylan98/vivid)。
+
+<Steps>
+
+<Step>
+
+### 环境要求
+
+- **Go**：1.25.1 及以上
+- **平台**：Go 支持的操作系统与架构（如 Linux、macOS、Windows，amd64、arm64 等）
+
+</Step>
+
+<Step>
+
+### 安装依赖
+
+```bash
+go get github.com/kercylan98/vivid
+```
+
+<Callout type="info" title="依赖说明">
+核心依赖保持精简，主要包括：`github.com/google/uuid`、`github.com/reugn/go-quartz`、`golang.org/x/sync`。所有依赖均经过筛选，确保稳定与安全。
+</Callout>
+
+</Step>
+
+<Step>
+
+### 创建 Actor 系统并启动
+
+应用通常只需一个 **ActorSystem** 实例。推荐通过 `github.com/kercylan98/vivid/pkg/bootstrap` 包创建：
+
+```go
+package main
+
+import (
+	"github.com/kercylan98/vivid/pkg/bootstrap"
+)
+
+func main() {
+	system := bootstrap.NewActorSystem()
+	if err := system.Start(); err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := system.Stop(); err != nil {
+			panic(err)
+		}
+	}()
+
+	// do something
+}
+```
+
+- **Start()**：同步阻塞直至系统及托管 Actor 启动完成。重复调用会返回 **ErrorActorSystemAlreadyStarted**。
+- **Stop(timeout ...time.Duration)**：优雅停止系统及所有 Actor。不传参数时使用系统配置的 **StopTimeout**；传参时以该时长为限，超时后强制结束。重复调用会等待首次停止完成后返回。
+
+</Step>
+
+</Steps>
+
+## 创建第一个 Actor
+
+### 实现接口
+
+实现 `vivid.Actor` 接口（仅需实现 `OnReceive(ctx vivid.ActorContext)`），在 `OnReceive` 中根据 `ctx.Message()` 处理消息：
+
+```go
+type MyActor struct{}
+
+func (a *MyActor) OnReceive(ctx vivid.ActorContext) {
+	switch msg := ctx.Message().(type) {
+	case *vivid.OnLaunch:
+		ctx.Logger().Info("actor launched")
+	case string:
+		ctx.Reply("pong") // 若有发送者则回复
+	default:
+		// 忽略或记录未知类型
+	}
+}
+```
+
+### 创建方式
+
+- **系统级（根）**：`ref, err := system.ActorOf(&MyActor{}, vivid.WithActorName("my-actor"))`
+- **在 Actor 内创建子 Actor**：`ref, err := ctx.ActorOf(&MyActor{}, vivid.WithActorName("child"))`
+
+创建成功后，子 Actor 会收到一条 `*vivid.OnLaunch` 消息，可用于初始化。
+
+## 发送与接收消息
+
+### Tell（发后即忘）
+
+`ctx.Tell(recipientRef, "hello")`，不等待回复。
+
+### Ask（请求-响应）
+
+`future := ctx.Ask(recipientRef, "ping", 5*time.Second)`，通过 `result, err := future.Result()` 等待回复；对方使用 `ctx.Reply(msg)` 回复。
+
+消息体可以是任意类型（推荐使用结构体以增强类型安全）；通过 `ctx.Message()` 获取当前消息并做类型断言后处理。
+
+## 完整示例
+
+下面是一个最小可运行示例：创建系统 → 创建根 Actor → 用 Ask 发请求并打印回复。
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/pkg/bootstrap"
+)
+
+type EchoActor struct{}
+
+func (a *EchoActor) OnReceive(ctx vivid.ActorContext) {
+	switch msg := ctx.Message().(type) {
+	case *vivid.OnLaunch:
+		ctx.Logger().Info("echo actor started")
+	case string:
+		ctx.Reply("echo: " + msg)
+	}
+}
+
+func main() {
+	system := bootstrap.NewActorSystem()
+	if err := system.Start(); err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := system.Stop(); err != nil {
+			panic(err)
+		}
+	}()
+
+	ref, err := system.ActorOf(&EchoActor{}, vivid.WithActorName("echo"))
+	if err != nil {
+		panic(err)
+	}
+
+	future := system.Ask(ref, "hello", 2*time.Second)
+	result, err := future.Result()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(result) // echo: hello
+}
+```
+
+<Callout type="info" title="说明">
+`ActorSystem` 与 `ActorContext` 均提供 `Tell`、`Ask` 等消息能力。在 main 中无 Context，故使用 `system.Ask(ref, message, timeout)`；在 Actor 内部则使用 `ctx.Ask(recipientRef, message, timeout)`。
+</Callout>

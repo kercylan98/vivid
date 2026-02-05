@@ -1,0 +1,50 @@
+---
+title: 事件流
+description: 系统级发布/订阅（Subscribe、Publish）与事件投递
+---
+
+**EventStream** 是 Actor 系统级的**发布/订阅**机制：Actor 可**订阅**某一事件类型，其它 Actor 或组件可**发布**该类型事件，系统会将事件**投递到订阅者的邮箱**，与普通消息同一处理模型。通过 **`ctx.EventStream()`** 获取，与 [消息投递](/docs/basics/message-delivery) 配合使用。
+
+<Mermaid diagram={`flowchart TB
+  subgraph 发布方
+    P["Publish(ctx, event)"]
+  end
+  subgraph EventStream
+    ES[EventStream]
+  end
+  subgraph 订阅方
+    S1[订阅者 A 邮箱]
+    S2[订阅者 B 邮箱]
+  end
+  P --> ES
+  ES --> S1
+  ES --> S2
+  S1 --> O1["OnReceive"]
+  S2 --> O2["OnReceive"]
+`} title="EventStream 发布/订阅" />
+
+## 订阅与取消订阅
+
+- **Subscribe(ctx, event)**：当前 Actor 订阅 **event** 所代表的事件类型。参数 **event** 仅用于**类型识别**（按类型相等），可为零值实例，例如 `ctx.EventStream().Subscribe(ctx, MyEvent{})`。之后所有 **Publish** 的该类型事件都会作为一条消息投递到该 Actor 的邮箱。订阅与发布需使用**同一具体类型**（同一结构体），否则收不到。
+- **Unsubscribe(ctx, event)**：取消当前 Actor 对该事件类型的订阅。多数场景不必主动调用：**Actor 被销毁时，其所有订阅会自动释放**。
+- **UnsubscribeAll(ctx)**：取消当前 Actor 对全部事件类型的订阅。
+
+订阅应在 Actor 生命周期内通过 ActorContext 完成，不要在 Actor 外持有 EventStream 或订阅状态。
+
+## 发布事件
+
+**Publish(ctx, event)** 向系统内所有**已订阅该事件类型**的 Actor 发布 **event**。事件会被投递到各订阅者的邮箱，由各自的 OnReceive 按类型处理。
+
+```go
+ctx.EventStream().Publish(ctx, MyEvent{Source: ctx.Ref().GetPath(), Data: payload})
+```
+
+发布方传入的 **ctx** 用于标识来源（如 Logger）；订阅方收到的是 **event** 本身作为 **ctx.Message()**。
+
+## 典型用法
+
+- **跨模块解耦**：模块 A 发布领域事件，模块 B/C 只订阅感兴趣的类型，无需直接引用 A。
+- **监控与审计**：订阅系统事件（如生命周期、死信），在 OnReceive 中记录或告警。死信事件类型为 **`ves.DeathLetterEvent`**，参见 [消息投递 - 死信](/docs/basics/message-delivery#死信)。
+- **与 Stash 配合**：在条件未满足时 Stash 当前消息，订阅“条件就绪”事件，在 OnReceive 中收到该事件时 Unstash 并继续处理。
+
+事件与普通消息使用同一邮箱与行为，保证顺序与一致性。

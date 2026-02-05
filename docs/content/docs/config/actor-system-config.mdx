@@ -1,0 +1,39 @@
+---
+title: Actor System 配置
+description: ActorSystemOptions 与系统级选项一览
+---
+
+创建 **ActorSystem** 时通过 **`vivid.ActorSystemOption`** 配置系统级行为，所有选项汇总在 **`vivid.ActorSystemOptions`** 中。远程通讯、指标等专题见下方链接。
+
+## 配置项一览
+
+| 选项 | 说明 |
+|------|------|
+| **WithActorSystemContext** | 系统根 context；未指定时使用 `context.Background()` |
+| **WithActorSystemLogger** | 系统默认 Logger；未指定时使用 `log.GetDefault()` |
+| **WithActorSystemDefaultAskTimeout** | 全局默认 Ask 超时；仅 >0 时生效，默认 1 秒 |
+| **WithActorSystemStopTimeout** | **Stop()** 的最大等待时间；仅 >0 时生效，默认 1 分钟。**Stop()** 不传参时使用该值 |
+| **WithActorSystemSupervisionStrategy** | 系统默认监督策略；nil 时顶层使用“停止”。详见 [监督策略](/docs/config/supervision) |
+| **WithActorSystemEnableMetrics** | 是否启用指标；为 true 且未设 Metrics 时使用默认实现。详见 [指标](/docs/config/metrics) |
+| **WithActorSystemMetrics** | 自定义指标收集器。详见 [指标](/docs/config/metrics) |
+| **WithActorSystemEnableMetricsUpdatedNotify** | 指标更新通知策略：&lt;0 不推送，0 每次变更推送，&gt;0 按间隔推送。详见 [指标](/docs/config/metrics) |
+| **WithActorSystemRemoting** | 启用远程通讯：bindAddr 必填，advertiseAddr 可选。详见 [远程通讯](/docs/config/remoting) |
+| **WithActorSystemCodec** | 远程消息编解码器；与 RegisterCustomMessage 二选一。详见 [远程通讯](/docs/config/remoting) |
+| **WithActorSystemRemotingOptions** | 远程高级选项（如 ConnectionReadFailedHandler）。详见 [远程通讯](/docs/config/remoting) |
+| **WithActorSystemOptions** | 一次性应用整份 ActorSystemOptions |
+
+## 使用方式
+
+通过 **bootstrap.NewActorSystem** 直接传入 Option，或先 **NewActorSystemOptions** 再 **WithActorSystemOptions** 传入：
+
+```go
+system := bootstrap.NewActorSystem(
+    vivid.WithActorSystemDefaultAskTimeout(5*time.Second),
+    vivid.WithActorSystemStopTimeout(2*time.Minute),
+    vivid.WithActorSystemRemoting("0.0.0.0:8080", "node1.example.com:8080"),
+)
+```
+
+## 常见错误
+
+系统级操作可能返回预定义错误，建议用 **errors.Is** 判定：**ErrorActorSystemAlreadyStarted**（重复 Start）、**ErrorActorSystemAlreadyStopped**、**ErrorActorSystemNotStarted**、**ErrorActorSystemStartFailed** / **ErrorActorSystemStopFailed**。详见 [错误](/docs/config/errors)，完整列表见 [pkg.go.dev - vivid](https://pkg.go.dev/github.com/kercylan98/vivid#pkg-variables)。

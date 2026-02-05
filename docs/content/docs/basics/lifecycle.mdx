@@ -1,0 +1,186 @@
+---
+title: 创建与生命周期
+description: 创建与层级、系统消息 OnLaunch/OnKill/OnKilled、Watch/Unwatch、Kill、Failed、扩展钩子与组合 Actor
+---
+
+本文说明**在哪里、如何创建** Actor 以及其**生命周期**：系统级与上下文中创建、父子层级与命名、系统消息（OnLaunch/OnKill/OnKilled）、Watch/Unwatch、发起终止（Kill）、主动上报故障（Failed）及可选的扩展钩子与多 Actor 组合。实现方式见 [实现 Actor](/docs/basics/implementing-actor)，创建时选项详见 [Actor 配置](/docs/config/actor-config)。
+
+## 创建与层级
+
+<Mermaid diagram={`flowchart LR
+  A[ActorSystem] -->|ActorOf| B[根 Actor]
+  B -->|ctx.ActorOf| C[子 Actor]
+  B -->|ctx.ActorOf| D[子 Actor]
+  C -->|ctx.ActorOf| E[子 Actor]
+`} title="创建方式：系统级与上下文中" />
+
+### 创建方式
+
+#### 系统级创建（根 Actor）
+
+在程序入口通常只创建一个 **ActorSystem**，再在系统上创建**根 Actor**：
+
+```go
+system := bootstrap.NewActorSystem()
+// ...
+ref, err := system.ActorOf(&MyActor{}, vivid.WithActorName("root"))
+```
+
+- **`system.ActorOf(actor, options...)`** 为**并发安全**，可在多 goroutine 中调用。
+- 返回的 **ActorRef** 用于后续 Tell/Ask、传给其他 Actor 或用于查找。
+
+#### 在上下文中创建子 Actor
+
+在某个 Actor 的 **OnReceive** 内，通过 **ActorContext** 创建**子 Actor**：
+
+```go
+childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
+```
+
+- 子 Actor 的父级为当前 **`ctx.Ref()`**，生命周期由当前 Actor 管理。
+- **父级会自动 Watch 子级**，子级终止时父级会收到 **`*vivid.OnKilled`**，无需手动 Watch。
+- 同一父级下子 Actor **名称必须唯一**；不指定名称时系统会自动分配。
+
+创建成功后，子 Actor 会先收到一条 **`*vivid.OnLaunch`**，再开始接收业务消息。**`ctx.Children()`** 返回当前 Actor 已创建的子 Actor 引用列表（**ActorRefs**），为创建时的快照，可用于批量 Tell、监控数量或配合监督逻辑。
+
+<Callout type="warn" title="并发限制">
+`ctx.ActorOf` **非并发安全**。不要在多个 goroutine 中并发创建同一父级下的子 Actor，应在单次消息处理内或串行逻辑中创建。
+</Callout>
+
+### 命名与创建时配置
+
+- **WithActorName(name)**：指定名称，同父下唯一；不传则系统自动生成。
+- 其他创建时选项（邮箱、默认 Ask 超时、Logger、监督策略、Provider 等）见 [Actor 配置](/docs/config/actor-config)。
+
+### 通过字符串解析 ActorRef
+
+若 ActorRef 以字符串形式存储或从配置/网络获取（例如 `"host:port/user/actor-name"`），可通过 **`system.FindActorRef(actorRef string)`** 解析为可用的 **ActorRef**：
+
+```go
+ref, err := system.FindActorRef("example.com:8080/user/worker-1")
+if err != nil {
+    // 格式错误或地址/路径无效
+    return
+}
+ctx.Tell(ref, msg)
+```
+
+解析得到的引用与本地创建的引用用法一致，框架会根据地址与路径路由到本地或远程 Actor。远程需已配置 [远程通讯](/docs/config/remoting)。
+
+### 创建失败与错误
+
+**ActorOf** 可能返回的错误包括：**`vivid.ErrorActorAlreadyExists`**（同父下名称重复）、**`vivid.ErrorActorSpawnFailed`**（创建或预启动失败）、**`vivid.ErrorActorDeaded`**（在已死亡的父级上创建）等。可通过 **`errors.Is(err, vivid.ErrorActorAlreadyExists)`** 等方式判定并处理。错误体系详见 [错误](/docs/config/errors)。
+
+## 生命周期与系统消息
+
+<Mermaid diagram={`stateDiagram-v2
+  [*] --> 已创建
+  已创建 --> 运行中: OnLaunch
+  运行中 --> 运行中: 业务消息
+  运行中 --> 终止中: 收到 OnKill
+  终止中 --> 已终止: 处理完毕
+  已终止 --> [*]
+`} title="Actor 生命周期状态" />
+
+在 **OnReceive** 中可通过类型断言区分以下系统消息与业务消息：
+
+| 消息类型 | 含义 |
+|----------|------|
+| **`*vivid.OnLaunch`** | Actor 启动后收到的第一条消息，用于初始化 |
+| **`*vivid.OnKill`** | 收到终止请求；可做优雅收尾，见下文字段说明 |
+| **`*vivid.OnKilled`** | 某 Actor 已终止后的通知（Ref 为被终止的 Actor），可用于清理或通知 |
+
+### OnKill 字段说明
+
+收到 **`*vivid.OnKill`** 时，可读取以下字段以区分终止方式与来源：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| **Killer** | `ActorRef` | 发起终止请求的 Actor 引用 |
+| **Reason** | `string` | 终止原因描述，便于日志与排查 |
+| **Poison** | `bool` | 是否为毒杀：`true` 表示立即销毁、不处理剩余队列；`false` 表示优雅下线（处理完当前与队列中的消息后再终止） |
+
+示例：
+
+```go
+func (a *MyActor) OnReceive(ctx vivid.ActorContext) {
+    switch msg := ctx.Message().(type) {
+    case *vivid.OnLaunch:
+        // 初始化资源、注册等
+    case *vivid.OnKill:
+        if msg.Poison {
+            // 毒杀，可只做最少清理
+        } else {
+            // 优雅停机，可 flush、关闭连接等
+        }
+        // 框架会继续终止流程
+    case *vivid.OnKilled:
+        // 子 Actor 或 Watch 的目标已终止
+    case *MyBizMsg:
+        // 业务处理
+    }
+}
+```
+
+## Watch 与 Unwatch
+
+除父子关系外，任意 Actor 可**主动监听**其它 Actor 的终止事件：
+
+- **`ctx.Watch(ref)`**：订阅目标 **ActorRef** 的终止事件。当该 Actor 被终止（Killed）后，当前 Actor 会收到一条 **`*vivid.OnKilled`**，其中 **Ref** 为被终止的引用。重复 Watch 同一 ref 幂等，无额外副作用。父级对子级会自动 Watch，无需再对子级调用 Watch。
+- **`ctx.Unwatch(ref)`**：取消对目标 ref 的终止监听。若未曾 Watch 或目标已终止，调用无副作用。
+
+典型用法：聚合/调度类 Actor 监听工作 Actor 的终止，以便回收资源、重新派发或告警。被监听者不存在时，相关消息会进入死信处理。
+
+## 发起终止（Kill）
+
+向指定 **ActorRef** 发送终止请求时，使用 **Kill**：框架会向该 Actor 投递 **`*vivid.OnKill`**，目标可在 OnReceive 中处理并做优雅收尾；父级也可通过 Kill 主动关闭子级。
+
+```go
+ctx.Kill(targetRef, poison, "reason")
+// 或
+system.Kill(targetRef, poison, "reason")
+```
+
+- **poison**：`true` 表示毒杀（立即销毁、不处理剩余队列），`false` 表示优雅停机（处理完当前与队列中的消息后再终止）。
+- **reason**：可变参数，会拼接为字符串写入 **OnKill.Reason**，便于日志与监控。
+
+终止请求是异步的，调用后立即返回；目标终止后会向所有 **Watch** 该 ref 的 Actor 发送 **OnKilled**。
+
+## 主动上报故障（Failed）
+
+当 Actor 在处理消息时遇到**无法在内部恢复**的异常（如依赖不可用、数据严重错误），可调用 **`ctx.Failed(fault)`** 主动上报故障。**fault** 为任意 **Message**，用于向父级描述原因。父级会根据其 [监督策略](/docs/config/supervision) 做出决策（重启、停止、恢复或升级）。调用后当前处理流程可能被中断，建议仅在确实无法自行恢复时使用。
+
+## 扩展钩子接口
+
+除 **OnReceive** 外，可实现以下**可选**扩展接口，在特定生命周期阶段被调用一次：
+
+| 接口 | 方法 | 调用时机 |
+|------|------|----------|
+| **PrelaunchActor** | `OnPrelaunch(ctx PrelaunchContext) error` | 正式启动前；返回 error 则启动失败 |
+| **PreRestartActor** | `OnPreRestart(ctx RestartContext) error` | 监督触发重启前；返回 error 则中止重启 |
+| **RestartedActor** | `OnRestarted(ctx RestartContext) error` | 重启完成后；返回 error 仅记录，不阻止运行 |
+
+**PrelaunchContext** 与 **RestartContext** 均提供 **Logger()**、**Ref()**，可在钩子内打日志或获取当前 Actor 引用；不提供消息发送、子 Actor 创建等运行时能力。
+
+### 便捷构造器
+
+在不定义新类型的前提下挂载钩子，可使用：
+
+- **`vivid.NewPrelaunchActor(prelaunchFn, actor)`**
+- **`vivid.NewPreRestartActor(preRestartFn, actor)`**
+- **`vivid.NewRestartedActor(restartedFn, actor)`**
+
+未传入的 `actor` 会使用占位空实现。
+
+## 组合多个 Actor
+
+若希望将多个“逻辑 Actor”合并为一个对外 Actor（例如 mixin 式逻辑），可使用 **`vivid.NewComplexCombinationActor`**：
+
+```go
+combined := vivid.NewComplexCombinationActor(
+    prelaunchActor,
+    businessActor,
+)
+```
+
+系统会按顺序调用各子 Actor 的 Prelaunch / PreRestart / Restarted / OnReceive，实现组合行为。

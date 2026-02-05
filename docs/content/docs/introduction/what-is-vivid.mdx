@@ -1,0 +1,97 @@
+---
+title: 什么是 Vivid
+description: Vivid 的定位、核心特性、架构与适用场景
+---
+
+Vivid 是一个**高性能、类型安全**的 **Go 语言 Actor 模型实现库**，提供完整的 Actor 系统、消息传递、远程通信、监督策略等核心能力，用于构建可扩展、高并发的分布式应用。
+
+## 核心特性
+
+| 能力 | 说明 |
+|------|------|
+| **完整 Actor 模型** | Actor 系统（ActorSystem）、Actor 上下文（ActorContext）、Actor 引用（ActorRef）等核心抽象，树状层级与生命周期管理 |
+| **消息传递** | **Tell**（发后即忘）、**Ask**（请求-响应，返回 `Future[T]`）、**Reply**、**PipeTo**（将 Ask 结果转发给其他 Actor）、**Entrust**（托管异步任务） |
+| **网络透明（位置透明）** | 在配置好 Remoting 与 Codec 后，**本地与远程使用同一套 API**：Tell、Ask、Reply 等调用方式完全一致，无需根据目标是否在本机改写代码；框架按 ActorRef 的地址自动选择本地投递或跨网络发送 |
+| **远程通信（Remoting）** | 内置 Remoting，支持跨网络节点的 Actor 通信；配置绑定/广告地址与 Codec（或 RegisterCustomMessage）后即可实现透明的跨节点消息投递 |
+| **监督策略** | **OneForOne** / **OneForAll**，支持重启、优雅重启、停止、优雅停止、恢复、升级等决策，可配置退避与抖动 |
+| **调度（Scheduler）** | 内置调度器，支持 **Once**（延时一次）、**Loop**（固定间隔）、**Cron** 表达式；任务与 Actor 生命周期绑定 |
+| **行为栈（Behavior）** | `Become` / `UnBecome` 动态切换与恢复消息处理行为，便于实现状态机 |
+| **生命周期钩子** | **Prelaunch**（启动前）、**PreRestart**（重启前）、**Restarted**（重启后）；以及 **Watch** / **Unwatch** 监听其他 Actor 终止（OnKilled） |
+| **消息暂存（Stash）** | `Stash()` / `Unstash(num?)` 暂存当前消息并在条件满足时恢复，便于“条件未满足时缓冲” |
+| **事件流（EventStream）** | 系统级发布/订阅，事件按类型投递到订阅者邮箱，与普通消息一致 |
+| **指标（Metrics）** | 可选启用指标收集，监控 Actor 数量、失败数、重启数、死信等；支持指标更新通知到事件流 |
+| **类型安全** | 充分利用 Go 类型系统，消息与 Future 泛型、错误链与标准 `error` 处理 |
+| **错误体系** | 预定义错误码（如 `ErrorActorAlreadyExists`、`ErrorFutureTimeout`），支持 `errors.Is`/`As` 判定、错误链与跨节点序列化 |
+
+## 系统要求
+
+- **Go**：1.25.1 及以上
+- **平台**：Go 支持的操作系统与 CPU 架构（如 Linux、macOS、Windows，amd64、arm64、386 等）
+
+## 架构概览
+
+### Actor 系统层级
+
+系统由 **ActorSystem** 统一管理所有 Actor。Actor 之间呈树状父子关系：根 Actor 由系统创建，其余均为某 Actor 的**子 Actor**（通过 `ActorContext.ActorOf` 创建）。系统同时提供 **EventStream**、**Scheduler**，并可选启用 **Metrics** 与 **Remoting**。
+
+<Mermaid diagram={`flowchart TB
+  subgraph System["ActorSystem"]
+    Root[根 Actor]
+  end
+  Root --> Child1[子 Actor]
+  Root --> Child2[子 Actor]
+  Child1 --> GrandChild[子 Actor]
+  System ~~~ EventStream[EventStream]
+  System ~~~ Scheduler[Scheduler]
+  System ~~~ Remoting[Remoting]
+`} title="Actor 树状层级" />
+
+- **ActorSystem**：系统入口，提供 `Start` / `Stop`、`ActorOf`（根级）、`Tell` / `Ask`、`FindActorRef` 等。
+- **ActorContext**：每次处理消息时注入，提供当前 Actor 的 `Ref`、`Message`、`Sender`、`Children`、`ActorOf`、`Tell` / `Ask` / `Reply`、`Become` / `UnBecome`、`Stash` / `Unstash`、`Watch` / `Unwatch`、`EventStream`、`Scheduler`、`Logger`、`Metrics` 等。
+- **ActorRef**：Actor 的引用，具备 `GetAddress()`、`GetPath()`、`Equals`、`Clone`、`String()`；用于 Tell/Ask 时由框架根据地址与路径路由到本地或远程 Actor。
+
+### 消息传递流程
+
+<Mermaid diagram={`sequenceDiagram
+  participant Sender as 发送方
+  participant Framework as 框架
+  participant Mailbox as 邮箱
+  participant Target as 目标Actor
+
+  Sender->>Framework: Tell/Ask(ref, msg)
+  Framework->>Mailbox: 投递消息
+  Mailbox->>Target: 取信 -> Behavior(OnReceive)
+  alt Ask 请求
+    Target->>Framework: Reply(response)
+    Framework->>Sender: Future.Result()
+  end
+`} title="消息投递流程" />
+
+1. 发送方通过 **Tell** 或 **Ask** 将消息发往目标 **ActorRef**。
+2. 框架根据地址与路径将消息投递到目标 Actor 的 **Mailbox**（邮箱）。
+3. 目标 Actor 的 **ActorContext** 从邮箱取信并调用当前 **Behavior**（默认即 Actor 的 `OnReceive`）。
+4. 若为 Ask，接收方通过 **Reply** 将结果写回，由框架完成与 **Future** 的关联。
+
+<Callout type="info" title="位置透明">
+远程节点上的 Actor 拥有不同的 `GetAddress()`，Remoting 负责跨节点序列化与网络传输。**业务代码无需区分本地/远程**：只要配置好 Codec（或消息注册），调用 `ctx.Tell(ref, msg)` 或 `ctx.Ask(ref, msg)` 时，无论 `ref` 指向本机还是远程，API 不变，框架自动完成路由与序列化。
+</Callout>
+
+## 适用场景
+
+<Cards>
+  <Card title="分布式系统" description="跨节点应用，利用网络透明的消息投递与 Remoting" />
+  <Card title="高并发服务" description="通过 Actor 模型做线程安全、串行化的并发处理" />
+  <Card title="微服务" description="服务间异步消息与 RPC 风格请求-响应的基础设施" />
+  <Card title="状态机" description="用行为栈（Become/UnBecome）实现复杂状态机" />
+  <Card title="事件驱动" description="用 EventStream 构建松耦合的事件驱动架构" />
+  <Card title="定时任务" description="用内置 Scheduler 做一次性、周期与 Cron 任务" />
+  <Card title="容错系统" description="用监督策略与生命周期钩子实现自动恢复与优雅停机" />
+</Cards>
+
+## 版本与状态
+
+<Callout type="warn" title="API 稳定性">
+从 **1.0.0** 起遵循[语义化版本](https://semver.org/lang/zh-CN/)。当前处于**活跃开发阶段**，API 可能变更，生产使用前请查阅 [Releases](https://github.com/kercylan98/vivid/releases)。
+</Callout>
+
+完整 API 与类型定义见 [pkg.go.dev](https://pkg.go.dev/github.com/kercylan98/vivid)。

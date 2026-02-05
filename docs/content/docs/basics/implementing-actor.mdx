@@ -1,0 +1,57 @@
+---
+title: 实现 Actor
+description: Actor 接口、结构体与函数式实现
+---
+
+本文说明如何**实现**一个可被系统调度的 Actor：实现 `vivid.Actor` 接口、在 `OnReceive` 中处理消息，结构体与函数式两种写法。创建与生命周期见 [创建与生命周期](/docs/basics/lifecycle)；运行时通过行为栈切换处理逻辑见 [行为栈](/docs/basics/behavior-stack)。
+
+## Actor 接口
+
+可被调度的 Actor 必须实现 **`vivid.Actor`** 接口：
+
+```go
+type Actor interface {
+    OnReceive(ctx ActorContext)
+}
+```
+
+框架在每次向该 Actor 投递消息时，会调用当前**行为**（默认即为该 `OnReceive`），并注入当次消息对应的 `ActorContext`。在 `OnReceive` 内应通过 **`ctx.Message()`** 获取当前消息并做类型分支处理。若在处理过程中发生 **panic**，框架会捕获并视为该 Actor 的故障，交由父级的 [监督策略](/docs/config/supervision) 处理（等同于主动调用 **Failed**）；因此应尽量在业务逻辑中恢复可预期错误，或显式调用 **ctx.Failed(fault)** 上报。
+
+## 实现方式
+
+### 结构体实现
+
+推荐用结构体实现 `Actor`，便于携带状态与依赖：
+
+```go
+type MyActor struct {
+    dependency SomeService
+}
+
+func (a *MyActor) OnReceive(ctx vivid.ActorContext) {
+    switch msg := ctx.Message().(type) {
+    case *vivid.OnLaunch:
+        // 初始化
+    case *MyRequest:
+        ctx.Reply(a.dependency.Handle(msg))
+    default:
+        // 忽略或记录未知类型
+    }
+}
+```
+
+同一类型的不同实例可被多次创建为不同 Actor，彼此状态隔离。
+
+### 函数式实现（ActorFN）
+
+无状态或逻辑简单时，可使用 **`vivid.ActorFN`**，无需定义新类型：
+
+```go
+actor := vivid.ActorFN(func(ctx vivid.ActorContext) {
+    if msg, ok := ctx.Message().(string); ok {
+        ctx.Reply("got: " + msg)
+    }
+})
+```
+
+适用于一次性、无状态的处理器；需要状态时请用结构体实现。运行时通过 **Become** / **UnBecome** 切换消息处理逻辑见进阶 [行为栈](/docs/basics/behavior-stack)。

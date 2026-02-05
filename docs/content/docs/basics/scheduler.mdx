@@ -1,0 +1,80 @@
+---
+title: 调度器
+description: 定时与周期消息投递（Once、Loop、Cron）及任务管理
+---
+
+每个 **ActorContext** 拥有独立的 **Scheduler** 实例（`ctx.Scheduler()`），用于向**指定 ActorRef**（通常为当前 Actor 或子 Actor）在指定时间或周期**投递消息**。任务与当前 Actor 生命周期绑定，Actor 终止时其调度器上的任务会被清理。系统不提供全局 Scheduler，所有调度均通过某一 Actor 的 Context 创建。
+
+<Mermaid diagram={`flowchart LR
+  subgraph Scheduler
+    O[Once: 延时一次]
+    L[Loop: 固定间隔]
+    C[Cron: 日历表达式]
+  end
+  subgraph 目标
+    Ref[ActorRef]
+  end
+  O -->|到期投递| Ref
+  L -->|每 interval| Ref
+  C -->|匹配时间点| Ref
+  Ref --> Mailbox[邮箱 → OnReceive]
+`} title="Scheduler 与投递目标" />
+
+## 一次性延时（Once）
+
+在**延时一段时间后**向目标 Actor **投递一次**消息：
+
+```go
+err := ctx.Scheduler().Once(ctx.Ref(), 5*time.Second, &MyMessage{Data: "delayed"})
+```
+
+- **receiver**：接收消息的 ActorRef，常用 `ctx.Ref()` 发给自身。
+- **delay**：从当前时刻起算的延时。
+- **message**：要投递的消息；可选 **ScheduleOption**，如 **WithReference(id)** 便于后续取消。
+
+返回的 **error** 表示调度是否成功（如 Cron 表达式非法会返回 **ErrorCronParse**）。任务到期后只会投递一次。**delay 为 0** 时会在极短延时后投递一次。
+
+## 固定间隔循环（Loop）
+
+按**固定间隔**重复向目标 Actor 投递消息，直到任务被取消或 Actor 终止：
+
+```go
+err := ctx.Scheduler().Loop(ctx.Ref(), 10*time.Second, &TickMessage{})
+```
+
+- **interval**：两次投递之间的时间间隔。
+- 可通过 **WithReference(reference)** 指定引用 ID，之后用 **Cancel(reference)** 取消该任务。
+
+## Cron 表达式（Cron）
+
+使用 **Cron 表达式**定义日历式调度，在匹配的时间点向目标 Actor 投递消息：
+
+```go
+// 每天 0 点
+err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 * * *", &DailyJob{})
+```
+
+- **cron**：标准 Cron 表达式，格式为「分 时 日 月 周」（五段），例如 `"0 0 * * *"` 表示每天 0 点。时区由 **WithScheduleLocation(loc)** 控制，默认 **time.Local**。
+- 通过 **WithReference** 与 **Cancel** 管理任务生命周期。
+
+## 任务管理
+
+- **Exists(reference string) bool**：判断指定 reference 的调度任务是否仍存在（未取消且未到期）。
+- **Cancel(reference string) error**：按 reference 取消该调度任务；不存在则返回错误。
+- **Clear()**：取消当前 Scheduler 上**全部**已注册任务。
+
+创建任务时若未传 **WithReference**，框架会自动生成唯一 ID；若需后续取消，应在创建时传入并保存 reference：
+
+```go
+refID := "my-timer-1"
+ctx.Scheduler().Once(ctx.Ref(), time.Minute, msg, vivid.WithReference(refID))
+// ...
+ctx.Scheduler().Cancel(refID)
+```
+
+## 选项（ScheduleOptions）
+
+通过 **vivid.NewScheduleOptions** 或 **WithScheduleOptions**、**WithScheduleLocation**、**WithReference** 配置：
+
+- **Location**：Cron 使用的时区，默认 **time.Local**。
+- **Reference**：任务唯一标识，用于 **Exists** / **Cancel**；不传则自动生成。

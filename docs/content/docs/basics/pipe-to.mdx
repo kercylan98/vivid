@@ -1,0 +1,49 @@
+---
+title: PipeTo
+description: 将 Ask 结果转发给指定 Actor
+---
+
+**PipeTo** 对某目标发起 **Ask**，并将 **Future** 的结果以 **`*vivid.PipeResult`** 形式发送给指定 Actor 及可选的额外 forwarders，实现请求-响应-转发的管道式流转。调用方不阻塞，转发异步进行。
+
+<Mermaid diagram={`sequenceDiagram
+  participant Caller as 调用方
+  participant Framework as 框架
+  participant Recipient as recipient
+  participant Forwarder as forwarder
+
+  Caller->>Framework: PipeTo(recipient, request, forwarders)
+  Framework->>Recipient: Ask(request)
+  Recipient->>Framework: Reply(response)
+  Framework->>Forwarder: Tell(PipeResult)
+  Note over Caller,Forwarder: 调用方不阻塞，结果异步转发
+`} title="PipeTo 数据流" />
+
+## 用法
+
+```go
+pipeID := ctx.PipeTo(recipientRef, requestMessage, forwarderRefs, 5*time.Second)
+```
+
+- **recipientRef**：实际接收 Ask 请求的 Actor（执行任务并 Reply 的一方）。
+- **requestMessage**：发给 recipient 的请求消息。
+- **forwarderRefs**：额外接收结果的 Actor 列表；每个接收方都会收到一条 **`*vivid.PipeResult`**。
+- **timeout**：Ask 超时；不传则使用默认 Ask 超时。
+- 返回 **pipeID** 与 PipeResult.Id 一致，可用于日志或扩展。
+
+## PipeResult
+
+接收方在 OnReceive 中收到 **`*vivid.PipeResult`**，字段与用法：
+
+| 字段/方法 | 说明 |
+|-----------|------|
+| **Id** | 管道标识，与 PipeTo 返回值一致 |
+| **Message** | 成功时的回复消息，失败为零值 |
+| **Error** | 失败时的错误，成功为 nil |
+| **IsSuccess() / IsError()** | 判断成功或失败 |
+| **GetMessage() / GetError()** | 安全取值 |
+
+若 Ask 超时或失败，不会向 forwarders 发送成功结果，但会投递包含 **Error** 的 **PipeResult**。若 forwarder 包含当前 Actor 自身，会通过 **TellSelf** 收到 PipeResult。
+
+## 典型场景
+
+将“问 A 拿结果并交给 B”的流程交给框架：不必在 Actor 内手动 Ask 再 Tell，避免阻塞与错误处理的重复代码，适合链式调用或结果汇聚。

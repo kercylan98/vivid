@@ -1,0 +1,75 @@
+---
+title: 消息投递
+description: Tell、TellSelf、Ask、Reply、Future 与 Ping
+---
+
+Actor 间通过**消息**通信：发送方用 **ActorRef** 做 **Tell**（发后即忘）或 **Ask**（请求-响应）；接收方在 `OnReceive` 里用 `ctx.Message()` 处理，需回复时 **Reply**。
+
+<Mermaid diagram={`flowchart LR
+  subgraph Tell["Tell（发后即忘）"]
+    T1[发送方] -->|ctx.Tell| T2[目标邮箱]
+    T2 --> T3[目标 OnReceive]
+  end
+  subgraph Ask["Ask（请求-响应）"]
+    A1[发送方] -->|ctx.Ask| A2[目标邮箱]
+    A2 --> A3[目标 OnReceive]
+    A3 -->|ctx.Reply| A4[Future.Result]
+    A4 --> A1
+  end
+`} title="Tell 与 Ask 的区别" />
+
+<Callout type="info" title="进阶与扩展">
+进阶能力 [PipeTo](/docs/basics/pipe-to)、[Entrust](/docs/basics/entrust)、[死信](/docs/basics/death-letter)、[Stash](/docs/basics/stash) 各有单独文章；调度与事件流见 [调度器](/docs/basics/scheduler)、[事件流](/docs/basics/event-stream)；跨节点见 [远程通讯](/docs/config/remoting)。
+</Callout>
+
+## Tell / TellSelf
+
+**Tell** 异步发往目标，不等待、不保证对方一定处理；目标不存在或已终止时进入死信（见 [死信](/docs/basics/death-letter)）。
+
+```go
+ctx.Tell(recipientRef, myMessage)
+```
+
+**TellSelf** 向自身投递，等价于 `Tell(ctx.Ref(), message)`，由框架优化直接入队，用于本处理完成后触发下一阶段或拆成多步消息。
+
+```go
+ctx.TellSelf(nextPhaseMessage)
+```
+
+## Ask 与 Reply
+
+<Callout type="tip" title="与 Tell 的区别">
+**Ask** 需要回复时使用：发请求并返回 `Future`，用 `Result()` 等待回复或超时；**Tell** 则发后即忘、不阻塞。
+</Callout>
+
+**Ask** 发请求并返回 **`vivid.Future[Message]`**，用 **Result()** 取回复或超时/错误。接收方在 `OnReceive` 里调用 **Reply(response)** 回复；`ctx.Sender()` 为 nil 时 Reply 被忽略。超时可用 [系统](/docs/config/actor-system-config) 或 [Actor](/docs/config/actor-config) 配置修改，默认 `vivid.DefaultAskTimeout`。
+
+```go
+future := ctx.Ask(recipientRef, request, 5*time.Second)
+result, err := future.Result()
+// 接收方: ctx.Reply(responseMessage)
+```
+
+### Future
+
+Ask 返回的 **Future[Message]** 是异步请求-响应的结果占位，主要方法：
+
+| 方法 | 说明 |
+|------|------|
+| **Result() (T, error)** | 阻塞直到完成或超时/异常，返回结果与错误 |
+| **Wait() error** | 阻塞直到结束，只返回错误，不返回结果 |
+| **Close(err error)** | 主动关闭 Future，标记为完成或失败 |
+
+通常用 **Result()** 获取回复或错误；**PipeTo** 内部基于 Ask + Future 将结果转发给其他 Actor，见 [PipeTo](/docs/basics/pipe-to)。
+
+## Ping
+
+**Ping** 向目标 **ActorRef** 发送系统 Ping 消息，并同步等待 **Pong** 响应，用于可达性检测或往返时延（**Pong.Duration()** 为 RTT）。不宜高频，适合健康检查或探测。
+
+```go
+pong, err := ctx.Ping(targetRef, 2*time.Second)
+if err != nil {
+    return // 超时或不可达
+}
+rtt := pong.Duration()
+```

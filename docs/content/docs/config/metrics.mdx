@@ -1,0 +1,25 @@
+---
+title: 指标
+description: 启用指标、自定义 Metrics 与指标更新通知
+---
+
+Actor 系统可选的**指标**能力用于采集与监控运行状态（如 Actor 数量、失败数、重启数、死信数等）。本文说明如何启用、如何注入自定义 **Metrics** 实现，以及如何将指标变更推送到**事件流**。入口配置见 [Actor System 配置](/docs/config/actor-system-config)。
+
+## 启用指标
+
+- **WithActorSystemEnableMetrics(true)**：启用指标采集。若未同时设置 **WithActorSystemMetrics**，框架会使用**默认实现**（内存统计）。
+- **WithActorSystemMetrics(m)**：使用自定义 **metrics.Metrics** 实现，替代默认实现。可与 **EnableMetrics** 配合使用，用于将指标写入 Prometheus、日志或自有监控系统。
+
+启用后，系统会创建并维护内部 Metrics Actor，在 Actor 创建/终止、失败、重启、死信等事件发生时更新指标。**ctx.Metrics()** 返回的即为当前系统配置的 Metrics 实例，可供业务打点（如自定义 Counter、Gauge）。
+
+## 指标更新通知（EventStream）
+
+**WithActorSystemEnableMetricsUpdatedNotify(duration)** 控制是否将指标**快照**推送到**事件流**，以及推送频率：
+
+| 取值 | 行为 |
+|------|------|
+| **&lt; 0** | 不推送（默认） |
+| **= 0** | 每次指标变更后**立即**推送一次快照 |
+| **&gt; 0** | 按该 **duration** **间隔**定期推送快照，减少推送频率 |
+
+订阅方通过 **ctx.EventStream().Subscribe(ctx, metrics.MetricsSnapshot{})** 接收快照（类型来自 **github.com/kercylan98/vivid/pkg/metrics**），用于监控大盘、告警或日志。快照包含 Counters、Gauges、Histograms 等字段，详见 [pkg.go.dev - metrics](https://pkg.go.dev/github.com/kercylan98/vivid/pkg/metrics)。

@@ -1,0 +1,87 @@
+---
+title: 远程通讯
+description: Remoting 启用、Codec、RegisterCustomMessage 与位置透明
+---
+
+跨节点 Actor 通信需在创建 **ActorSystem** 时启用 **Remoting** 并配置消息**编解码**（Codec 或 RegisterCustomMessage）。配置完成后，**本地与远程的消息投递对业务透明**：**同一套 API**（Tell、Ask、Reply、PipeTo 等）不因目标在本机或远程而改变，无需改写调用方式或增加分支；框架根据 **ActorRef** 的地址自动选择本地投递或跨网络发送，并完成序列化与反序列化。本文说明如何启用 Remoting、配置 Codec 或 RegisterCustomMessage，以及远程连接读失败时的处理。入口配置见 [Actor System 配置](/docs/config/actor-system-config)。
+
+<Mermaid diagram={`flowchart LR
+  subgraph 本机
+    A[Actor A]
+    Local[本地邮箱]
+  end
+  subgraph 框架
+    Ref[ActorRef 地址]
+    Codec[Codec / RegisterCustomMessage]
+  end
+  subgraph 远程
+    Net[网络]
+    Remote[远程节点邮箱]
+    B[Actor B]
+  end
+  A -->|Tell/Ask| Ref
+  Ref -->|本地地址| Local
+  Ref -->|远程地址| Codec
+  Codec --> Net
+  Net --> Remote
+  Remote --> B
+`} title="Remoting：本地/远程路由与编解码" />
+
+<Callout type="info" title="位置透明">
+配置好 Remoting 与 Codec 后，业务侧**无需区分**目标 Actor 在本机还是远程：`ctx.Tell(ref, msg)`、`ctx.Ask(ref, msg)` 等调用方式完全一致，框架根据 `ref` 的地址自动完成本地投递或跨网络序列化与发送。这就是 **location transparency**（位置透明）。
+</Callout>
+
+## 启用 Remoting
+
+通过 **WithActorSystemRemoting(bindAddr, advertiseAddr?)** 启用：
+
+- **bindAddr**（必填）：本机监听地址，如 `"0.0.0.0:8080"`。框架在此地址上启动 Listener 接受连接。
+- **advertiseAddr**（可选）：对外暴露地址，如公网 IP 或集群内域名+端口，供其它节点连接。不传则使用 bindAddr。若 advertiseAddr 缺端口且**非域名**，会 panic；缺端口的域名会由框架或上层补充处理。
+
+TCP 与 UDP 复用同一端口，具体以实现为准。
+
+## 编解码（二选一）
+
+跨网络传递的消息必须可序列化。两种方式任选其一：
+
+### 统一 Codec
+
+**WithActorSystemCodec(codec)**：所有消息的序列化/反序列化均通过该 **Codec** 完成。**Codec** 接口为：
+
+```go
+type Codec interface {
+    Encode(message Message) ([]byte, error)
+    Decode(data []byte) (Message, error)
+}
+```
+
+可由业务实现 JSON、MessagePack、Proto 等格式。codec 不能为 nil。适用于消息种类多、希望统一格式或已有现成编解码库的场景。
+
+### 按类型注册（RegisterCustomMessage）
+
+未使用统一 Codec 时，需为**每一种**需要跨节点传输的自定义消息类型调用 **RegisterCustomMessage** 注册 reader/writer：
+
+- **messageName**：消息在系统中的唯一名称，建议与类型名一致，用于网络协议中区分类型。
+- **reader**（CustomMessageReader）：反序列化时被调用，将字节流按序填入 **message**。
+- **writer**（CustomMessageWriter）：序列化时被调用，将 **message** 的字段按序写出。
+
+**读写顺序必须一致**。函数签名与 reader/writer 参数类型见 [pkg.go.dev - RegisterCustomMessage](https://pkg.go.dev/github.com/kercylan98/vivid#RegisterCustomMessage)。注册应在 **init** 或应用启动时完成，仅需一次。适用于希望按类型精细控制二进制格式、或与现有协议兼容的场景。
+
+<Callout type="warn" title="必选其一">
+跨网络传递消息必须：要么设置 **WithActorSystemCodec**，要么为所有需要远程传输的自定义消息类型 **RegisterCustomMessage**，否则远程通信会失败。
+</Callout>
+
+## 远程连接读失败处理
+
+通过 **WithActorSystemRemotingOptions** 传入 **ActorSystemRemotingOptions**，可设置 **ConnectionReadFailedHandler**，在远程连接**读取失败**时被调用（如对端断开、网络异常、超时）：
+
+- **HandleRemotingConnectionReadFailed(fatal bool, err error) error**
+  - **fatal**：是否为致命错误（如 true 可能触发连接关闭或更高级别处理）。
+  - **err**：具体错误。
+  - 返回 **非 nil** 时，该连接会被关闭并将该 error 作为停止原因；返回 nil 表示忽略或已自行处理。
+
+可使用 **ActorSystemRemotingConnectionReadFailedHandlerFN** 以函数形式实现，便于在连接失败时打日志、告警或做重试策略。
+
+## 与 FindActorRef 配合
+
+远程节点的 ActorRef 常以字符串形式存储或从配置/服务发现获取。使用 **system.FindActorRef(actorRef string)** 可将字符串解析为 **ActorRef**，再用于 Tell/Ask。详见 [创建与生命周期 - 通过字符串解析 ActorRef](/docs/basics/lifecycle#通过字符串解析-actorref)。

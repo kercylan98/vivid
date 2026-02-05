@@ -1,0 +1,39 @@
+---
+title: Stash / Unstash
+description: 消息暂存与恢复
+---
+
+当当前消息**暂时无法处理**（例如依赖未就绪）时，可先**暂存**，待条件满足后再**恢复**到邮箱，由当前 Behavior 按顺序处理。
+
+<Mermaid diagram={`flowchart LR
+  subgraph 当前消息
+    M[OnReceive 当前消息]
+  end
+  subgraph 暂存
+    S[Stash]
+    Q[(暂存区)]
+  end
+  subgraph 恢复
+    U[Unstash]
+    Mailbox[(邮箱)]
+  end
+  M -->|无法处理| S
+  S --> Q
+  Q --> U
+  U --> Mailbox
+  Mailbox --> M
+`} title="Stash / Unstash 流程" />
+
+## API
+
+- **Stash()**：将**当前正在处理**的这条消息放入暂存区，本轮 OnReceive 结束后该消息不会再次被处理，直到被 Unstash。
+- **Unstash(num...)**：将暂存区中的消息按 FIFO 顺序重新入队。不传参数时恢复**一条**；传 **Unstash(n)** 时恢复最多 n 条（n ≤ 0 时恢复一条）。恢复后的消息会随邮箱正常调度。
+- **StashCount()**：返回当前暂存区中的消息条数。
+
+## 典型用法
+
+收到某类请求时若依赖未就绪（如连接未建立），先 **Stash()**；在收到“就绪”事件或 OnLaunch 中再 **Unstash()** 或 **Unstash(StashCount())**。可实现消息重试、排队、限流等队列管理能力。
+
+## 注意
+
+避免长期不 Unstash 导致逻辑死锁；Stash 与 Unstash 应成对使用，并结合业务保证条件满足后能恢复处理。

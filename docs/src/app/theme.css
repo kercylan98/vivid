@@ -1,0 +1,331 @@
+/* 预留滚动条占位，避免主题切换等操作时页面右移抖动 */
+html {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+/* 黑金风主题：亮色 / 暗色双模式 */
+:root {
+  /* 金色系（双模式共用） */
+  --vivid-gold: #b8860b;
+  --vivid-gold-soft: #c9a227;
+  --vivid-gold-muted: rgba(184, 134, 11, 0.5);
+  --vivid-gold-subtle: rgba(184, 134, 11, 0.12);
+  /* 亮色模式 */
+  --color-fd-background: #fafaf9;
+  --color-fd-foreground: #1a1a1a;
+  --color-fd-muted: #f5f5f4;
+  --color-fd-muted-foreground: #57534e;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #1a1a1a;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #1a1a1a;
+  --color-fd-border: rgba(184, 134, 11, 0.25);
+  --color-fd-primary: var(--vivid-gold);
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #f5f5f4;
+  --color-fd-secondary-foreground: #1a1a1a;
+  --color-fd-accent: var(--vivid-gold-subtle);
+  --color-fd-accent-foreground: #1a1a1a;
+  --color-fd-ring: var(--vivid-gold-muted);
+  --color-fd-overlay: rgba(0, 0, 0, 0.4);
+  --vivid-terminal-bg: #1c1917;
+}
+
+.dark {
+  --vivid-gold: #d4af37;
+  --vivid-gold-soft: #e8c547;
+  --vivid-gold-muted: rgba(212, 175, 55, 0.45);
+  --vivid-gold-subtle: rgba(212, 175, 55, 0.12);
+  --color-fd-background: #080808;
+  --color-fd-foreground: #f5f5f5;
+  --color-fd-muted: #0f0f0f;
+  --color-fd-muted-foreground: rgba(245, 245, 245, 0.7);
+  --color-fd-popover: #0c0c0c;
+  --color-fd-popover-foreground: #f5f5f5;
+  --color-fd-card: #0c0c0c;
+  --color-fd-card-foreground: #f5f5f5;
+  --color-fd-border: rgba(212, 175, 55, 0.2);
+  --color-fd-primary: var(--vivid-gold);
+  --color-fd-primary-foreground: #080808;
+  --color-fd-secondary: #141414;
+  --color-fd-secondary-foreground: #f5f5f5;
+  --color-fd-accent: var(--vivid-gold-subtle);
+  --color-fd-accent-foreground: var(--vivid-gold-soft);
+  --color-fd-ring: var(--vivid-gold-muted);
+  --color-fd-overlay: rgba(0, 0, 0, 0.6);
+  --vivid-terminal-bg: #0a0a0a;
+}
+
+/* 首页主容器：内容宽度 75%，亮/暗双模式渐变 */
+#nd-home-layout {
+  --fd-layout-width: min(75vw, 1200px);
+  background: radial-gradient(ellipse 90% 45% at 50% -15%, var(--vivid-gold-subtle), transparent 55%),
+    var(--color-fd-background);
+}
+.dark #nd-home-layout {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, var(--vivid-gold-subtle), transparent 60%),
+    var(--color-fd-background);
+}
+
+/* Banner 固定在顶端导航条下方 */
+#nd-home-layout #dev-status {
+  position: sticky !important;
+  top: 3.5rem;
+  z-index: 30;
+}
+
+/* 首页内容区：75% 宽度 + 适中边距 */
+.vivid-home-content {
+  width: 100%;
+  max-width: var(--fd-layout-width);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+@media (min-width: 768px) {
+  .vivid-home-content {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+@media (min-width: 1024px) {
+  .vivid-home-content {
+    padding-left: 2rem;
+    padding-right: 2rem;
+  }
+}
+
+/* 区块标题下的金色短线：居中、紧贴标题，不单独占左上角 */
+.vivid-section-title {
+  position: relative;
+  display: inline-block;
+}
+.vivid-section-title::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 2rem;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--vivid-gold-muted);
+  transform: translateX(-50%);
+}
+
+/* ========== 动效：关键帧 ========== */
+@keyframes vivid-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes vivid-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes vivid-glow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 20px rgba(212, 175, 55, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 32px rgba(212, 175, 55, 0.4);
+  }
+}
+
+@keyframes vivid-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes vivid-line-grow {
+  from {
+    transform: scaleX(0);
+    opacity: 0.6;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+/* ========== 主题切换：从点击位置圆形扩散 + 可回退 ========== */
+
+/* 动画期间由 JS 通过阻止 wheel/touchmove 禁滚，不设 overflow 以保留滚动条避免抖动 */
+html.vivid-theme-transition-no-scroll,
+body.vivid-theme-transition-no-scroll {
+  /* 仅作标记，滚动由事件阻止 */
+}
+
+/* 孔洞内透明（露出页面=新主题），孔洞外显示遮罩（截图=旧主题内容） */
+.vivid-theme-radiate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  --vivid-radiate-x: 50vw;
+  --vivid-radiate-y: 50vh;
+  --vivid-radiate-size: 0px;
+  -webkit-mask-image: radial-gradient(
+    circle at var(--vivid-radiate-x) var(--vivid-radiate-y),
+    transparent 0,
+    transparent calc(var(--vivid-radiate-size) / 2),
+    black calc(var(--vivid-radiate-size) / 2)
+  );
+  mask-image: radial-gradient(
+    circle at var(--vivid-radiate-x) var(--vivid-radiate-y),
+    transparent 0,
+    transparent calc(var(--vivid-radiate-size) / 2),
+    black calc(var(--vivid-radiate-size) / 2)
+  );
+}
+/* 遮罩使用与页面一致的背景（不依赖根主题变量，避免已切到新主题时取错色） */
+.vivid-theme-radiate-overlay[data-theme='dark'] {
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(212, 175, 55, 0.12), transparent 60%),
+    #080808;
+}
+.vivid-theme-radiate-overlay[data-theme='light'] {
+  background: radial-gradient(ellipse 90% 45% at 50% -15%, rgba(184, 134, 11, 0.12), transparent 55%),
+    #fafaf9;
+}
+
+@property --vivid-radiate-size {
+  syntax: '<length>';
+  initial-value: 0px;
+  inherits: false;
+}
+
+/* 扩散：圆形从点击处由小变大 */
+.vivid-theme-radiate-overlay.vivid-theme-radiate-expand {
+  animation: vivid-theme-circle-size-expand var(--vivid-radiate-duration, 1000ms) cubic-bezier(0.33, 1, 0.68, 1) forwards;
+}
+
+/* 回退：圆形由大变小 */
+.vivid-theme-radiate-overlay.vivid-theme-radiate-revert {
+  animation: vivid-theme-circle-size-revert var(--vivid-radiate-duration, 600ms) cubic-bezier(0.33, 1, 0.68, 1) forwards;
+}
+
+@keyframes vivid-theme-circle-size-expand {
+  0% {
+    --vivid-radiate-size: 0px;
+  }
+  100% {
+    --vivid-radiate-size: 320vmax;
+  }
+}
+
+@keyframes vivid-theme-circle-size-revert {
+  0% {
+    --vivid-radiate-size: var(--vivid-radiate-size-start, 320vmax);
+  }
+  100% {
+    --vivid-radiate-size: 0px;
+  }
+}
+
+/* 切换按钮图标：平滑过渡（旋转 + 透明度） */
+@keyframes vivid-icon-transition {
+  0% {
+    transform: rotate(0deg);
+    opacity: 1;
+  }
+  50% {
+    transform: rotate(90deg);
+    opacity: 0.5;
+  }
+  100% {
+    transform: rotate(180deg);
+    opacity: 1;
+  }
+}
+
+/* 主题切换按钮：可点击时手型，不可点击时禁用 */
+[data-theme-toggle] {
+  cursor: pointer;
+}
+/* 切换未完成时禁止按钮点击 */
+html.vivid-theme-icon-transition [data-theme-toggle] {
+  pointer-events: none;
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+/* 仅对点击时已存在的图标做旋转，避免主题切换后新图标再跑一次动画导致“翻两次” */
+html.vivid-theme-icon-transition [data-theme-toggle][data-icon-transitioning] {
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+html.vivid-theme-icon-transition [data-theme-toggle][data-icon-transitioning] svg {
+  animation: vivid-icon-transition 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* 入场动画工具类 */
+.vivid-animate-in-up {
+  animation: vivid-fade-in-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.vivid-animate-in {
+  animation: vivid-fade-in 0.5s ease-out forwards;
+}
+.vivid-animate-scale-in {
+  animation: vivid-scale-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.vivid-delay-1 { animation-delay: 0.1s; }
+.vivid-delay-2 { animation-delay: 0.2s; }
+.vivid-delay-3 { animation-delay: 0.3s; }
+.vivid-delay-4 { animation-delay: 0.45s; }
+.vivid-delay-5 { animation-delay: 0.6s; }
+.vivid-delay-6 { animation-delay: 0.75s; }
+.vivid-delay-7 { animation-delay: 0.9s; }
+
+/* 初始不可见，由动画带出 */
+.vivid-opacity-start {
+  opacity: 0;
+}
+
+/* 卡片悬停：轻微上浮 + 金边光晕 */
+.vivid-card-hover {
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.25s ease,
+    border-color 0.2s ease;
+}
+.vivid-card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--vivid-gold-muted);
+}
+
+/* 主按钮悬停：光晕脉冲 */
+.vivid-btn-glow {
+  transition: box-shadow 0.3s ease, transform 0.2s ease;
+}
+.vivid-btn-glow:hover {
+  box-shadow: 0 0 28px rgba(212, 175, 55, 0.45);
+  transform: translateY(-1px);
+}
+.vivid-btn-glow:active {
+  transform: translateY(0);
+}
+
+/* 次要按钮 / 链接悬停 */
+.vivid-btn-outline-hover {
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+}
+.vivid-btn-outline-hover:hover {
+  transform: translateY(-1px);
+}

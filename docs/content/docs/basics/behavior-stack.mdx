@@ -1,0 +1,62 @@
+---
+title: 行为栈
+description: Become / UnBecome 与 WithBehaviorDiscardOld 动态切换消息处理行为
+---
+
+默认情况下，每次消息都会触发 Actor 的 **OnReceive**。若需要在运行时**切换**消息处理逻辑（例如状态机、多阶段流程），可使用 **Become** 与 **UnBecome** 管理**行为栈**。行为类型为 **`vivid.Behavior`**（`func(ctx ActorContext)`）。
+
+<Mermaid diagram={`flowchart LR
+  subgraph 栈底
+    O[OnReceive]
+  end
+  subgraph 压栈
+    B[Become newBehavior]
+  end
+  subgraph 出栈
+    U[UnBecome]
+  end
+  O --> B
+  B --> O
+  U --> O
+`} title="行为栈：Become 压栈、UnBecome 出栈" />
+
+## Become / UnBecome
+
+- **`ctx.Become(behavior, options...)`**：将新的 **Behavior** 设为当前行为。默认会把新行为**压栈**，之后可通过 **UnBecome** 恢复先前行为。
+- **`ctx.UnBecome(options...)`**：弹出栈顶行为，恢复为上一个行为。栈底始终为创建时注册的 OnReceive，已到栈底时再次调用无效果。
+
+## 是否丢弃旧行为
+
+通过 **`vivid.WithBehaviorDiscardOld(discardOld bool)`** 控制：
+
+- **`ctx.Become(newBehavior, vivid.WithBehaviorDiscardOld(true))`**：清空行为栈，仅保留 `newBehavior`，无法再 UnBecome 回退。
+- **`ctx.Become(newBehavior)`** 或 **`WithBehaviorDiscardOld(false)`**：新行为压栈，可 UnBecome 恢复。
+
+## 示例（状态机风格）
+
+```go
+func (a *MyActor) OnReceive(ctx vivid.ActorContext) {
+    switch msg := ctx.Message().(type) {
+    case *vivid.OnLaunch:
+        // 初始状态
+    case *Request:
+        ctx.Become(a.waitingResponseBehavior)
+        ctx.Tell(upstream, msg)
+    default:
+        // ...
+    }
+}
+
+func (a *MyActor) waitingResponseBehavior(ctx vivid.ActorContext) {
+    switch msg := ctx.Message().(type) {
+    case *Response:
+        ctx.UnBecome() // 恢复为 OnReceive
+        ctx.Reply(msg)
+    case *Timeout:
+        ctx.UnBecome()
+        ctx.Reply(ErrTimeout)
+    }
+}
+```
+
+适合多阶段协议、状态机或“请求发出后等待响应”的流程，无需额外状态变量即可切换处理逻辑。

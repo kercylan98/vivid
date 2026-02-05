@@ -1,0 +1,37 @@
+---
+title: Entrust
+description: 在 Actor 内托管异步任务并返回 Future
+---
+
+**Entrust** 在当前上下文中托管一个 **EntrustTask**（`Run() (Message, error)`），在独立 goroutine 中执行，并返回 **`Future[Message]`**，用于在 Actor 内执行 I/O 或计算密集型逻辑，同时通过 Future 与消息模型集成。
+
+<Mermaid diagram={`flowchart LR
+  OnReceive[OnReceive] --> Entrust[ctx.Entrust]
+  Entrust --> Goroutine[独立 goroutine]
+  Entrust --> Future[Future]
+  Goroutine -->|Run 完成| Future
+  Future -->|Result / PipeTo| 后续[后续逻辑]
+`} title="Entrust：托管任务与 Future" />
+
+## 用法
+
+```go
+future := ctx.Entrust(3*time.Second, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+    // 耗时或阻塞操作
+    return &MyResult{Data: "ok"}, nil
+}))
+result, err := future.Result()
+```
+
+- **timeout**：任务最大等待时长。**为 0 表示不设超时**，Future 会一直等待任务结束。超时后 Future 失败，任务可能仍在后台运行，但结果不再被写入。
+- **EntrustTask**：实现 **Run() (Message, error)**；**EntrustTaskFN** 为函数式适配器，可直接传入 `func() (Message, error)`。
+
+## 行为说明
+
+- 任务在独立 goroutine 中运行，不阻塞当前消息处理。
+- 任务内发生 **panic** 会被捕获并转换为错误写入 Future。
+- 返回的 Future 与 Ask 返回的 Future 用法一致：**Result()**、**Wait()**、**Close(err)**。
+
+## 适用场景
+
+在 Actor 内执行数据库查询、HTTP 调用、重计算等阻塞或耗时操作时，用 Entrust 避免阻塞邮箱；需要结果时用 **Result()** 或配合 [PipeTo](/docs/basics/pipe-to) 将结果转给其他 Actor。

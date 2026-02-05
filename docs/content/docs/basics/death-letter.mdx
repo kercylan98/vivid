@@ -1,0 +1,29 @@
+---
+title: 死信
+description: 无法投递的消息与 DeathLetterEvent 订阅
+---
+
+当消息无法被目标 Actor 正常处理时（例如目标已终止或处于 killing 状态），系统会将消息包装为**死信**并交给 Guard Actor 处理。Guard Actor 将 **`ves.DeathLetterEvent`**（含原始 Envelope 与时间戳）发布到**事件流**，因此可通过 **EventStream** 订阅该类型事件做监控、审计或统计。
+
+<Mermaid diagram={`flowchart LR
+  A[发送方 Tell/Ask] --> B{目标可达?}
+  B -->|否| C[死信]
+  B -->|是| D[目标邮箱]
+  C --> E[Guard Actor]
+  E --> F[EventStream]
+  F --> G[订阅者 OnReceive]
+`} title="死信流程" />
+
+## 订阅死信事件
+
+```go
+ctx.EventStream().Subscribe(ctx, ves.DeathLetterEvent{})
+```
+
+在 OnReceive 中收到 **`*ves.DeathLetterEvent`** 时，可读取 **Envelope**（发送者、接收者、消息内容等）与 **Time** 进行诊断或告警。事件类型来自 **`github.com/kercylan98/vivid/pkg/ves`**。
+
+## 说明
+
+- **系统消息**在 killing 阶段仍会被处理，不会成为死信。
+- 典型触发场景：目标已终止或处于非运行状态时收到普通业务消息。
+- 建议在生产环境中监控死信事件，便于发现不可达目标、错误引用或配置问题。
