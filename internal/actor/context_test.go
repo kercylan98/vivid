@@ -3,15 +3,233 @@ package actor_test
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/actor"
 	"github.com/kercylan98/vivid/internal/messages"
+	"github.com/kercylan98/vivid/internal/sugar"
+	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/ves"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestContext_Supervision(t *testing.T) {
+	t.Run("one for all graceful stop", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var childCount = 10
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				for i := 0; i < childCount; i++ {
+					child, err := ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+						switch ctx.Message().(type) {
+						case *vivid.OnLaunch:
+							if i == childCount-1 {
+								ctx.Failed("test error")
+							}
+						}
+					}))
+					assert.NoError(t, err)
+					assert.NotNil(t, child)
+				}
+			case *vivid.OnKilled:
+				if m.Ref.Equals(ctx.Ref()) {
+					close(wait)
+				} else {
+					childCount--
+					ctx.Logger().Debug("test counter", log.Int("child_count", childCount))
+					if childCount == 0 {
+						ctx.Kill(ctx.Ref(), false, "all children killed")
+					}
+				}
+			}
+		}), vivid.WithActorSupervisionStrategy(vivid.OneForAllStrategy(vivid.SupervisionStrategyDecisionMakerFN(func(ctx vivid.SupervisionContext) (decision vivid.SupervisionDecision, reason string) {
+			return vivid.SupervisionDecisionGracefulStop, "graceful stop"
+		}))))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		select {
+		case <-wait:
+			assert.Equal(t, 0, childCount)
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+
+	t.Run("one for all graceful restart", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var childCount atomic.Int32
+		childCount.Store(10)
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				for i := 0; i < int(childCount.Load()); i++ {
+					child, err := ctx.ActorOf(vivid.NewRestartedActor(func(ctx vivid.RestartContext) error {
+						childCount.Add(-1)
+						if childCount.Load() == 0 {
+							close(wait)
+						}
+						return nil
+					}, vivid.ActorFN(func(ctx vivid.ActorContext) {
+						switch ctx.Message().(type) {
+						case *vivid.OnLaunch:
+							if i == int(childCount.Load())-1 {
+								ctx.Failed("test error")
+							}
+						}
+					})))
+					assert.NoError(t, err)
+					assert.NotNil(t, child)
+				}
+			}
+		}), vivid.WithActorSupervisionStrategy(vivid.OneForAllStrategy(vivid.SupervisionStrategyDecisionMakerFN(func(ctx vivid.SupervisionContext) (decision vivid.SupervisionDecision, reason string) {
+			return vivid.SupervisionDecisionGracefulRestart, "graceful restart"
+		}))))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		select {
+		case <-wait:
+			assert.Equal(t, int32(0), childCount.Load())
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+
+	t.Run("one for one resume", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				child, err := ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+					switch ctx.Message().(type) {
+					case *vivid.OnLaunch:
+						ctx.Tell(ctx.Ref(), "resume message")
+						ctx.Failed(errors.New("test error"))
+					case string:
+						close(wait)
+					}
+				}))
+				assert.NoError(t, err)
+				assert.NotNil(t, child)
+			}
+		}), vivid.WithActorSupervisionStrategy(vivid.OneForOneStrategy(vivid.SupervisionStrategyDecisionMakerFN(func(ctx vivid.SupervisionContext) (decision vivid.SupervisionDecision, reason string) {
+			return vivid.SupervisionDecisionResume, "resume"
+		}))))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+
+	t.Run("one for one escalate", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				child, err := ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+					switch ctx.Message().(type) {
+					case *vivid.OnLaunch:
+						ctx.Failed(errors.New("test error"))
+					case *vivid.OnKilled:
+						close(wait)
+					}
+				}))
+				assert.NoError(t, err)
+				assert.NotNil(t, child)
+			}
+		}), vivid.WithActorSupervisionStrategy(vivid.OneForOneStrategy(vivid.SupervisionStrategyDecisionMakerFN(func(ctx vivid.SupervisionContext) (decision vivid.SupervisionDecision, reason string) {
+			return vivid.SupervisionDecisionEscalate, "escalate"
+		}))))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+
+	t.Run("basic function", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var wait1 = make(chan struct{})
+		var wait2 = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				child1, err := ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+					switch ctx.Message().(type) {
+					case *vivid.OnLaunch:
+						child2, err := ctx.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+							switch ctx.Message().(type) {
+							case *vivid.OnLaunch:
+								ctx.Failed(errors.New("test error"))
+							case *vivid.OnKilled:
+								close(wait2)
+							}
+						}))
+						assert.NoError(t, err)
+						assert.NotNil(t, child2)
+					case *vivid.OnKilled:
+						close(wait1)
+					}
+				}), vivid.WithActorSupervisionStrategy(vivid.OneForOneStrategy(vivid.SupervisionStrategyDecisionMakerFN(func(ctx vivid.SupervisionContext) (decision vivid.SupervisionDecision, reason string) {
+					return vivid.SupervisionDecisionEscalate, "test escalate"
+				}))))
+				assert.NoError(t, err)
+				assert.NotNil(t, child1)
+			}
+		}), vivid.WithActorSupervisionStrategy(vivid.OneForOneStrategy(vivid.SupervisionStrategyDecisionMakerFN(func(ctx vivid.SupervisionContext) (decision vivid.SupervisionDecision, reason string) {
+			ctx.Logger().Debug("supervision basic",
+				log.String("reason", reason),
+				log.Any("fault", ctx.Fault()),
+				log.Any("fault_stack", string(ctx.FaultStack())),
+			)
+			return vivid.SupervisionDecisionStop, "test stop"
+		}))))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		select {
+		case <-sugar.WaitAllChannel(wait1, wait2):
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+}
 
 func TestContext_Command(t *testing.T) {
 	t.Run("pause and resume mailbox", func(t *testing.T) {
@@ -99,7 +317,43 @@ func TestContext_Restart(t *testing.T) {
 		}
 	})
 
-	t.Run("restart ok kill panic", func(t *testing.T) {
+	t.Run("restart on pre launch error", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				var childPanicked bool
+				childActor := vivid.NewPrelaunchActor(func(ctx vivid.PrelaunchContext) error {
+					if !childPanicked {
+						return nil
+					}
+					return errors.New("test pre launch error")
+				}, vivid.ActorFN(func(ctx vivid.ActorContext) {
+					switch ctx.Message().(type) {
+					case *vivid.OnLaunch:
+						if !childPanicked {
+							childPanicked = true
+							panic("test pre launch panic")
+						}
+					}
+				}))
+
+				childRef, err := ctx.ActorOf(childActor)
+				assert.NoError(t, err)
+				assert.NotNil(t, childRef)
+			}
+		}), vivid.WithActorSupervisionStrategy(vivid.OneForOneStrategy(vivid.SupervisionStrategyDecisionMakerFN(func(ctx vivid.SupervisionContext) (decision vivid.SupervisionDecision, reason string) {
+			return vivid.SupervisionDecisionRestart, "test restart"
+		}))))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+	})
+
+	t.Run("restart on kill panic", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
 		defer func() {
 			assert.NoError(t, system.Stop())
@@ -132,6 +386,62 @@ func TestContext_Restart(t *testing.T) {
 						ctx.Logger().Info("child on kill ok")
 					}
 				})))
+				assert.NoError(t, err)
+				assert.NotNil(t, childRef)
+			}
+		}), vivid.WithActorSupervisionStrategy(vivid.OneForOneStrategy(vivid.SupervisionStrategyDecisionMakerFN(func(ctx vivid.SupervisionContext) (decision vivid.SupervisionDecision, reason string) {
+			return vivid.SupervisionDecisionRestart, "test restart"
+		}))))
+		assert.NoError(t, err)
+		assert.NotNil(t, parentRef)
+
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+
+	t.Run("restart on killed panic, and prelaunch", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var launchPanicked bool
+		var killPanicked bool
+		var wait = make(chan struct{})
+		parentRef, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				childActor := vivid.NewComplexCombinationActor(
+					vivid.NewPrelaunchActor(func(ctx vivid.PrelaunchContext) error {
+						return nil
+					}),
+					vivid.NewPreRestartActor(func(ctx vivid.RestartContext) error {
+						close(wait)
+						return nil
+					}, vivid.ActorFN(func(ctx vivid.ActorContext) {
+						switch ctx.Message().(type) {
+						case *vivid.OnLaunch:
+							if !launchPanicked {
+								launchPanicked = true
+								panic("child on launch panic")
+							}
+
+							ctx.Logger().Info("child on launch ok")
+						case *vivid.OnKilled:
+							if !killPanicked {
+								killPanicked = true
+								panic("child on killed panic")
+							}
+
+							ctx.Logger().Info("child on killed ok")
+						}
+					}),
+					))
+
+				childRef, err := ctx.ActorOf(childActor)
 				assert.NoError(t, err)
 				assert.NotNil(t, childRef)
 			}

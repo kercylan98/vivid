@@ -7,6 +7,7 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/actor"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewRefValid(t *testing.T) {
@@ -190,32 +191,48 @@ func TestNewAgentRef(t *testing.T) {
 
 func TestRefChild(t *testing.T) {
 	parent, err := actor.NewRef("example.com", "/root")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	child, err := parent.Child("sub")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if child.GetPath() != "/root/sub" {
-		t.Fatalf("unexpected child path: %q", child.GetPath())
-	}
+	assert.NoError(t, err)
+
+	t.Run("empty_child", func(t *testing.T) {
+		emptyChild, err := parent.Child("")
+		assert.ErrorIs(t, err, vivid.ErrorRefInvalidPath)
+		assert.Nil(t, emptyChild)
+	})
+
+	t.Run("sub_child", func(t *testing.T) {
+		child, err := parent.Child("sub")
+		assert.NoError(t, err)
+		assert.Equal(t, "/root/sub", child.GetPath())
+	})
 }
 
 func TestRefStringFormat(t *testing.T) {
-	ref, err := actor.NewRef("example.com", "/a")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ref.String() != "example.com/a" {
-		t.Fatalf("unexpected string: %q", ref.String())
+	tests := []struct {
+		name    string
+		address string
+		path    string
+		wantStr string
+	}{
+		{
+			name:    "address_without_port",
+			address: "example.com",
+			path:    "/a",
+			wantStr: "example.com/a",
+		},
+		{
+			name:    "address_with_port",
+			address: "example.com:80",
+			path:    "/a",
+			wantStr: "example.com:80:/a",
+		},
 	}
 
-	ref, err = actor.NewRef("example.com:80", "/a")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ref.String() != "example.com:80:/a" {
-		t.Fatalf("unexpected string: %q", ref.String())
+	for _, tt := range tests {
+		tt := tt // capture range variable
+		t.Run(tt.name, func(t *testing.T) {
+			ref, err := actor.NewRef(tt.address, tt.path)
+			assert.NoError(t, err, "unexpected error")
+			assert.Equal(t, tt.wantStr, ref.String(), "unexpected string")
+		})
 	}
 }

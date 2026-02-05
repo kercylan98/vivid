@@ -24,7 +24,7 @@ func TestBehaviorStack_Push(t *testing.T) {
 
 func TestBehaviorStack_Pop(t *testing.T) {
 	stack := actor.NewBehaviorStack()
-
+	assert.Nil(t, stack.Pop())
 	stack.Push(func(ctx vivid.ActorContext) {})
 	assert.Equal(t, 1, stack.Len())
 	assert.NotNil(t, stack.Pop())
@@ -51,6 +51,7 @@ func TestBehaviorStack_IsEmpty(t *testing.T) {
 
 func TestBehaviorStack_Peek(t *testing.T) {
 	stack := actor.NewBehaviorStack()
+	assert.Nil(t, stack.Peek())
 	stack.Push(func(ctx vivid.ActorContext) {})
 	assert.NotNil(t, stack.Peek())
 }
