@@ -818,6 +818,30 @@ func TestContext_Unstash(t *testing.T) {
 	}
 }
 
+func BenchmarkContext_ActorOf(b *testing.B) {
+	system := actor.NewSystem()
+	if err := system.Start(); err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		if err := system.Stop(); err != nil {
+			b.Fatal(err)
+		}
+	}()
+
+	var err error
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err = system.ActorOf(actor.NewUselessActor())
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	b.ReportAllocs()
+}
+
 func TestContext_ActorOf(t *testing.T) {
 	t.Run("actor_of", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
