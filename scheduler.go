@@ -72,7 +72,7 @@ func NewScheduleOptions(options ...ScheduleOption) *ScheduleOptions {
 
 type ScheduleOptions struct {
 	Location  *time.Location // 调度器的位置，默认为 time.Local，用于 cron 表达式的时间计算
-	Reference string         // 调度器引用标识
+	Reference string         // 调度任务引用标识，用于 Exists/Cancel；不传时由 NewScheduleOptions 自动生成
 }
 
 type ScheduleOption func(options *ScheduleOptions)

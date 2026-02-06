@@ -113,7 +113,7 @@ func (s *Scheduler) tell(receiver vivid.ActorRef, message vivid.Message, options
 	s.ctx.Tell(receiver, schedulerMessage)
 }
 
-// scheduleJob 注册任务并调度，失败时自动从 jobKeys 回滚
+// scheduleJob 注册任务并调度，将 reference 与 jobKey 记入 jobKeys 供 Exists/Cancel 使用
 func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, opts *vivid.ScheduleOptions, trigger quartz.Trigger, logKind string, logFields ...any) error {
 	jobKey := uniqueJobKey(s.ctx, opts.Reference)
 	s.jobKeys[opts.Reference] = jobKey
