@@ -94,8 +94,8 @@ func WithScheduleLocation(location *time.Location) ScheduleOption {
 	}
 }
 
-// WithReference 设置调度器引用标识，它可被用于取消调度等操作
-func WithReference(reference string) ScheduleOption {
+// WithSchedulerReference 设置调度器引用标识，它可被用于取消调度等操作
+func WithSchedulerReference(reference string) ScheduleOption {
 	return func(opts *ScheduleOptions) {
 		if reference == "" {
 			return

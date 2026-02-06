@@ -362,12 +362,6 @@ func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 }
 
 func (c *Context) onScheduler(message *SchedulerMessage, behavior vivid.Behavior) {
-	// 检查是否过期
-	if !c.scheduler.Exists(message.Reference) {
-		c.Logger().Warn("scheduler message expired", log.String("reference", message.Reference))
-		return
-	}
-
 	// 消息替换
 	c.envelop = newReplacedEnvelop(c.envelop, message.Message)
 

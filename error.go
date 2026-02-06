@@ -36,24 +36,32 @@ var (
 
 // 参数、调度与状态相关错误。
 var (
-	ErrorIllegalArgument         = RegisterError(120000, "illegal argument")           // 参数无效或缺失
-	ErrorCronParse               = RegisterError(120001, "parse cron expression")      // Cron 表达式解析失败
-	ErrorTriggerExpired          = RegisterError(120002, "trigger has expired")        // 触发器已过期
-	ErrorIllegalState            = RegisterError(120003, "illegal state")              // 违反当前状态或上下文
-	ErrorQueueEmpty              = RegisterError(120004, "queue is empty")             // 队列空无法出队
-	ErrorJobAlreadyExists        = RegisterError(120005, "job already exists")         // 任务已注册
-	ErrorJobIsSuspended          = RegisterError(120006, "job is suspended")           // Job 已挂起时再次挂起
-	ErrorJobIsActive             = RegisterError(120007, "job is active")              // Job 已激活时再次激活
-	ErrorActorRefAddressMismatch = RegisterError(120008, "actor ref address mismatch") // ActorRef 地址不一致
+	ErrorIllegalArgument = RegisterError(120000, "illegal argument")      // 参数无效或缺失
+	ErrorCronParse       = RegisterError(120001, "parse cron expression") // Cron 表达式解析失败
+	//ErrorTriggerExpired          = RegisterError(120002, "trigger has expired")        // 触发器已过期
+	//ErrorIllegalState            = RegisterError(120003, "illegal state")              // 违反当前状态或上下文
+	//ErrorQueueEmpty              = RegisterError(120004, "queue is empty")             // 队列空无法出队
+	//ErrorJobAlreadyExists        = RegisterError(120005, "job already exists")         // 任务已注册
+	//ErrorJobIsSuspended          = RegisterError(120006, "job is suspended")           // Job 已挂起时再次挂起
+	//ErrorJobIsActive             = RegisterError(120007, "job is active")              // Job 已激活时再次激活
+	//ErrorActorRefAddressMismatch = RegisterError(120008, "actor ref address mismatch") // ActorRef 地址不一致
 )
 
-// ActorRef/AgentRef 相关错误。
+// ActorRef 相关错误。
 var (
 	ErrorRefEmpty          = RegisterError(130001, "actor ref is empty")                      // ActorRef 为空
 	ErrorRefFormat         = RegisterError(130002, "actor ref must contain address and path") // 缺少 address 或 path
 	ErrorRefInvalidAddress = RegisterError(130003, "actor ref address is invalid")            // 地址非法
 	ErrorRefInvalidPath    = RegisterError(130004, "actor ref path is invalid")               // 路径非法
 	ErrorRefNilAgent       = RegisterError(130005, "agent ref is nil")                        // AgentRef 为 nil
+)
+
+// Remoting 相关错误。
+var (
+	ErrorRemotingMessageSendFailed   = RegisterError(140000, "remoting message send failed")   // 消息发送失败
+	ErrorRemotingMessageEncodeFailed = RegisterError(140001, "remoting message encode failed") // 消息编码失败
+	ErrorRemotingMessageDecodeFailed = RegisterError(140002, "remoting message decode failed") // 消息解码失败
+	ErrorRemotingMessageHandleFailed = RegisterError(140003, "remoting message handle failed") // 消息处理失败
 )
 
 var _ error = (*Error)(nil)

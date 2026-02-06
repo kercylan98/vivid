@@ -167,6 +167,7 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 		receiverAddr, receiverPath,
 		messageInstance,
 		err := serialize.DecodeEnvelopWithRemoting(c.codec, msgBuf); err != nil {
+		err = vivid.ErrorRemotingMessageDecodeFailed.With(err)
 		// 发布消息解码失败事件
 		ctx.EventStream().Publish(ctx, ves.RemotingMessageDecodeFailedEvent{
 			ConnectionRef: ctx.Ref(),
@@ -175,8 +176,12 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 			Error:         err,
 		})
 		// 消息解码不影响连接的正常使用，继续监听连接
-		ctx.Logger().Warn("decode Remoting envelop failed", log.Any("err", err))
 		ctx.TellSelf(c.conn)
+		ctx.Logger().Warn("failed to enqueue message decode failed",
+			log.String("sender", ctx.Ref().String()),
+			log.String("receiver", ctx.Ref().GetPath()),
+			log.Any("err", err),
+		)
 		return false, nil
 	} else {
 		// 发布消息接收成功事件
@@ -194,7 +199,17 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 		// 即便是远程消息处理失败，也继续监听连接
 		err = c.envelopHandler.HandleRemotingEnvelop(system, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath, messageInstance)
 		ctx.TellSelf(c.conn)
-		return false, err
+		if err != nil {
+			err = vivid.ErrorRemotingMessageHandleFailed.With(err)
+			ctx.Logger().Warn("failed to handle remoting message",
+				log.String("sender", ctx.Ref().String()),
+				log.String("receiver", ctx.Ref().GetPath()),
+				log.String("message_type", fmt.Sprintf("%T", messageInstance)),
+				log.String("message", fmt.Sprintf("%+v", messageInstance)),
+				log.Any("err", err),
+			)
+		}
+		return false, nil
 	}
 }
 

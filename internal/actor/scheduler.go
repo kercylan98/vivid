@@ -18,6 +18,20 @@ var (
 	_ vivid.Scheduler = (*Scheduler)(nil)
 )
 
+// quartzErrorToVivid 将 Quartz 错误转换为 Vivid 错误
+var quartzErrorToVivid = []struct {
+	match func(error) bool
+	vivid *vivid.Error
+}{
+	{func(e error) bool { return errors.Is(e, quartz.ErrCronParse) }, vivid.ErrorCronParse},
+	//{func(e error) bool { return errors.Is(e, quartz.ErrTriggerExpired) }, vivid.ErrorTriggerExpired},
+	//{func(e error) bool { return errors.Is(e, quartz.ErrIllegalState) }, vivid.ErrorIllegalState},
+	//{func(e error) bool { return errors.Is(e, quartz.ErrQueueEmpty) }, vivid.ErrorQueueEmpty},
+	//{func(e error) bool { return errors.Is(e, quartz.ErrJobAlreadyExists) }, vivid.ErrorJobAlreadyExists},
+	//{func(e error) bool { return errors.Is(e, quartz.ErrJobIsSuspended) }, vivid.ErrorJobIsSuspended},
+	//{func(e error) bool { return errors.Is(e, quartz.ErrJobIsActive) }, vivid.ErrorJobIsActive},
+}
+
 func init() {
 	messages.RegisterInternalMessage[*SchedulerMessage]("SchedulerMessage", schedulerMessageReader, schedulerMessageWriter)
 }
@@ -63,12 +77,7 @@ type Scheduler struct {
 
 func (s *Scheduler) Clear() {
 	for reference, jobKey := range s.jobKeys {
-		if err := s.scheduler.DeleteJob(jobKey); err != nil {
-			switch {
-			case !errors.Is(err, quartz.ErrJobNotFound):
-				s.ctx.Logger().Warn("failed to delete job", log.String("reference", reference), log.Any("error", err))
-			}
-		}
+		_ = s.scheduler.DeleteJob(jobKey)
 		delete(s.jobKeys, reference)
 	}
 }
@@ -82,26 +91,13 @@ func schedulerErrorConvert(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, quartz.ErrJobNotFound):
-		return vivid.ErrorNotFound.WithMessage(err.Error())
-	case errors.Is(err, quartz.ErrCronParse):
-		return vivid.ErrorCronParse.WithMessage(err.Error())
-	case errors.Is(err, quartz.ErrTriggerExpired):
-		return vivid.ErrorTriggerExpired.WithMessage(err.Error())
-	case errors.Is(err, quartz.ErrIllegalState):
-		return vivid.ErrorIllegalState.WithMessage(err.Error())
-	case errors.Is(err, quartz.ErrQueueEmpty):
-		return vivid.ErrorQueueEmpty.WithMessage(err.Error())
-	case errors.Is(err, quartz.ErrJobAlreadyExists):
-		return vivid.ErrorJobAlreadyExists.WithMessage(err.Error())
-	case errors.Is(err, quartz.ErrJobIsSuspended):
-		return vivid.ErrorJobIsSuspended.WithMessage(err.Error())
-	case errors.Is(err, quartz.ErrJobIsActive):
-		return vivid.ErrorJobIsActive.WithMessage(err.Error())
-	default:
-		return err
+	for _, m := range quartzErrorToVivid {
+		if m.match(err) {
+			err = m.vivid.With(err)
+			break
+		}
 	}
+	return err
 }
 
 func (s *Scheduler) tell(receiver vivid.ActorRef, message vivid.Message, options *vivid.ScheduleOptions) {
@@ -109,11 +105,27 @@ func (s *Scheduler) tell(receiver vivid.ActorRef, message vivid.Message, options
 		Reference: options.Reference,
 		Message:   message,
 	}
+	s.ctx.Logger().Debug("scheduler trigger", log.String("reference", options.Reference), log.Time("time", time.Now()), log.String("messageType", fmt.Sprintf("%T", message)))
 	if receiver.Equals(s.ctx.Ref()) {
 		s.ctx.TellSelf(schedulerMessage)
 		return
 	}
 	s.ctx.Tell(receiver, schedulerMessage)
+}
+
+// scheduleJob 注册任务并调度，失败时自动从 jobKeys 回滚
+func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, opts *vivid.ScheduleOptions, trigger quartz.Trigger, logKind string, logFields ...any) error {
+	jobKey := uniqueJobKey(s.ctx, opts.Reference)
+	s.jobKeys[opts.Reference] = jobKey
+	fn := job.NewFunctionJob(func(ctx context.Context) (any, error) {
+		s.tell(receiver, message, opts)
+		return nil, nil
+	})
+	_ = s.scheduler.Schedule(quartz.NewJobDetail(fn, jobKey), trigger)
+	base := []any{log.String("ref", s.ctx.Ref().GetPath()), log.String("receiver", receiver.GetPath()), log.String("messageType", fmt.Sprintf("%T", message))}
+	logKindStr := fmt.Sprintf("scheduler %s scheduled", logKind)
+	s.ctx.Logger().Debug(logKindStr, append(base, logFields...)...)
+	return nil
 }
 
 func (s *Scheduler) Exists(reference string) bool {
@@ -123,59 +135,21 @@ func (s *Scheduler) Exists(reference string) bool {
 
 func (s *Scheduler) Cron(receiver vivid.ActorRef, cron string, message vivid.Message, options ...vivid.ScheduleOption) error {
 	opts := vivid.NewScheduleOptions(options...)
-	cronTrigger, err := quartz.NewCronTriggerWithLoc(cron, opts.Location)
-	if err != nil {
-		return schedulerErrorConvert(err)
+	trigger, err := quartz.NewCronTriggerWithLoc(cron, opts.Location)
+	if err = schedulerErrorConvert(err); err != nil {
+		return err
 	}
-
-	jobKey := uniqueJobKey(s.ctx, opts.Reference)
-	s.jobKeys[opts.Reference] = jobKey
-	job := job.NewFunctionJob(func(ctx context.Context) (any, error) {
-		s.tell(receiver, message, opts)
-		return nil, nil
-	})
-
-	if err := s.scheduler.Schedule(quartz.NewJobDetail(job, jobKey), cronTrigger); err != nil {
-		delete(s.jobKeys, opts.Reference)
-		return schedulerErrorConvert(err)
-	}
-	s.ctx.Logger().Debug("scheduler cron scheduled", log.String("ref", s.ctx.Ref().GetPath()), log.String("receiver", receiver.GetPath()), log.String("cron", cron), log.String("messageType", fmt.Sprintf("%T", message)))
-	return nil
+	return s.scheduleJob(receiver, message, opts, trigger, "cron", log.String("cron", cron))
 }
 
 func (s *Scheduler) Once(receiver vivid.ActorRef, delay time.Duration, message vivid.Message, options ...vivid.ScheduleOption) error {
 	opts := vivid.NewScheduleOptions(options...)
-	onceTrigger := quartz.NewRunOnceTrigger(delay)
-	jobKey := uniqueJobKey(s.ctx, opts.Reference)
-	s.jobKeys[opts.Reference] = jobKey
-	job := job.NewFunctionJob(func(ctx context.Context) (any, error) {
-		s.tell(receiver, message, opts)
-		return nil, nil
-	})
-
-	if err := s.scheduler.Schedule(quartz.NewJobDetail(job, jobKey), onceTrigger); err != nil {
-		delete(s.jobKeys, opts.Reference)
-		return schedulerErrorConvert(err)
-	}
-	s.ctx.Logger().Debug("scheduler once scheduled", log.String("ref", s.ctx.Ref().GetPath()), log.String("receiver", receiver.GetPath()), log.Duration("delay", delay), log.String("messageType", fmt.Sprintf("%T", message)))
-	return nil
+	return s.scheduleJob(receiver, message, opts, quartz.NewRunOnceTrigger(delay), "once", log.Duration("delay", delay))
 }
 
 func (s *Scheduler) Loop(receiver vivid.ActorRef, interval time.Duration, message vivid.Message, options ...vivid.ScheduleOption) error {
 	opts := vivid.NewScheduleOptions(options...)
-	loopTrigger := quartz.NewSimpleTrigger(interval)
-	jobKey := uniqueJobKey(s.ctx, opts.Reference)
-	s.jobKeys[opts.Reference] = jobKey
-	job := job.NewFunctionJob(func(ctx context.Context) (any, error) {
-		s.tell(receiver, message, opts)
-		return nil, nil
-	})
-	if err := s.scheduler.Schedule(quartz.NewJobDetail(job, jobKey), loopTrigger); err != nil {
-		delete(s.jobKeys, opts.Reference)
-		return schedulerErrorConvert(err)
-	}
-	s.ctx.Logger().Debug("scheduler loop scheduled", log.String("ref", s.ctx.Ref().GetPath()), log.String("receiver", receiver.GetPath()), log.Duration("interval", interval), log.String("messageType", fmt.Sprintf("%T", message)))
-	return nil
+	return s.scheduleJob(receiver, message, opts, quartz.NewSimpleTrigger(interval), "loop", log.Duration("interval", interval))
 }
 
 func (s *Scheduler) Cancel(reference string) error {
@@ -184,9 +158,6 @@ func (s *Scheduler) Cancel(reference string) error {
 		return vivid.ErrorNotFound.WithMessage(reference)
 	}
 	delete(s.jobKeys, reference)
-	if err := s.scheduler.DeleteJob(jobKey); err != nil {
-		return schedulerErrorConvert(err)
-	}
 	s.ctx.Logger().Debug("scheduler cancel scheduled", log.String("ref", s.ctx.Ref().GetPath()), log.String("reference", reference))
-	return nil
+	return schedulerErrorConvert(s.scheduler.DeleteJob(jobKey))
 }
