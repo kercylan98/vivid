@@ -31,10 +31,10 @@ async function main() {
   const child = spawn('pnpm', ['run', 'dev'], {
     cwd: root,
     env: { ...process.env, PORT: String(port) },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: 'ignore', // 不 pipe，避免子进程占用的管道导致脚本不退出
+    detached: process.platform !== 'win32',
   });
-  let stderr = '';
-  child.stderr?.on('data', (chunk) => { stderr += chunk; });
+  let ok = false;
   try {
     await waitForReady();
     const res = await fetch(apiUrl);
@@ -43,13 +43,17 @@ async function main() {
     await mkdir(outDir, { recursive: true });
     await writeFile(outFile, JSON.stringify(data), 'utf8');
     console.log('Written', outFile);
+    ok = true;
   } finally {
-    child.kill('SIGKILL');
-    // 不 await 子进程退出，避免 CI 上 pnpm/next 子进程树未完全退出导致卡住
-    await Promise.race([
-      new Promise((resolve) => child.on('exit', resolve)),
-      new Promise((r) => setTimeout(r, 3000)),
-    ]);
+    try {
+      if (process.platform !== 'win32' && child.pid) {
+        process.kill(-child.pid, 'SIGKILL'); // 杀进程组，确保 next dev 子进程一起退出
+      } else {
+        child.kill('SIGKILL');
+      }
+    } catch (_) {}
+    // 不等待子进程，直接退出，避免 GitHub Actions 卡住
+    setTimeout(() => process.exit(ok ? 0 : 1), 800);
   }
 }
 
