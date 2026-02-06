@@ -8,7 +8,7 @@ const defaultVariants = {
   visible: {
     opacity: 1,
     y: 0,
-    transition: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
+    transition: { duration: 0.55, ease: [0.22, 1, 0.36, 1] as const },
   },
 };
 
@@ -92,7 +92,7 @@ export function HomeSectionItem({
         visible: {
           opacity: 1,
           y: 0,
-          transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] },
+          transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const },
         },
       }}
     >
