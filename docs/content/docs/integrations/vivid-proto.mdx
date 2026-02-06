@@ -1,0 +1,145 @@
+---
+title: Protocol Buffers Codec
+description: 为 Vivid Remoting 提供 Proto 消息编解码的官方集成
+---
+
+**vivid-proto** 由 [Vivid](https://github.com/kercylan98/vivid) **官方维护**，为 Remoting 提供基于 **Protocol Buffers** 的远程消息编解码器（Codec），用于 [Remoting](/docs/config/remoting) 跨节点通信时的序列化与反序列化。使用本库后，无需自行实现 `vivid.Codec` 或为每种消息调用 `RegisterCustomMessage`，即可用 Proto 消息进行跨节点 Tell/Ask。
+
+<Callout type="info" title="与 Vivid 主库的关系">
+vivid-proto 与主库**分库发布**（[github.com/kercylan98/vivid-proto](https://github.com/kercylan98/vivid-proto)），按需引入：仅在使用 Remoting 且希望采用 Proto 作为线缆格式时需要；未启用 Remoting 或使用其他 Codec/RegisterCustomMessage 时无需依赖。
+</Callout>
+
+## 特性
+
+- **实现 vivid.Codec**：可直接作为 [WithActorSystemCodec](/docs/config/actor-system-config) 传入，与 Vivid Remoting 无缝配合。
+- **多消息类型**：通过「类型全名 + 二进制载荷」的包装格式，支持多种 Proto 消息类型，无需为每种消息单独注册。
+- **依赖精简**：仅依赖 `github.com/kercylan98/vivid` 与 `google.golang.org/protobuf`。
+
+## 安装与要求
+
+- **Go**：1.25.1+
+- **安装**：
+
+```bash
+go get github.com/kercylan98/vivid-proto
+```
+
+## 使用步骤
+
+### 1. 定义并注册 Proto 消息
+
+在业务中编写 `.proto` 并用 `protoc` 生成 Go 代码。生成的代码会在 `init` 中向 `protoregistry.GlobalTypes` 注册类型，反序列化时才能根据类型名解析。若使用自定义生成流程，需保证运行时已注册所有需跨节点传输的 Proto 类型。
+
+### 2. 创建 Codec 并注入 ActorSystem
+
+创建 Codec 实例，并通过 [WithActorSystemRemoting](/docs/config/remoting#启用-remoting) 与 **WithActorSystemCodec** 传入系统：
+
+```go
+package main
+
+import (
+    "github.com/kercylan98/vivid"
+    "github.com/kercylan98/vivid-proto/pkg/codec"
+    "github.com/kercylan98/vivid/pkg/bootstrap"
+)
+
+func main() {
+    c := codec.New()
+    system := bootstrap.NewActorSystem(
+        vivid.WithActorSystemRemoting("0.0.0.0:8080"),
+        vivid.WithActorSystemCodec(c),
+    )
+    if err := system.Start(); err != nil {
+        panic(err)
+    }
+    defer system.Stop()
+
+    // 创建 Actor、Tell/Ask 等...
+}
+```
+
+### 3. 跨节点消息须为 proto.Message
+
+经 Remoting 发送与接收的消息必须实现 **proto.Message**（即由 `protoc` 生成的 Go 类型）。本地同一进程内仍可使用任意类型；仅当消息经网络发送时才会经过本 Codec 编解码。
+
+## 消息格式约定
+
+vivid-proto 在网络上使用**包装格式**：
+
+- **message_type**：Proto 消息的完整类型名（如 `protobufs.Echo`），由 `proto.MessageName()` 得到。
+- **message_data**：该消息的二进制序列化结果。
+
+接收端根据 `message_type` 从 `protoregistry.GlobalTypes` 查找类型并反序列化 `message_data`，因此所有参与跨节点传输的 Proto 类型必须在两端均已完成注册（通常由生成代码的 `init` 完成）。
+
+## 完整示例
+
+以下示例演示两个远程节点：节点 1 上创建 Echo Actor，节点 2 通过 Ask 跨节点发送 `*protobufs.Echo` 并打印回复。
+
+```go
+package main
+
+import (
+    "fmt"
+
+    "github.com/kercylan98/vivid"
+    "github.com/kercylan98/vivid-proto/example/internal/protobufs"
+    "github.com/kercylan98/vivid-proto/pkg/codec"
+    "github.com/kercylan98/vivid/pkg/bootstrap"
+)
+
+func main() {
+    c := codec.New()
+    system1 := newRemoteSystem("127.0.0.1:3580", c)
+    system2 := newRemoteSystem("127.0.0.1:3581", c)
+    defer system1.Stop()
+    defer system2.Stop()
+
+    ref, _ := system1.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+        if msg, ok := ctx.Message().(*protobufs.Echo); ok {
+            ctx.Reply(msg)
+        }
+    }))
+
+    future := system2.Ask(ref.Clone(), &protobufs.Echo{Message: "hello"})
+    result, _ := future.Result()
+    fmt.Println(result.(*protobufs.Echo).Message) // hello
+}
+
+func newRemoteSystem(bindAddr string, c *codec.Codec) vivid.ActorSystem {
+    system := bootstrap.NewActorSystem(
+        vivid.WithActorSystemRemoting(bindAddr),
+        vivid.WithActorSystemCodec(c),
+    )
+    if err := system.Start(); err != nil {
+        panic(err)
+    }
+    return system
+}
+```
+
+<Callout type="tip" title="为何这里用了 ref.Clone()？">
+
+**多数情况下用不到**：一个进程通常只运行一个 ActorSystem，ref 都来自本系统，直接 `Tell`/`Ask` 即可，无需 Clone。
+
+本示例比较特殊：**同一进程里起了两个 ActorSystem**（system1 与 system2）。ref 是从 system1 拿到的，却在 system2 上发起 Ask。框架会按 ActorRef 做本地解析与缓存；若把这份 ref 原样交给 system2，可能被当成 system2 的本地引用，从而走本地路径，消息发不到 system1。对 ref 做 **Clone()** 会得到地址与路径相同、但实例不同的新 ref，这样不会命中 system2 的本地缓存，能按地址正确走 Remoting 发往 system1。
+
+**小结**：只有当你「在 A 系统上拿到的 ref，要拿到 B 系统上去发消息」（同一进程多 ActorSystem 或跨进程传递 ref）时，才需要在 B 系统上使用 **ref.Clone()** 再发起发送。
+
+</Callout>
+
+更多细节与 proto 定义可参考 [vivid-proto 仓库 example](https://github.com/kercylan98/vivid-proto/tree/main/example)。
+
+## 与 RegisterCustomMessage 的取舍
+
+| 方式 | 适用场景 |
+|------|----------|
+| **vivid-proto（统一 Codec）** | 希望统一用 Proto 作为 Remoting 线缆格式，消息种类较多，且可接受「跨节点消息均为 proto.Message」的约束。 |
+| **RegisterCustomMessage** | 需要与既有二进制协议兼容、或仅少量消息类型且希望精细控制每类读写逻辑时使用。 |
+
+二者二选一：若已设置 **WithActorSystemCodec**，则不再使用 RegisterCustomMessage 处理远程消息。详见 [远程通讯 - 编解码](/docs/config/remoting#编解码二选一)。
+
+## 相关链接
+
+- [vivid-proto 仓库](https://github.com/kercylan98/vivid-proto)
+- [远程通讯](/docs/config/remoting)
+- [Actor System 配置](/docs/config/actor-system-config)

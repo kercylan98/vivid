@@ -28,6 +28,8 @@
     "config/complex-combination-actor",
     "config/errors",
     "config/actor-system-config",
-    "config/actor-config"
+    "config/actor-config",
+    "---集成---",
+    "integrations/vivid-proto"
   ]
 }
