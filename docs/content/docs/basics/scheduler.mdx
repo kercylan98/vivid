@@ -3,7 +3,12 @@ title: 调度器
 description: 定时与周期消息投递（Once、Loop、Cron）及任务管理
 ---
 
-每个 **ActorContext** 拥有独立的 **Scheduler** 实例（`ctx.Scheduler()`），用于向**指定 ActorRef**（通常为当前 Actor 或子 Actor）在指定时间或周期**投递消息**。任务与当前 Actor 生命周期绑定，Actor 终止时其调度器上的任务会被清理。系统不提供全局 Scheduler，所有调度均通过某一 Actor 的 Context 创建。
+## 概述
+
+每个 **ActorContext** 拥有独立的 **Scheduler** 实例，通过 `ctx.Scheduler()` 获取。调度器用于在指定时间或周期向**目标 ActorRef**（通常为当前 Actor 或子 Actor）**投递消息**。
+
+- **生命周期**：任务与当前 Actor 绑定，Actor 终止时其调度器上的任务会被自动清理。
+- **作用域**：系统不提供全局 Scheduler，所有调度均通过某一 Actor 的 Context 创建。
 
 <Mermaid diagram={`flowchart LR
   subgraph Scheduler
@@ -18,63 +23,116 @@ description: 定时与周期消息投递（Once、Loop、Cron）及任务管理
   L -->|每 interval| Ref
   C -->|匹配时间点| Ref
   Ref --> Mailbox[邮箱 → OnReceive]
-`} title="Scheduler 与投递目标" />
+`} title="调度方式与投递目标" />
+
+---
 
 ## 一次性延时（Once）
 
-在**延时一段时间后**向目标 Actor **投递一次**消息：
+在**延时一段时间后**向目标 Actor **投递一次**消息。
+
+**方法**：`Once(receiver ActorRef, delay time.Duration, message Message, options ...ScheduleOption) error`
+
+| 参数 | 说明 |
+|------|------|
+| **receiver** | 接收消息的 ActorRef，常用 `ctx.Ref()` 发给自身 |
+| **delay** | 从当前时刻起算的延时 |
+| **message** | 待投递的消息 |
+| **options** | 可选，如 **WithSchedulerReference(id)** 便于后续取消或查询 |
 
 ```go
 err := ctx.Scheduler().Once(ctx.Ref(), 5*time.Second, &MyMessage{Data: "delayed"})
 ```
 
-- **receiver**：接收消息的 ActorRef，常用 `ctx.Ref()` 发给自身。
-- **delay**：从当前时刻起算的延时。
-- **message**：要投递的消息；可选 **ScheduleOption**，如 **WithReference(id)** 便于后续取消。
+- 返回 **error** 表示调度是否成功（如参数不合法）。
+- **delay 为 0** 时会在极短延时后投递一次；任务到期后只投递一次。
 
-返回的 **error** 表示调度是否成功（如 Cron 表达式非法会返回 **ErrorCronParse**）。任务到期后只会投递一次。**delay 为 0** 时会在极短延时后投递一次。
+---
 
 ## 固定间隔循环（Loop）
 
-按**固定间隔**重复向目标 Actor 投递消息，直到任务被取消或 Actor 终止：
+按**固定间隔**重复向目标 Actor 投递消息，直到任务被取消或 Actor 终止。
+
+**方法**：`Loop(receiver ActorRef, interval time.Duration, message Message, options ...ScheduleOption) error`
+
+| 参数 | 说明 |
+|------|------|
+| **receiver** | 接收消息的 ActorRef |
+| **interval** | 两次投递之间的时间间隔 |
+| **message** | 每次触发时投递的消息 |
+| **options** | 可选，如 **WithSchedulerReference(reference)** 便于后续取消 |
 
 ```go
 err := ctx.Scheduler().Loop(ctx.Ref(), 10*time.Second, &TickMessage{})
 ```
 
-- **interval**：两次投递之间的时间间隔。
-- 可通过 **WithReference(reference)** 指定引用 ID，之后用 **Cancel(reference)** 取消该任务。
+---
 
 ## Cron 表达式（Cron）
 
-使用 **Cron 表达式**定义日历式调度，在匹配的时间点向目标 Actor 投递消息：
+使用 **Cron 表达式**定义日历式调度，在匹配的时间点向目标 Actor 投递消息。
+
+**方法**：`Cron(receiver ActorRef, cron string, message Message, options ...ScheduleOption) error`
+
+| 参数 | 说明 |
+|------|------|
+| **receiver** | 接收消息的 ActorRef |
+| **cron** | 标准五段 Cron 表达式：分 时 日 月 周，如 `"0 0 * * *"` 表示每天 0 点 |
+| **message** | 在匹配时间点投递的消息 |
+| **options** | 可选，**WithScheduleLocation(loc)** 控制时区（默认 **time.Local**），**WithSchedulerReference** 便于取消 |
 
 ```go
 // 每天 0 点
 err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 * * *", &DailyJob{})
 ```
 
-- **cron**：标准 Cron 表达式，格式为「分 时 日 月 周」（五段），例如 `"0 0 * * *"` 表示每天 0 点。时区由 **WithScheduleLocation(loc)** 控制，默认 **time.Local**。
-- 通过 **WithReference** 与 **Cancel** 管理任务生命周期。
+- 若 Cron 表达式非法，返回 **ErrorCronParse**。
+
+---
 
 ## 任务管理
 
-- **Exists(reference string) bool**：判断指定 reference 的调度任务是否仍存在（未取消且未到期）。
-- **Cancel(reference string) error**：按 reference 取消该调度任务；不存在则返回错误。
-- **Clear()**：取消当前 Scheduler 上**全部**已注册任务。
+创建任务时若未传 **WithSchedulerReference**，框架会自动生成唯一 reference；若需**后续取消或查询**，应在创建时传入并保存 reference。
 
-创建任务时若未传 **WithReference**，框架会自动生成唯一 ID；若需后续取消，应在创建时传入并保存 reference：
+### 检查任务是否存在（Exists）
+
+判断指定 reference 的调度任务是否仍存在（未取消且未到期）。
+
+**方法**：`Exists(reference string) bool`
+
+- 返回 **true** 表示该 reference 对应的任务仍在调度器中；**false** 表示不存在或已取消/已到期。
+
+### 取消任务（Cancel）
+
+按 reference 取消该调度任务。
+
+**方法**：`Cancel(reference string) error`
+
+- 取消成功返回 **nil**。
+- 若 reference 不存在，返回 **ErrorNotFound**。
 
 ```go
 refID := "my-timer-1"
-ctx.Scheduler().Once(ctx.Ref(), time.Minute, msg, vivid.WithReference(refID))
+ctx.Scheduler().Once(ctx.Ref(), time.Minute, msg, vivid.WithSchedulerReference(refID))
 // ...
-ctx.Scheduler().Cancel(refID)
+err := ctx.Scheduler().Cancel(refID)
 ```
 
-## 选项（ScheduleOptions）
+### 清空全部任务（Clear）
 
-通过 **vivid.NewScheduleOptions** 或 **WithScheduleOptions**、**WithScheduleLocation**、**WithReference** 配置：
+取消当前 Scheduler 上**全部**已注册任务。
 
-- **Location**：Cron 使用的时区，默认 **time.Local**。
-- **Reference**：任务唯一标识，用于 **Exists** / **Cancel**；不传则自动生成。
+**方法**：`Clear()`
+
+- 无参数、无返回值，调用后该 Actor 的调度器上不再有任何任务。
+
+---
+
+## 调度选项（ScheduleOptions）
+
+通过 **vivid.NewScheduleOptions** 或 **WithScheduleOptions**、**WithScheduleLocation**、**WithSchedulerReference** 配置：
+
+| 选项 | 说明 |
+|------|------|
+| **Location** | Cron 使用的时区，默认 **time.Local** |
+| **Reference** | 任务唯一标识，用于 **Exists** / **Cancel**；不传则自动生成 |

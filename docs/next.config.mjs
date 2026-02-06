@@ -10,7 +10,7 @@ const config = {
   reactStrictMode: true,
   basePath: basePath || undefined,
   assetPrefix: basePath ? `${basePath}/` : undefined,
-  // 客户端静态搜索需要拉取 /api/search 导出的索引，带 basePath 时需告知客户端正确路径
+  // 客户端静态搜索从静态文件 /search-index.json 加载索引（构建时由 scripts/export-search.mjs 生成），带 basePath 时需告知客户端正确路径
   env: {
     NEXT_PUBLIC_BASE_PATH: basePath,
   },
