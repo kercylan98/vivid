@@ -6,9 +6,9 @@ export function baseOptions(): BaseLayoutProps {
       title: 'Vivid',
       url: '/',
     },
-    // links: [
-    //   { text: '文档', url: '/docs' },
-    // ],
+    links: [
+      { text: '文档', url: '/docs' },
+    ],
     githubUrl: 'https://github.com/kercylan98/vivid',
   };
 }

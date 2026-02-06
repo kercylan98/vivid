@@ -29,7 +29,10 @@ html {
   --color-fd-accent-foreground: #1a1a1a;
   --color-fd-ring: var(--vivid-gold-muted);
   --color-fd-overlay: rgba(0, 0, 0, 0.4);
-  --vivid-terminal-bg: #1c1917;
+  /* 亮色模式：终端区用浅底，与页面统一且保证对比度 */
+  --vivid-terminal-bg: #f5f5f4;
+  --vivid-terminal-fg: #1c1917;
+  --vivid-terminal-accent: #b8860b;
 }
 
 .dark {
@@ -54,25 +57,42 @@ html {
   --color-fd-accent-foreground: var(--vivid-gold-soft);
   --color-fd-ring: var(--vivid-gold-muted);
   --color-fd-overlay: rgba(0, 0, 0, 0.6);
+  /* 暗色模式：深色终端 */
   --vivid-terminal-bg: #0a0a0a;
+  --vivid-terminal-fg: #f5f5f5;
+  --vivid-terminal-accent: #e8c547;
 }
 
-/* 首页主容器：内容宽度 75%，亮/暗双模式渐变 */
+/* 首页主容器：内容宽度更宽（约 92% 视口 / 1440px），亮/暗双模式渐变；禁止横向滚动 */
 #nd-home-layout {
-  --fd-layout-width: min(75vw, 1200px);
+  --fd-layout-width: min(92vw, 1440px);
+  --vivid-nav-height: 3.5625rem;   /* 57px 导航栏 */
+  --vivid-banner-height: 2.5625rem; /* 41px Banner */
+  --vivid-header-total: calc(var(--vivid-nav-height) + var(--vivid-banner-height));
+  overflow-x: hidden;
   background: radial-gradient(ellipse 90% 45% at 50% -15%, var(--vivid-gold-subtle), transparent 55%),
     var(--color-fd-background);
+  padding-top: var(--vivid-header-total);
 }
 .dark #nd-home-layout {
   background: radial-gradient(ellipse 80% 50% at 50% -20%, var(--vivid-gold-subtle), transparent 60%),
     var(--color-fd-background);
 }
 
-/* Banner 固定在顶端导航条下方 */
+/* 首页导航与 Banner 使用 fixed 始终固顶（避免受父级 overflow 影响） */
+#nd-home-layout #nd-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+}
 #nd-home-layout #dev-status {
-  position: sticky !important;
-  top: 3.5rem;
-  z-index: 30;
+  position: fixed !important;
+  top: var(--vivid-nav-height);
+  left: 0;
+  right: 0;
+  z-index: 40;
 }
 
 /* 首页内容区：75% 宽度 + 适中边距 */
@@ -328,4 +348,334 @@ html.vivid-theme-icon-transition [data-theme-toggle][data-icon-transitioning] sv
 }
 .vivid-btn-outline-hover:hover {
   transform: translateY(-1px);
+}
+
+/* ========== 首页营销级视觉 ========== */
+.vivid-hero-tagline {
+  font-size: clamp(1.25rem, 4vw, 2rem);
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+.vivid-trust-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem 1.25rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--vivid-gold-soft);
+}
+.vivid-trust-strip span {
+  position: relative;
+  padding-right: 1.25rem;
+}
+.vivid-trust-strip span:not(:last-child)::after {
+  content: '·';
+  position: absolute;
+  right: 0.35rem;
+  font-weight: 700;
+  color: var(--vivid-gold-muted);
+}
+/* 有背景的区块：内边距留白，避免文字贴边 */
+.vivid-section-alt {
+  background: linear-gradient(180deg, rgba(184, 134, 11, 0.07) 0%, rgba(184, 134, 11, 0.02) 25%, transparent 100%);
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+.dark .vivid-section-alt {
+  background: linear-gradient(180deg, rgba(212, 175, 55, 0.08) 0%, rgba(212, 175, 55, 0.02) 30%, transparent 100%);
+}
+@media (min-width: 768px) {
+  .vivid-section-alt {
+    padding-left: 2.5rem;
+    padding-right: 2.5rem;
+  }
+}
+/* CTA：独立于 .vivid-home-content，占满主布局宽度，简洁底+底部金色光晕 */
+/* CTA 底部光晕：呼吸灯 + 位置漂移，光晕自底部向上 */
+@keyframes vivid-cta-glow-breathe {
+  0%, 100% {
+    opacity: 0.7;
+    transform: translate(-50%, 0) scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1.08);
+  }
+}
+@keyframes vivid-cta-glow-drift {
+  0%, 100% {
+    left: 50%;
+  }
+  20% {
+    left: 32%;
+  }
+  40% {
+    left: 68%;
+  }
+  60% {
+    left: 42%;
+  }
+  80% {
+    left: 58%;
+  }
+}
+.vivid-cta-section {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 1.5rem;
+  background: var(--color-fd-muted);
+}
+.vivid-cta-section::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 160%;
+  max-width: 1000px;
+  height: 120%;
+  transform: translate(-50%, 0);
+  transform-origin: 50% 100%;
+  /* 渐变中心在伪元素底部，光晕向上扩散；缩放以底部为原点，避免底部露黑边 */
+  background: radial-gradient(ellipse 70% 50% at 50% 100%, rgba(184, 134, 11, 0.22), transparent 58%);
+  pointer-events: none;
+  z-index: 0;
+  animation:
+    vivid-cta-glow-breathe 5s ease-in-out infinite,
+    vivid-cta-glow-drift 16s ease-in-out infinite;
+}
+.dark .vivid-cta-section::after {
+  background: radial-gradient(ellipse 70% 50% at 50% 100%, rgba(212, 175, 55, 0.25), transparent 58%);
+}
+@media (min-width: 768px) {
+  .vivid-cta-section {
+    padding: 5.5rem 2.5rem;
+  }
+}
+.vivid-cta-section-inner {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 56rem;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+.vivid-cta-title {
+  font-size: clamp(1.75rem, 4.5vw, 2.5rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+.vivid-hero-diagram {
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, rgba(184, 134, 11, 0.06) 0%, transparent 50%);
+  border: 1px solid rgba(184, 134, 11, 0.15);
+}
+.dark .vivid-hero-diagram {
+  background: linear-gradient(135deg, rgba(212, 175, 55, 0.08) 0%, transparent 50%);
+  border-color: rgba(212, 175, 55, 0.2);
+}
+.vivid-hero-diagram .node {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid var(--vivid-gold-muted);
+  background: var(--color-fd-card);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--vivid-gold-soft);
+  letter-spacing: 0.04em;
+}
+.vivid-hero-diagram .node.node-msg {
+  width: 44px;
+  height: 44px;
+  font-size: 0.6rem;
+  background: var(--vivid-gold-subtle);
+  border-color: var(--vivid-gold-muted);
+}
+.dark .vivid-hero-diagram .node {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+}
+.dark .vivid-hero-diagram .node.node-msg {
+  background: var(--vivid-gold-subtle);
+}
+.vivid-hero-diagram .arrow {
+  flex: 0 0 32px;
+  height: 1.5px;
+  background: var(--vivid-gold-muted);
+  position: relative;
+  opacity: 0.8;
+}
+.vivid-hero-diagram .arrow::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 4px solid transparent;
+  border-left-color: var(--vivid-gold-muted);
+  border-right: none;
+}
+.vivid-terminal-window {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--color-fd-border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.04), 0 0 0 3px var(--vivid-gold-subtle);
+  transition: box-shadow 0.3s ease, border-color 0.2s ease;
+}
+/* 亮色模式：终端内容区浅底，边框与正文区分 */
+.vivid-terminal-window .border-t-0.border {
+  border-color: rgba(120, 113, 108, 0.35);
+}
+.vivid-terminal-window:hover {
+  border-color: var(--vivid-gold-muted);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.16), 0 0 0 1px var(--vivid-gold-muted), 0 0 24px rgba(184, 134, 11, 0.15);
+}
+.dark .vivid-terminal-window .border-t-0.border {
+  border-color: var(--color-fd-border);
+}
+.dark .vivid-terminal-window {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 3px var(--vivid-gold-subtle);
+}
+.dark .vivid-terminal-window:hover {
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--vivid-gold-muted), 0 0 32px rgba(212, 175, 55, 0.12);
+}
+.vivid-terminal-window .title-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--color-fd-muted);
+  border-bottom: 1px solid var(--color-fd-border);
+  font-size: 0.75rem;
+  color: var(--color-fd-muted-foreground);
+}
+.vivid-terminal-window .title-bar .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.vivid-terminal-window .title-bar .dot:nth-child(1) { background: #ef4444; }
+.vivid-terminal-window .title-bar .dot:nth-child(2) { background: #eab308; }
+.vivid-terminal-window .title-bar .dot:nth-child(3) { background: #22c55e; }
+.vivid-section-heading {
+  font-size: clamp(1.625rem, 4vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+/* 区块标题下方金色装饰线，增强色彩 */
+.vivid-section-heading-accent.vivid-section-title::after {
+  width: 3rem;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--vivid-gold-muted), var(--vivid-gold));
+  bottom: -8px;
+}
+/* Hero 标题：金色渐变字，增强冲击 */
+.vivid-hero-title-gradient {
+  background: linear-gradient(135deg, var(--vivid-gold-soft) 0%, var(--vivid-gold) 50%, #a67c00 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--vivid-gold);
+}
+.dark .vivid-hero-title-gradient {
+  background: linear-gradient(135deg, #e8c547 0%, var(--vivid-gold) 50%, #c9a227 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+/* Hero 标题光晕：呼吸灯（透明度+缩放）+ 位置漂移 */
+@keyframes vivid-hero-glow-breathe {
+  0%, 100% {
+    opacity: 0.6;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+}
+@keyframes vivid-hero-glow-drift {
+  0%, 100% {
+    left: 50%;
+    top: 50%;
+  }
+  16% {
+    left: 36%;
+    top: 44%;
+  }
+  33% {
+    left: 64%;
+    top: 54%;
+  }
+  50% {
+    left: 44%;
+    top: 64%;
+  }
+  66% {
+    left: 58%;
+    top: 36%;
+  }
+  83% {
+    left: 52%;
+    top: 48%;
+  }
+}
+.vivid-hero-glow {
+  position: relative;
+  z-index: 0;
+}
+.vivid-hero-glow::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 120%;
+  max-width: 520px;
+  height: 140%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(ellipse 70% 60%, rgba(184, 134, 11, 0.22), transparent 65%);
+  pointer-events: none;
+  z-index: -1;
+  animation:
+    vivid-hero-glow-breathe 4.5s ease-in-out infinite,
+    vivid-hero-glow-drift 18s ease-in-out infinite;
+}
+.dark .vivid-hero-glow::before {
+  background: radial-gradient(ellipse 70% 60%, rgba(212, 175, 55, 0.24), transparent 65%);
+}
+/* 推荐阅读卡片：悬停时左侧金线 */
+.vivid-doc-card {
+  border-left: 3px solid transparent;
+  transition: border-left-color 0.2s ease, padding-left 0.2s ease;
+}
+.vivid-doc-card:hover {
+  border-left-color: var(--vivid-gold);
+  padding-left: calc(1.5rem - 3px);
+}
+@media (min-width: 768px) {
+  .vivid-doc-card:hover {
+    padding-left: calc(1.75rem - 3px);
+  }
 }

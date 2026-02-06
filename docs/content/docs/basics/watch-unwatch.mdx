@@ -1,0 +1,40 @@
+---
+title: 监视（Watch / Unwatch）
+description: 监听其他 Actor 的终止事件、Watch/Unwatch API 与典型用法
+---
+
+除父子关系外，任意 Actor 可**主动监听**其它 Actor 的终止事件：当被监听者被终止（Kill）后，当前 Actor 会收到 **`*vivid.OnKilled`**，便于回收资源、重新派发或告警。发起终止见 [创建与生命周期 - 发起终止](/docs/basics/lifecycle#发起终止kill)。
+
+## API
+
+- **`ctx.Watch(ref)`**：订阅目标 **ActorRef** 的终止事件。当该 Actor 被终止后，当前 Actor 会收到一条 **`*vivid.OnKilled`**，其中 **Ref** 为被终止的引用。重复 Watch 同一 ref 幂等，无额外副作用。
+- **`ctx.Unwatch(ref)`**：取消对目标 ref 的终止监听。若未曾 Watch 或目标已终止，调用无副作用。
+
+<Callout type="info" title="父子与 Watch">
+父级对子级**已自动 Watch**，子级终止时父级会收到 **OnKilled**，无需再对子级调用 Watch；该监听由父子关系绑定，**父 Actor 无法对子 Actor 调用 Unwatch 取消**。Watch/Unwatch 用于监听**非子级**的 Actor（例如同级、远程或由其它路径持有的 ref）。
+</Callout>
+
+## 典型用法
+
+- **聚合/调度类 Actor** 监听多个工作 Actor 的终止，以便在某个 worker 退出时回收资源、重新派发任务或告警。
+- **依赖某 Actor 存在的逻辑**：当该 Actor 终止后收到 OnKilled，再决定重连、重建或上报。
+
+被监听者不存在或已终止时，相关消息会进入死信处理。死信见 [死信](/docs/basics/death-letter)。
+
+## 示例
+
+```go
+// 监听某个 ref，在其终止后做清理
+ctx.Watch(workerRef)
+
+// 在 OnReceive 中处理
+case *vivid.OnKilled:
+    if msg.Ref.Equals(workerRef) {
+        // worker 已终止，可重新创建或记录
+    }
+
+// 不再关心时取消监听
+ctx.Unwatch(workerRef)
+```
+
+终止请求通过 **Kill** 发起，见 [创建与生命周期 - 发起终止（Kill）](/docs/basics/lifecycle#发起终止kill)。

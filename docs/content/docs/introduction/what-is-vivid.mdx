@@ -5,6 +5,10 @@ description: Vivid 的定位、核心特性、架构与适用场景
 
 Vivid 是一个**高性能、类型安全**的 **Go 语言 Actor 模型实现库**，提供完整的 Actor 系统、消息传递、远程通信、监督策略等核心能力，用于构建可扩展、高并发的分布式应用。
 
+<Callout type="warn" title="API 稳定性">
+从 **1.0.0** 起遵循[语义化版本](https://semver.org/lang/zh-CN/)。当前处于**活跃开发阶段**，API 可能变更，生产使用前请查阅 [Releases](https://github.com/kercylan98/vivid/releases)。
+</Callout>
+
 ## 核心特性
 
 | 能力 | 说明 |
@@ -20,6 +24,7 @@ Vivid 是一个**高性能、类型安全**的 **Go 语言 Actor 模型实现库
 | **消息暂存（Stash）** | `Stash()` / `Unstash(num?)` 暂存当前消息并在条件满足时恢复，便于“条件未满足时缓冲” |
 | **事件流（EventStream）** | 系统级发布/订阅，事件按类型投递到订阅者邮箱，与普通消息一致 |
 | **指标（Metrics）** | 可选启用指标收集，监控 Actor 数量、失败数、重启数、死信等；支持指标更新通知到事件流 |
+| **Ping / 健康检查** | 系统级 **Ping** 向目标 ActorRef 发送探测并同步等待 **Pong**，用于可达性检测与 RTT（`Pong.Duration()`）；适合健康检查或就绪探测 |
 | **类型安全** | 充分利用 Go 类型系统，消息与 Future 泛型、错误链与标准 `error` 处理 |
 | **错误体系** | 预定义错误码（如 `ErrorActorAlreadyExists`、`ErrorFutureTimeout`），支持 `errors.Is`/`As` 判定、错误链与跨节点序列化 |
 
@@ -88,10 +93,6 @@ Vivid 是一个**高性能、类型安全**的 **Go 语言 Actor 模型实现库
   <Card title="容错系统" description="用监督策略与生命周期钩子实现自动恢复与优雅停机" />
 </Cards>
 
-## 版本与状态
-
-<Callout type="warn" title="API 稳定性">
-从 **1.0.0** 起遵循[语义化版本](https://semver.org/lang/zh-CN/)。当前处于**活跃开发阶段**，API 可能变更，生产使用前请查阅 [Releases](https://github.com/kercylan98/vivid/releases)。
-</Callout>
+---
 
 完整 API 与类型定义见 [pkg.go.dev](https://pkg.go.dev/github.com/kercylan98/vivid)。

@@ -1,0 +1,22 @@
+---
+title: 可达性检测（Ping）
+description: 系统级 Ping/Pong、可达性检测与 RTT
+---
+
+**Ping** 向目标 **ActorRef** 发送系统级 Ping 消息，并同步等待 **Pong** 响应，用于可达性检测或往返时延（**Pong.Duration()** 为 RTT）。与普通 **Ask** 不同：Ping 为系统消息，由框架直接处理，不经过目标 Actor 的 **OnReceive**；多数业务只需 Tell/Ask，仅在需要健康检查或探测时使用，不宜高频。
+
+## 用法
+
+```go
+pong, err := ctx.Ping(targetRef, 2*time.Second)
+if err != nil {
+    return // 超时或不可达
+}
+rtt := pong.Duration()
+```
+
+- **targetRef**：目标 Actor 引用（本地或远程）。
+- **timeout**：可选；不传时使用系统默认 Ask 超时。
+- 返回 **Pong** 含发送/响应时间，**Duration()** 为 RTT；超时或不可达时返回 error。
+
+基础消息投递见 [消息投递](/docs/basics/message-delivery)。

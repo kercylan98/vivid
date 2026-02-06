@@ -1,9 +1,13 @@
 ---
 title: 监督策略
-description: 监督决策、OneForOne/OneForAll、SupervisionContext 与决策器
+description: 主动上报故障、监督决策、OneForOne/OneForAll、重启钩子与僵尸状态
 ---
 
-当子 Actor 发生 **panic** 或主动调用 **ctx.Failed(fault)** 时，父级的**监督策略**会根据当前故障信息决定对该子 Actor（或所有子 Actor）采取何种动作：重启、停止、恢复或升级。本文说明决策类型、**OneForOne** / **OneForAll** 策略、**SupervisionContext** 与决策器写法。在创建 Actor 时通过 [Actor 配置](/docs/config/actor-config) 的 **WithActorSupervisionStrategy** 或系统级的 **WithActorSystemSupervisionStrategy** 注入。
+当子 Actor 发生 **panic** 或主动调用 **ctx.Failed(fault)** 时，父级的**监督策略**会根据当前故障信息决定对该子 Actor（或所有子 Actor）采取何种动作：重启、停止、恢复或升级。本文说明**主动上报故障（Failed）**、决策类型、**OneForOne** / **OneForAll** 策略、**SupervisionContext**、重启阶段钩子与**重启失败与僵尸状态**。在创建 Actor 时通过 [Actor 配置](/docs/config/actor-config) 的 **WithActorSupervisionStrategy** 或系统级的 **WithActorSystemSupervisionStrategy** 注入。
+
+## 主动上报故障（Failed）
+
+当 Actor 在处理消息时遇到**无法在内部恢复**的异常（如依赖不可用、数据严重错误），可调用 **`ctx.Failed(fault)`** 主动上报。**fault** 为任意 Message，用于向父级描述原因。父级会根据其监督策略做出决策（重启、停止、恢复或升级）。调用后当前处理流程可能被中断，建议仅在确实无法自行恢复时使用。
 
 <Mermaid diagram={`flowchart LR
   F[子 Actor 故障] --> D[决策器 MakeDecision]
@@ -75,3 +79,38 @@ ref, _ := ctx.ActorOf(&MyActor{}, vivid.WithActorSupervisionStrategy(strategy))
 ## 与 Actor 提供者（Provider）配合
 
 当决策为**重启**时，若该 Actor 创建时配置了 **WithActorProvider(provider)**，系统会通过 **provider.Provide()** 获取新实例替换原 Actor；未配置则重启不替换实例。详见 [Actor 配置 - Actor 提供者](/docs/config/actor-config#actor-提供者provider)。
+
+## 重启阶段的扩展钩子（PreRestart / Restarted）
+
+当监督决策为**重启**时，被重启的 Actor 可在以下两个阶段挂载可选逻辑：
+
+| 接口 | 方法 | 调用时机 |
+|------|------|----------|
+| **PreRestartActor** | `OnPreRestart(ctx RestartContext) error` | 监督触发重启**前**；返回 error 则中止本次重启 |
+| **RestartedActor** | `OnRestarted(ctx RestartContext) error` | 重启**完成**后；返回 error 仅记录，不阻止运行 |
+
+**RestartContext** 提供 **Logger()**、**Ref()**，可在钩子内打日志或获取当前 Actor 引用；不提供消息发送、子 Actor 创建等运行时能力。与**首次启动**相关的 **PrelaunchActor** 见 [创建与生命周期 - 启动阶段：PrelaunchActor](/docs/basics/lifecycle#启动阶段prelaunchactor)。
+
+### 便捷构造器
+
+在不定义新类型的前提下挂载重启钩子，可使用：
+
+- **`vivid.NewPreRestartActor(preRestartFn, actor)`**
+- **`vivid.NewRestartedActor(restartedFn, actor)`**
+
+未传入的 `actor` 会使用占位空实现。若 **OnRestarted** / **OnPreRestart** 等钩子失败，该 Actor 会进入 [僵尸状态](#重启失败与僵尸状态)，需通过 **Kill** 或随系统/父级退出才能释放。
+
+## 重启失败与僵尸状态
+
+当子 Actor 在**监督触发重启**的过程中失败（如 **OnRestarted**、**OnPreRestart** 或 **OnPrelaunch** 返回错误，或重启流程内部异常）时，系统不会无限重试，也不会向父级上报，而是将该 Actor 标记为**僵尸状态**。
+
+- **含义**：该 Actor 仍占用其 **ActorRef** 与邮箱，但**不再执行任何业务逻辑**。后续消息由框架以“空行为”处理（仅投递与邮箱排空，不调用用户 **OnReceive**），避免错误逻辑继续执行或状态扩散。
+- **影响**：
+  - 发往该 ref 的 Tell/Ask 仍可投递，但无业务处理；Ask 可能超时或得不到预期回复。
+  - 该 ref 仍存在，若被缓存或对外暴露，调用方可能继续向“已失效”的 Actor 发消息，需在业务层通过监控或超时发现。
+  - 父级**不会**收到该子 Actor 的 **OnKilled**（因未从系统移除），若父级依赖“子死亡”做清理或重建，需通过日志、监控或健康检查发现僵尸并主动 **Kill**。
+- **解除**：僵尸状态**不会自动恢复**。只有以下情况该 Actor 才会被释放、引用失效：
+  - **显式终止**：对 ref 调用 **Kill(ref, ...)**，僵尸会走正常终止流程并从系统移除。
+  - **随系统或父级退出**：**ActorSystem.Stop()** 或父 Actor 被终止时，整棵子树（含僵尸子 Actor）会被一并清理。
+
+建议保证 **OnRestarted** / **OnPreRestart** 等钩子尽量可成功，或通过“重启失败；actor is now in zombie state”日志做监控与告警，必要时对对应 ref 执行 **Kill**。发起终止见 [创建与生命周期 - 发起终止](/docs/basics/lifecycle#发起终止kill)。

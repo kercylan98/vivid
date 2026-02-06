@@ -1,3 +1,5 @@
+'use client';
+
 import Link from 'next/link';
 import { Banner } from 'fumadocs-ui/components/banner';
 import { Card } from 'fumadocs-ui/components/card';
@@ -10,25 +12,79 @@ import {
   Clock,
   Type,
   BookOpen,
-  ExternalLink,
   Github,
   Terminal,
   ArrowRight,
+  Layers,
+  FileText,
 } from 'lucide-react';
+import { HomeHero } from '@/components/home-hero';
+import { HomeSection, HomeSectionStagger, HomeSectionItem } from '@/components/home-section';
+import { motion } from 'motion/react';
 
-const featureCards = [
-  { icon: Zap, title: '完整 Actor 模型', description: 'Actor 系统、上下文、引用等核心抽象，类型安全的消息传递' },
-  { icon: MessageSquare, title: '灵活消息传递', description: 'Tell / Ask 与 PipeTo，支持请求-响应与发后即忘' },
-  { icon: Globe, title: '网络透明与 Remoting', description: 'ActorRef 自动路由本地/远程，内置跨节点通信' },
-  { icon: Shield, title: '监督策略', description: 'OneForOne / OneForAll，重启、停止、恢复与升级' },
-  { icon: Clock, title: '调度与行为栈', description: '定时/周期/Cron 调度，行为动态切换与状态机' },
-  { icon: Type, title: '类型安全', description: '充分利用 Go 类型系统，错误链与标准 error 处理' },
-] as const;
+const featureCards: Array<{
+  icon: typeof Zap;
+  title: string;
+  description: string;
+  href: string;
+}> = [
+  {
+    icon: Zap,
+    title: '完整 Actor 模型',
+    description: 'ActorSystem、ActorContext、ActorRef 等核心抽象，树状层级与生命周期，类型安全的消息传递',
+    href: '/docs/introduction/what-is-vivid',
+  },
+  {
+    icon: MessageSquare,
+    title: '灵活消息传递',
+    description: 'Tell（发后即忘）与 Ask（请求-响应）、Reply、Future；PipeTo、Entrust 等进阶能力',
+    href: '/docs/basics/message-delivery',
+  },
+  {
+    icon: Globe,
+    title: '网络透明与 Remoting',
+    description: '本地与远程同一套 API，ActorRef 按地址自动路由，内置跨节点通信与编解码',
+    href: '/docs/config/remoting',
+  },
+  {
+    icon: Shield,
+    title: '监督与容错',
+    description: 'OneForOne / OneForAll，重启、停止、恢复与升级，退避与抖动可配置',
+    href: '/docs/config/supervision',
+  },
+  {
+    icon: Clock,
+    title: '调度与行为栈',
+    description: 'Once / Loop / Cron 调度，Become / UnBecome 行为切换，适合状态机与定时任务',
+    href: '/docs/basics/scheduler',
+  },
+  {
+    icon: Type,
+    title: '类型安全与错误体系',
+    description: '消息与 Future 泛型、预定义错误码、errors.Is/As 与跨节点错误序列化',
+    href: '/docs/config/errors',
+  },
+];
+
+const docLinks: Array<{ title: string; href: string; brief: string }> = [
+  { title: '什么是 Vivid', href: '/docs/introduction/what-is-vivid', brief: '定位、核心特性与架构概览' },
+  { title: '快速入门', href: '/docs', brief: '安装到第一个 Actor 的完整步骤' },
+  { title: 'Actor 引用（ActorRef）', href: '/docs/basics/actor-ref', brief: '寻址与能力句柄、位置透明' },
+  { title: '消息投递', href: '/docs/basics/message-delivery', brief: 'Tell、Ask、Reply、Future' },
+];
+
+const useCases = [
+  '分布式系统与跨节点通信',
+  '高并发与异步任务',
+  '微服务与 RPC 风格请求-响应',
+  '状态机与事件驱动',
+  '定时 / 周期任务',
+  '容错与优雅停机',
+];
 
 export default function HomePage() {
   return (
     <>
-      {/* Banner 固定在顶端导航条下方 */}
       <Banner
         id="dev-status"
         variant="normal"
@@ -48,170 +104,224 @@ export default function HomePage() {
       </Banner>
 
       <div className="vivid-home-content">
-        {/* Hero：更大气 */}
-        <section className="flex flex-col items-center justify-center py-20 text-center md:py-28 lg:py-32">
-          <div className="mx-auto w-full max-w-2xl">
-            <h1 className="vivid-opacity-start vivid-animate-in-up text-4xl font-bold tracking-tight md:text-6xl lg:text-7xl">
-              <span className="relative inline-block">
-                Vivid
-                <span
-                  className="absolute bottom-0 left-1/2 mt-2 h-0.5 w-16 -translate-x-1/2 rounded-full bg-[var(--vivid-gold)] md:mt-2.5 md:w-24"
-                  style={{ animation: 'vivid-line-grow 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.4s forwards', transformOrigin: 'center' }}
-                />
-              </span>
-            </h1>
-            <p className="vivid-opacity-start vivid-animate-in-up vivid-delay-2 mx-auto mt-8 text-lg leading-relaxed text-fd-muted-foreground md:mt-10 md:text-xl">
-              高性能、类型安全的 Go 语言 Actor 模型实现库，提供完整的 Actor
-              系统、消息传递、远程通信与监督策略，助你构建可扩展、高并发的分布式应用。
-            </p>
-            <div className="vivid-opacity-start vivid-animate-in-up vivid-delay-4 mt-12 flex flex-wrap items-center justify-center gap-4 md:mt-14">
-              <Link
-                href="/docs"
-                className={`${buttonVariants({ color: 'primary', size: 'sm' })} vivid-btn-glow gap-2 px-6 py-3 text-base shadow-[0_0_20px_rgba(212,175,55,0.2)]`}
-              >
-                <BookOpen className="size-4.5" />
-                开始阅读文档
-              </Link>
-              <a
-                href="https://pkg.go.dev/github.com/kercylan98/vivid"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`${buttonVariants({ color: 'secondary', size: 'sm' })} vivid-btn-outline-hover gap-2 px-6 py-3 text-base`}
-              >
-                <ExternalLink className="size-4.5" />
-                API 文档
-              </a>
-              <a
-                href="https://github.com/kercylan98/vivid"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`${buttonVariants({ color: 'ghost', size: 'sm' })} vivid-btn-outline-hover gap-2 px-6 py-3 text-base`}
-              >
-                <Github className="size-4.5" />
-                GitHub
-              </a>
-            </div>
+        <HomeHero />
+
+        {/* 设计理念：淡底区分，留白充足 */}
+        <section className="vivid-section-alt py-20 md:py-24">
+          <div className="mx-auto max-w-4xl px-6 text-center md:px-8">
+            <HomeSection>
+              <p className="text-fd-muted-foreground md:text-lg leading-relaxed">
+                Actor 通过 <strong className="text-fd-foreground">消息</strong> 与{' '}
+                <strong className="text-fd-foreground">引用（ActorRef）</strong> 与外界交互；
+                引用将「身份」与「位置」解耦，同一套 API 即可用于本地与远程，实现{' '}
+                <strong className="text-fd-foreground">位置透明</strong>。
+              </p>
+            </HomeSection>
           </div>
         </section>
 
-        {/* 快速开始（在核心特性上方） */}
-        <section className="py-16 md:py-24">
-          <div className="mx-auto w-full">
-            <h2 className="vivid-opacity-start vivid-animate-in-up vivid-section-title text-center text-2xl font-semibold tracking-tight md:text-3xl">
-              快速开始
-            </h2>
-            <p className="vivid-opacity-start vivid-animate-in-up vivid-delay-1 mx-auto mt-6 max-w-xl text-center text-fd-muted-foreground md:mt-7">
-              使用 Go 模块安装，即可在项目中使用 Vivid
-            </p>
-            <div className="mx-auto mt-10 max-w-2xl md:mt-12">
-              <div className="overflow-hidden rounded-xl border border-fd-border/80 bg-fd-card shadow-lg">
-                <div className="flex gap-4 border-b border-fd-border/60 p-4 md:p-5">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--vivid-gold)]/20 text-sm font-semibold text-[var(--vivid-gold)]">
-                    1
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="mb-2 text-sm font-medium text-fd-foreground">安装依赖</p>
-                    <div className="rounded-lg border border-fd-border/60 bg-[var(--vivid-terminal-bg)] px-4 py-3 font-mono text-sm text-fd-muted-foreground">
-                      <span className="flex items-center gap-2 text-[var(--vivid-gold-muted)]">
-                        <Terminal className="size-4" />
-                        <span>$</span>
-                      </span>
-                      <code className="mt-1 block text-[var(--vivid-gold-soft)]">go get github.com/kercylan98/vivid</code>
-                    </div>
-                  </div>
+        {/* 立即尝试：终端风格 */}
+        <section className="py-20 md:py-28">
+          <div className="mx-auto w-full max-w-6xl px-6 md:px-8">
+            <HomeSection>
+              <h2 className="vivid-section-title vivid-section-heading vivid-section-heading-accent text-center">
+                立即尝试
+              </h2>
+            </HomeSection>
+            <HomeSection delay={0.08}>
+              <p className="mx-auto mt-6 max-w-xl text-center text-fd-muted-foreground md:mt-7 md:text-lg">
+                一条命令安装，按文档创建系统与 Actor，即可完成消息收发
+              </p>
+            </HomeSection>
+            <HomeSection delay={0.12}>
+              <div className="mx-auto mt-12 max-w-2xl md:mt-16">
+                <div className="vivid-terminal-window">
+                <div className="title-bar">
+                  <span className="dot" />
+                  <span className="dot" />
+                  <span className="dot" />
+                  <span className="ml-2">Terminal</span>
                 </div>
-                <div className="flex gap-4 p-4 md:p-5">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--vivid-gold)]/20 text-sm font-semibold text-[var(--vivid-gold)]">
-                    2
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="mb-2 text-sm font-medium text-fd-foreground">下一步</p>
-                    <p className="text-sm leading-relaxed text-fd-muted-foreground">
-                      在代码中创建 Actor 系统与 Actor，并参考{' '}
-                      <Link href="/docs" className="font-medium text-[var(--vivid-gold-soft)] underline underline-offset-2 hover:text-[var(--vivid-gold)]">
-                        文档
-                      </Link>{' '}
-                      与{' '}
-                      <a
-                        href="https://pkg.go.dev/github.com/kercylan98/vivid"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-medium text-[var(--vivid-gold-soft)] underline underline-offset-2 hover:text-[var(--vivid-gold)]"
-                      >
-                        API 文档
-                      </a>{' '}
-                      进行开发。
-                    </p>
+                <div className="border-t-0 border border-fd-border bg-[var(--vivid-terminal-bg)] p-5 md:p-6">
+                  <div className="flex items-start gap-3 font-mono text-sm">
+                    <span className="select-none text-[var(--vivid-gold-muted)]">$</span>
+                    <code className="block flex-1 text-[var(--vivid-gold-soft)]">
+                      go get github.com/kercylan98/vivid
+                    </code>
                   </div>
+                  <div className="mt-3 flex items-start gap-3 font-mono text-xs text-fd-muted-foreground md:text-sm">
+                    <span className="select-none text-[var(--vivid-gold-muted)]">&gt;</span>
+                    <code className="block flex-1 text-[var(--vivid-gold-muted)]">
+                      system.ActorOf(&amp;EchoActor&#123;&#125;, vivid.WithActorName(&quot;echo&quot;))
+                    </code>
+                  </div>
+                  <p className="mt-4 text-sm leading-relaxed text-fd-muted-foreground">
+                    在代码中通过 <code className="rounded bg-fd-muted/80 px-1.5 py-0.5 text-[var(--vivid-gold-soft)]">bootstrap.NewActorSystem()</code> 创建系统，用 <code className="rounded bg-fd-muted/80 px-1.5 py-0.5 text-[var(--vivid-gold-soft)]">ActorOf</code> 创建 Actor，Tell/Ask 收发消息。完整步骤与可运行示例见{' '}
+                    <Link
+                      href="/docs"
+                      className="font-medium text-[var(--vivid-gold-soft)] underline underline-offset-2 hover:text-[var(--vivid-gold)]"
+                    >
+                      快速入门
+                    </Link>
+                    。
+                  </p>
+                </div>
                 </div>
               </div>
-              <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-fd-muted-foreground">
-                <ArrowRight className="size-3.5" />
-                更多示例与概念请查看文档
+              <p className="mt-4 flex items-center justify-center gap-2 text-sm text-fd-muted-foreground">
+                <ArrowRight className="size-4" />
+                概念与进阶能力请从文档左侧导航进入
               </p>
-            </div>
+            </HomeSection>
           </div>
         </section>
 
-        {/* CTA：放在中间（快速开始与核心特性之间） */}
-        <section className="py-16 text-center md:py-24">
-          <div className="mx-auto w-full">
-            <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-              准备好构建分布式应用了吗？
-            </h2>
-            <p className="mt-4 text-fd-muted-foreground md:mt-5">
-              从文档与示例开始，或到 GitHub 参与贡献
-            </p>
-            <div className="mt-10 flex flex-wrap justify-center gap-4 md:mt-12">
-              <Link
-                href="/docs"
-                className={`${buttonVariants({ color: 'primary' })} vivid-btn-glow gap-2 px-6 py-3 shadow-[0_0_20px_rgba(212,175,55,0.25)]`}
-              >
-                <BookOpen className="size-4" />
-                阅读文档
-              </Link>
-              <a
-                href="https://github.com/kercylan98/vivid"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`${buttonVariants({ color: 'outline' })} vivid-btn-outline-hover gap-2 border-[var(--vivid-gold-muted)] px-6 py-3 text-fd-foreground hover:bg-[var(--vivid-gold-subtle)] hover:border-[var(--vivid-gold)]`}
-              >
-                <Github className="size-4" />
-                查看 GitHub
-              </a>
-            </div>
-          </div>
-        </section>
-
-        {/* 核心特性 */}
-        <section className="py-16 md:py-24">
-          <div className="mx-auto w-full">
-            <h2 className="vivid-opacity-start vivid-animate-in-up vivid-delay-1 vivid-section-title text-center text-2xl font-semibold tracking-tight md:text-3xl">
-              核心特性
-            </h2>
-            <p className="vivid-opacity-start vivid-animate-in-up vivid-delay-2 mx-auto mt-6 max-w-xl text-center text-fd-muted-foreground md:mt-7">
-              Actor 模型完整实现，从本地到分布式一站到位
-            </p>
-            <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:mt-14 lg:grid-cols-3 lg:gap-8">
-              {featureCards.map((item, i) => (
-                <div
-                  key={item.title}
-                  className="vivid-opacity-start vivid-animate-scale-in vivid-card-hover"
-                  style={{ animationDelay: `${0.15 * i + 0.2}s` }}
-                >
-                  <Card
-                    icon={<item.icon className="size-4 text-[var(--vivid-gold)]" />}
+        {/* 核心特性：交替背景 */}
+        <section className="vivid-section-alt py-20 md:py-28">
+          <div className="mx-auto w-full max-w-6xl px-6 md:px-8">
+            <HomeSection>
+              <h2 className="vivid-section-title vivid-section-heading vivid-section-heading-accent text-center">
+                核心特性
+              </h2>
+            </HomeSection>
+            <HomeSection delay={0.06}>
+              <p className="mx-auto mt-6 max-w-2xl text-center text-fd-muted-foreground md:mt-8 md:text-lg">
+                Actor 模型完整实现，从本地到分布式、从消息投递到监督容错一站到位
+              </p>
+            </HomeSection>
+            <HomeSectionStagger className="mt-12 grid gap-6 sm:grid-cols-2 lg:mt-16 lg:grid-cols-3 lg:gap-8" staggerDelay={0.08}>
+              {featureCards.map((item) => (
+                <HomeSectionItem key={item.title}>
+                  <motion.div className="h-full" whileHover={{ y: -6 }} transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}>
+                    <Card
+                    icon={<item.icon className="size-5 text-[var(--vivid-gold)]" />}
                     title={item.title}
                     description={item.description}
-                    href="/docs/introduction/quickstart"
+                    href={item.href}
                     className="h-full border-fd-border/80 hover:border-[var(--vivid-gold-muted)]"
                   />
-                </div>
+                  </motion.div>
+                </HomeSectionItem>
               ))}
-            </div>
+            </HomeSectionStagger>
+          </div>
+        </section>
+
+        {/* 推荐阅读 */}
+        <section className="py-20 md:py-28">
+          <div className="mx-auto w-full max-w-6xl px-6 md:px-8">
+            <HomeSection>
+              <h2 className="vivid-section-title vivid-section-heading vivid-section-heading-accent text-center">
+                推荐阅读
+              </h2>
+            </HomeSection>
+            <HomeSection delay={0.06}>
+              <p className="mx-auto mt-6 max-w-xl text-center text-fd-muted-foreground md:mt-7 md:text-lg">
+                从概念到实践，按文档顺序快速建立完整认知
+              </p>
+            </HomeSection>
+            <HomeSectionStagger className="mt-12 grid gap-5 sm:grid-cols-2 lg:mt-14 lg:gap-6" staggerDelay={0.07}>
+              {docLinks.map((doc) => (
+                <HomeSectionItem key={doc.href}>
+                  <Link
+                    href={doc.href}
+                    className="vivid-doc-card vivid-card-hover flex items-start gap-4 rounded-2xl border border-fd-border/80 bg-fd-card p-6 transition-colors hover:border-[var(--vivid-gold-muted)] hover:bg-fd-muted/30 md:p-7"
+                  >
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--vivid-gold)]/15 text-[var(--vivid-gold)]">
+                    <FileText className="size-6" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-lg font-semibold text-fd-foreground">{doc.title}</h3>
+                    <p className="mt-1.5 text-sm text-fd-muted-foreground">{doc.brief}</p>
+                  </div>
+                  <ArrowRight className="size-5 shrink-0 text-fd-muted-foreground" />
+                </Link>
+                </HomeSectionItem>
+              ))}
+            </HomeSectionStagger>
+          </div>
+        </section>
+
+        {/* 适用场景 */}
+        <section className="vivid-section-alt py-20 md:py-28">
+          <div className="mx-auto w-full max-w-6xl px-6 md:px-8">
+            <HomeSection>
+              <h2 className="vivid-section-title vivid-section-heading vivid-section-heading-accent text-center">
+                适用场景
+              </h2>
+            </HomeSection>
+            <HomeSection delay={0.06}>
+              <p className="mx-auto mt-6 max-w-xl text-center text-fd-muted-foreground md:mt-7 md:text-lg">
+                基于消息与引用的并发与分布式能力，覆盖多种架构需求
+              </p>
+            </HomeSection>
+            <HomeSectionStagger className="mt-12 flex flex-wrap justify-center gap-4 lg:mt-14" staggerDelay={0.04}>
+              {useCases.map((label) => (
+                <HomeSectionItem key={label}>
+                  <span className="inline-flex items-center rounded-full border border-fd-border/80 bg-fd-card px-5 py-2.5 text-sm font-medium text-fd-foreground shadow-sm">
+                    <Layers className="mr-2 size-4 text-[var(--vivid-gold-muted)]" />
+                    {label}
+                  </span>
+                </HomeSectionItem>
+              ))}
+            </HomeSectionStagger>
           </div>
         </section>
       </div>
+
+      {/* CTA：独立于内容区，全宽、强视觉冲击 + 进入动效 */}
+      <motion.section
+        className="vivid-cta-section"
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: true, margin: '-80px' }}
+        variants={{
+          hidden: { opacity: 0 },
+          visible: {
+            opacity: 1,
+            transition: { staggerChildren: 0.12, delayChildren: 0.08 },
+          },
+        }}
+      >
+        <div className="vivid-cta-section-inner">
+          <motion.h2
+            className="vivid-cta-title vivid-hero-title-gradient vivid-section-title vivid-section-heading-accent"
+            variants={{ hidden: { opacity: 0, y: 24 }, visible: { opacity: 1, y: 0 } }}
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          >
+            准备好构建分布式应用了吗？
+          </motion.h2>
+          <motion.p
+            className="mt-5 text-lg text-fd-muted-foreground md:mt-6 md:text-xl"
+            variants={{ hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0 } }}
+            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+          >
+            从文档与快速入门开始，或到 GitHub 查看源码与参与贡献
+          </motion.p>
+          <motion.div
+            className="mt-10 flex flex-wrap justify-center gap-4 md:mt-12 md:gap-5"
+            variants={{ hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0 } }}
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <Link
+              href="/docs"
+              className={`${buttonVariants({ color: 'primary', size: 'sm' })} vivid-btn-glow gap-2 px-8 py-4 text-base shadow-[0_0_24px_rgba(212,175,55,0.3)] md:px-10`}
+            >
+              <BookOpen className="size-5" />
+              阅读文档
+            </Link>
+            <a
+              href="https://github.com/kercylan98/vivid"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`${buttonVariants({ color: 'outline', size: 'sm' })} vivid-btn-outline-hover gap-2 border-[var(--vivid-gold-muted)] px-8 py-4 text-base text-fd-foreground hover:border-[var(--vivid-gold)] hover:bg-[var(--vivid-gold-subtle)] md:px-10`}
+            >
+              <Github className="size-5" />
+              查看 GitHub
+            </a>
+          </motion.div>
+        </div>
+      </motion.section>
     </>
   );
 }

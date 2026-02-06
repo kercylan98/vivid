@@ -15,7 +15,7 @@ type Actor interface {
 }
 ```
 
-框架在每次向该 Actor 投递消息时，会调用当前**行为**（默认即为该 `OnReceive`），并注入当次消息对应的 `ActorContext`。在 `OnReceive` 内应通过 **`ctx.Message()`** 获取当前消息并做类型分支处理。若在处理过程中发生 **panic**，框架会捕获并视为该 Actor 的故障，交由父级的 [监督策略](/docs/config/supervision) 处理（等同于主动调用 **Failed**）；因此应尽量在业务逻辑中恢复可预期错误，或显式调用 **ctx.Failed(fault)** 上报。
+框架在每次向该 Actor 投递消息时，会调用当前**行为**（默认即为该 `OnReceive`），并注入当次消息对应的 `ActorContext`。在 `OnReceive` 内应通过 **`ctx.Message()`** 获取当前消息并做类型分支处理。当前 Actor 的引用可通过 **`ctx.Ref()`** 获取，便于在组合 Actor 或向子 Actor、调度器传递自身引用。若在处理过程中发生 **panic**，框架会捕获并视为该 Actor 的故障，交由父级的 [监督策略](/docs/config/supervision) 处理（等同于主动调用 **Failed**）；因此应尽量在业务逻辑中恢复可预期错误，或显式调用 **ctx.Failed(fault)** 上报。
 
 ## 实现方式
 

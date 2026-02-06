@@ -1,0 +1,22 @@
+---
+title: 组合多个 Actor
+description: 使用 NewComplexCombinationActor 将多个逻辑 Actor 合并为一个对外 Actor
+---
+
+若希望将多个“逻辑 Actor”合并为一个对外 Actor（例如 mixin 式逻辑），可使用 **`vivid.NewComplexCombinationActor`**：系统会按顺序调用各子 Actor 的 Prelaunch / PreRestart / Restarted / OnReceive，实现组合行为。
+
+## 用法
+
+```go
+combined := vivid.NewComplexCombinationActor(
+    prelaunchActor,
+    businessActor,
+)
+ref, err := system.ActorOf(combined, vivid.WithActorName("combined"))
+```
+
+- 传入的 Actor 为 **nil** 时会被忽略。
+- 各子 Actor 若实现 **PrelaunchActor**、**PreRestartActor**、**RestartedActor**，会在对应阶段按顺序调用；**OnReceive** 同样按顺序调用。
+- 与单独使用 [PrelaunchActor](/docs/basics/lifecycle#启动阶段prelaunchactor) 或 [监督策略中的重启钩子](/docs/config/supervision#重启阶段的扩展钩子prerestart--restarted) 一致，只是多 Actor 串联执行。
+
+创建与生命周期见 [创建与生命周期](/docs/basics/lifecycle)。
