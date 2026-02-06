@@ -35,7 +35,6 @@ async function main() {
   });
   let stderr = '';
   child.stderr?.on('data', (chunk) => { stderr += chunk; });
-  const exit = new Promise((resolve) => child.on('exit', resolve));
   try {
     await waitForReady();
     const res = await fetch(apiUrl);
@@ -45,8 +44,12 @@ async function main() {
     await writeFile(outFile, JSON.stringify(data), 'utf8');
     console.log('Written', outFile);
   } finally {
-    child.kill('SIGTERM');
-    await exit;
+    child.kill('SIGKILL');
+    // 不 await 子进程退出，避免 CI 上 pnpm/next 子进程树未完全退出导致卡住
+    await Promise.race([
+      new Promise((resolve) => child.on('exit', resolve)),
+      new Promise((r) => setTimeout(r, 3000)),
+    ]);
   }
 }
 
