@@ -19,7 +19,7 @@ func TestChainsVoid_Append(t *testing.T) {
 	t.Run("appends chain and returns self", func(t *testing.T) {
 		c := chain.NewVoid()
 		called := false
-		fn := chain.ChainVoidFN(func() {
+		fn := chain.VoidFN(func() {
 			called = true
 		})
 		result := c.Append(fn)
@@ -53,13 +53,13 @@ func TestChainsVoid_Run(t *testing.T) {
 	t.Run("mixed chains run in order", func(t *testing.T) {
 		var order []string
 		c := chain.NewVoid()
-		c.Append(chain.ChainVoidFN(func() {
+		c.Append(chain.VoidFN(func() {
 			order = append(order, "void1")
 		}))
 		c.AppendContext(chain.ContextChainVoidFN(func(ctx context.Context) {
 			order = append(order, "context1")
 		}))
-		c.Append(chain.ChainVoidFN(func() {
+		c.Append(chain.VoidFN(func() {
 			order = append(order, "void2")
 		}))
 		c.Run()
@@ -70,7 +70,7 @@ func TestChainsVoid_Run(t *testing.T) {
 func TestChainVoidFN_Run(t *testing.T) {
 	t.Run("executes function", func(t *testing.T) {
 		called := false
-		fn := chain.ChainVoidFN(func() {
+		fn := chain.VoidFN(func() {
 			called = true
 		})
 		fn.Run()

@@ -563,13 +563,13 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 		return
 	}
 
-	v.Append(chain.ChainVoidFN(handler.handleChildDeath)).
-		Append(chain.ChainVoidFN(handler.checkAndMarkKilled)).
-		Append(chain.ChainVoidFN(handler.prepareSelfKilledMessage)).
-		Append(chain.ChainVoidFN(handler.executeBehavior)).
-		Append(chain.ChainVoidFN(handler.cleanupIfNotRestarting)).
-		Append(chain.ChainVoidFN(handler.cleanupScheduler)).
-		Append(chain.ChainVoidFN(handler.handleRestart)).
+	v.Append(chain.VoidFN(handler.handleChildDeath)).
+		Append(chain.VoidFN(handler.checkAndMarkKilled)).
+		Append(chain.VoidFN(handler.prepareSelfKilledMessage)).
+		Append(chain.VoidFN(handler.executeBehavior)).
+		Append(chain.VoidFN(handler.cleanupIfNotRestarting)).
+		Append(chain.VoidFN(handler.cleanupScheduler)).
+		Append(chain.VoidFN(handler.handleRestart)).
 		Run()
 }
 
