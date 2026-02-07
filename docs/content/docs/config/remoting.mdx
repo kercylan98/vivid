@@ -99,6 +99,10 @@ type Codec interface {
 
 远程消息发送、编解码或处理失败时会返回 **ErrorRemotingMessageSendFailed**、**ErrorRemotingMessageEncodeFailed**、**ErrorRemotingMessageDecodeFailed**、**ErrorRemotingMessageHandleFailed** 等，详见 [错误](/docs/config/errors)。
 
+## 与集群配合
+
+在启用 Remoting 的前提下，可通过 **WithActorSystemRemotingOptions** 传入 **WithActorSystemRemotingClusterOption** 或 **WithActorSystemRemotingClusterOptions** 启用集群。集群使用 Remoting 的地址与编解码进行节点间成员发现与通信。详见 [集群](/docs/config/cluster)。
+
 ## 与 FindActorRef 配合
 
 远程节点的 ActorRef 常以字符串形式存储或从配置/服务发现获取。使用 **system.FindActorRef(actorRef string)** 可将字符串解析为 **ActorRef**，再用于 Tell/Ask。详见 [Actor 引用（ActorRef）](/docs/basics/actor-ref)。

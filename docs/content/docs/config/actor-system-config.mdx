@@ -21,6 +21,8 @@ description: ActorSystemOptions 与系统级选项一览
 | **WithActorSystemCodec** | 远程消息编解码器；与 RegisterCustomMessage 二选一。可使用 [vivid-proto](https://github.com/kercylan98/vivid-proto) 作为 Proto Codec。详见 [远程通讯](/docs/config/remoting) |
 | **WithActorSystemRemotingOptions** | 远程高级选项（如 ConnectionReadFailedHandler、重试策略）。详见 [远程通讯](/docs/config/remoting) |
 | **WithActorSystemRemotingOption** | 远程选项的链式增量配置（如 ReconnectLimit、ReconnectInitialDelay 等），可传多个 Option。详见 [远程通讯](/docs/config/remoting) |
+| **WithActorSystemRemotingClusterOption** | 通过 ClusterOption 列表启用并配置集群（需同时启用 Remoting）。详见 [集群](/docs/config/cluster) |
+| **WithActorSystemRemotingClusterOptions** | 通过 *ClusterOptions 启用并配置集群（需同时启用 Remoting）。详见 [集群](/docs/config/cluster) |
 | **WithActorSystemOptions** | 一次性应用整份 ActorSystemOptions |
 
 ## 使用方式

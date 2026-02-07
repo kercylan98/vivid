@@ -11,6 +11,7 @@
     "basics/message-delivery",
     "---进阶能力---",
     "config/remoting",
+    "config/cluster",
     "basics/watch-unwatch",
     "basics/entrust",
     "basics/stash",
