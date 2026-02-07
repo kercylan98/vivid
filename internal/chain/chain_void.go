@@ -12,7 +12,7 @@ func NewVoid() *ChainsVoid {
 	}
 }
 
-func (c *ChainsVoid) Append(chain ChainVoid) *ChainsVoid {
+func (c *ChainsVoid) Append(chain Void) *ChainsVoid {
 	c.chains = append(c.chains, chain)
 	return c
 }
@@ -25,7 +25,7 @@ func (c *ChainsVoid) AppendContext(chain ContextChainVoid) *ChainsVoid {
 func (c *ChainsVoid) Run() {
 	for _, chain := range c.chains {
 		switch chain := chain.(type) {
-		case ChainVoid:
+		case Void:
 			chain.Run()
 		case ContextChainVoid:
 			chain.Run(context.Background())
@@ -33,13 +33,13 @@ func (c *ChainsVoid) Run() {
 	}
 }
 
-type ChainVoid interface {
+type Void interface {
 	Run()
 }
 
-type ChainVoidFN func()
+type VoidFN func()
 
-func (fn ChainVoidFN) Run() {
+func (fn VoidFN) Run() {
 	fn()
 }
 

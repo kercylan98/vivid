@@ -1,6 +1,7 @@
 package remoting
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -20,8 +21,9 @@ var (
 type startAcceptor struct{}
 
 // NewServerActor 创建新的服务器
-func NewServerActor(bindAddr string, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions) *ServerActor {
+func NewServerActor(ctx context.Context, bindAddr string, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions) *ServerActor {
 	sa := &ServerActor{
+		ctx:               ctx,
 		options:           options,
 		bindAddr:          bindAddr,
 		advertiseAddr:     advertiseAddr,
@@ -36,6 +38,7 @@ func NewServerActor(bindAddr string, advertiseAddr string, codec vivid.Codec, en
 
 // ServerActor 管理TCP服务器
 type ServerActor struct {
+	ctx                      context.Context
 	options                  vivid.ActorSystemRemotingOptions // 远程通信选项
 	bindAddr                 string                           // TCP服务器绑定的本地监听地址（如 "0.0.0.0:8080"），只绑定本地，不对外暴露
 	advertiseAddr            string                           // 对外宣称的服务地址（如 "public.ip:port"），用于服务注册和远程节点发现
@@ -54,7 +57,7 @@ func (s *ServerActor) OnReceive(ctx vivid.ActorContext) {
 	switch message := ctx.Message().(type) {
 	case *vivid.OnLaunch:
 		s.onLaunch(ctx)
-	case *tcpConnectionActor:
+	case *tcpConnectionActor: // ASK
 		s.onConnection(ctx, message)
 	case *vivid.OnKill:
 		s.onKill(ctx, message)
@@ -122,7 +125,7 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 
 func (s *ServerActor) onLaunch(ctx vivid.ActorContext) {
 	// 可能存在 Actor 还未启动完成旧投递网络消息，因此需要使用 WaitGroup 等待初始化完成
-	s.remotingMailboxCentral = newMailboxCentral(ctx.Logger(), ctx.Ref(), ctx, s.codec, ctx.EventStream(), s.options)
+	s.remotingMailboxCentral = newMailboxCentral(s.ctx, ctx.Ref(), ctx, s.codec, ctx.EventStream(), s.options)
 	s.remotingMailboxCentralWG.Done()
 
 	// 投递 Acceptor 作为启动消息，实现重试启动
@@ -130,10 +133,11 @@ func (s *ServerActor) onLaunch(ctx vivid.ActorContext) {
 }
 
 func (s *ServerActor) onConnection(ctx vivid.ActorContext, connection *tcpConnectionActor) {
+	// 关闭后因 Actor 生命周期，无法收到新的连接
+
 	prefix := "dial"
 	if !connection.client {
-		// 维护当前已建立并被服务器管理的连接集合
-		prefix = "accept"
+		prefix = "accept" // 维护当前已建立并被服务器管理的连接集合
 	}
 	// 连接至服务端的无需绑定，客户端自行维护连接，不进行复用
 	ref, err := ctx.ActorOf(connection, vivid.WithActorName(fmt.Sprintf("%s-%s", prefix, connection.conn.RemoteAddr().String())))
@@ -164,16 +168,14 @@ func (s *ServerActor) GetRemotingMailboxCentral() *MailboxCentral {
 }
 
 func (s *ServerActor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
-	s.remotingMailboxCentral.Close()
-	for _, actor := range s.acceptConnections {
-		if err := actor.Close(); err != nil {
-			ctx.Logger().Warn("server accept connect close fail",
-				log.String("advertise_addr", actor.advertiseAddr),
-				log.Any("err", err),
-			)
-		}
+	// 停止重试定时器
+	if s.backoffTimer != nil {
+		s.backoffTimer.Stop()
+		s.backoffTimer = nil
 	}
 
+	// 关闭监听器，停止接受新连接
+	ctx.Logger().Debug("server listener closing", log.String("bind_addr", s.bindAddr), log.String("advertise_addr", s.advertiseAddr))
 	if s.acceptorListener != nil {
 		if err := s.acceptorListener.Close(); err != nil {
 			ctx.Logger().Warn("server acceptor listener close fail", log.Any("err", err))
@@ -181,9 +183,16 @@ func (s *ServerActor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
 		s.acceptorListener = nil
 	}
 
-	if s.backoffTimer != nil {
-		s.backoffTimer.Stop()
-		s.backoffTimer = nil
+	// 关闭本机构建的客户端连接
+	s.remotingMailboxCentral.Close()
+	// 关闭其他节点发起的连接
+	for _, actor := range s.acceptConnections {
+		if err := actor.Close(); err != nil {
+			ctx.Logger().Warn("server accept connect close fail",
+				log.String("advertise_addr", actor.advertiseAddr),
+				log.Any("err", err),
+			)
+		}
 	}
 
 	// 发布服务器停止事件
@@ -210,13 +219,6 @@ func (s *ServerActor) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) 
 			IsClient:      tcpConn.client,
 			Reason:        "connection actor killed",
 		})
-
-		if err := tcpConn.Close(); err != nil {
-			ctx.Logger().Warn("server accept connect close fail",
-				log.String("advertise_addr", tcpConn.advertiseAddr),
-				log.Any("err", err),
-			)
-		}
 
 	case message.Ref.Equals(s.acceptorRef):
 		// Acceptor 被终止，尝试重启

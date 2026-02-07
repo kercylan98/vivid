@@ -84,7 +84,24 @@ type Codec interface {
 
 可使用 **ActorSystemRemotingConnectionReadFailedHandlerFN** 以函数形式实现，便于在连接失败时打日志、告警或做重试策略。
 
+## 远程连接重试与死信
+
+向远程节点发送消息时，若连接不可用，框架会按 **ActorSystemRemotingOptions** 中的重试策略进行有限次重试（指数退避）。默认通过 **NewActorSystemRemotingOptions()** 提供：重试次数 10、初始延迟 500ms、最大延迟 10s、退避因子 2.5、启用抖动。可通过 **WithActorSystemRemotingOption** 链式配置单项或使用 **WithActorSystemRemotingReconnect** 批量配置：
+
+- **ReconnectLimit**：重试次数，&lt;1 则不重试（0 表示不重试）。对应 **WithActorSystemRemotingReconnectLimit**。
+- **ReconnectInitialDelay** / **ReconnectMaxDelay**：初始与最大延迟。**WithActorSystemRemotingReconnectInitialDelay**、**WithActorSystemRemotingReconnectMaxDelay**。
+- **ReconnectFactor**：退避因子（如 2.0 表示指数退避）。**WithActorSystemRemotingReconnectFactor**。
+- **ReconnectJitter**：是否启用抖动，缓解重连雷群。**WithActorSystemRemotingReconnectJitter**。
+
+重试期间会向事件流发布 **`ves.RemotingConnectionFailedEvent`**（含 RemoteAddr、Error、RetryCount 等），可订阅该事件做监控。**若在重试次数用尽后仍无法投递，该消息会作为死信投递**（即 **HandleFailedRemotingEnvelop** 将 Envelope 投递到死信队列），可通过订阅 **`ves.DeathLetterEvent`** 进行监控与审计，参见 [死信](/docs/basics/death-letter)。
+
+未启用 Remoting 时，向远程 **ActorRef** 发送消息会得到“远程未启用”的告警，且该消息不会跨节点发送（由框架按当前实现处理，例如落入系统邮箱），业务侧应避免在未启用 Remoting 的节点上向远程 ref 发信。
+
 远程消息发送、编解码或处理失败时会返回 **ErrorRemotingMessageSendFailed**、**ErrorRemotingMessageEncodeFailed**、**ErrorRemotingMessageDecodeFailed**、**ErrorRemotingMessageHandleFailed** 等，详见 [错误](/docs/config/errors)。
+
+## 与集群配合
+
+在启用 Remoting 的前提下，可通过 **WithActorSystemRemotingOptions** 传入 **WithActorSystemRemotingClusterOption** 或 **WithActorSystemRemotingClusterOptions** 启用集群。集群使用 Remoting 的地址与编解码进行节点间成员发现与通信。详见 [集群](/docs/config/cluster)。
 
 ## 与 FindActorRef 配合
 

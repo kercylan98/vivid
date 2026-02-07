@@ -9,6 +9,7 @@ import (
 	"net"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/remoting/serialize"
@@ -116,9 +117,10 @@ func (c *tcpConnectionActor) onLaunch(ctx vivid.ActorContext) {
 }
 
 func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err error) {
+	// 消息读取
 	reader := bufio.NewReader(c.conn)
 	lengthBuf := make([]byte, 4)
-	if _, err := io.ReadFull(reader, lengthBuf); err != nil {
+	if _, err = io.ReadFull(reader, lengthBuf); err != nil {
 		// 对等连接已关闭
 		if errors.Is(err, io.EOF) {
 			return false, nil
@@ -135,12 +137,16 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 		ctx.Kill(ctx.Ref(), false, err.Error())
 		return true, err
 	}
+
+	// 消息长度，其中 0 表示连接关闭协议
 	msgLen := binary.BigEndian.Uint32(lengthBuf)
 	if msgLen == 0 {
-		c.Write(lengthBuf)
+		_, _ = c.Write(lengthBuf)
 		ctx.Kill(ctx.Ref(), false, "peer closed")
 		return false, nil
 	}
+
+	// 消息长度超过 4MB 则认为无效
 	if msgLen > 4*1024*1024 {
 		ctx.Logger().Warn("invalid message length", log.Int64("length", int64(msgLen)))
 		ctx.TellSelf(c.conn)
@@ -239,17 +245,17 @@ func (c *tcpConnectionActor) Close() error {
 	if c.closed {
 		return nil
 	}
+	c.closed = true
 
 	// 暂且以长度 0 的数据包作为关闭连接消息，写入成功后不再处理关闭，等待 ACK 关闭
 	data := make([]byte, 4)
 	binary.BigEndian.PutUint32(data, 0)
-	_, err := c.conn.Write(data)
-	if err != nil {
+	if _, err := c.conn.Write(data); err != nil {
 		// 写入失败时强行关闭
-		c.closed = true
 		return c.conn.Close()
 	}
-	return nil
+	// 设置读超时
+	return c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 }
 
 // Closed 返回连接是否已关闭。

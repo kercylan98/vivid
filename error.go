@@ -17,6 +17,7 @@ var (
 	ErrorActorSystemStartFailed    = RegisterError(100003, "actor system start failed")    // 启动失败
 	ErrorActorSystemStopFailed     = RegisterError(100004, "actor system stop failed")     // 停止失败
 	ErrorActorSystemNotStarted     = RegisterError(100005, "actor system not started")     // 未启动时调用 Stop
+	ErrorActorSystemStopped        = RegisterError(100006, "actor system stopped")         // 系统已停止
 
 	ErrorActorDeaded          = RegisterError(100100, "actor deaded")           // Actor 已死亡
 	ErrorActorAlreadyExists   = RegisterError(100101, "actor already exists")   // Actor 已存在
@@ -62,6 +63,11 @@ var (
 	ErrorRemotingMessageEncodeFailed = RegisterError(140001, "remoting message encode failed") // 消息编码失败
 	ErrorRemotingMessageDecodeFailed = RegisterError(140002, "remoting message decode failed") // 消息解码失败
 	ErrorRemotingMessageHandleFailed = RegisterError(140003, "remoting message handle failed") // 消息处理失败
+)
+
+// Cluster 相关错误。
+var (
+	ErrorClusterNameMismatch = RegisterError(150000, "cluster name mismatch") // 集群名称不匹配
 )
 
 var _ error = (*Error)(nil)

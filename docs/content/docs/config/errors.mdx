@@ -106,6 +106,14 @@ ActorRef 解析、格式及 Agent 引用。
 | **ErrorRemotingMessageDecodeFailed** | 远程消息解码失败 |
 | **ErrorRemotingMessageHandleFailed** | 远程消息处理失败 |
 
+### 集群
+
+集群名称校验等。
+
+| 变量 | 说明 |
+|------|------|
+| **ErrorClusterNameMismatch** | 集群名称不匹配 |
+
 ---
 
 完整列表与错误码见 [pkg.go.dev - vivid](https://pkg.go.dev/github.com/kercylan98/vivid#pkg-variables)。**RegisterError** 用于在包 init 或启动阶段注册自定义错误码，供跨节点一致识别。

@@ -67,7 +67,7 @@ func (es *eventStream) Publish(ctx vivid.EventStreamContext, event vivid.Message
 		es.system.tell(false, subscriber, vivid.StreamEvent(event))
 	}
 
-	ctx.Logger().Debug("event published", log.String("event_type", eventType.String()), log.String("publisher_path", ctx.Ref().GetPath()))
+	ctx.Logger().Debug("event published", log.String("event_type", eventType.String()), log.String("publisher_path", ctx.Ref().GetPath()), log.Any("event_data", event))
 }
 
 func (es *eventStream) Unsubscribe(ctx vivid.EventStreamContext, event any) {

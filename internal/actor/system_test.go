@@ -9,6 +9,7 @@ import (
 	"github.com/kercylan98/vivid/internal/actor"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
+	"github.com/kercylan98/vivid/pkg/ves"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -259,4 +260,57 @@ func TestSystem_HandleRemotingEnvelop_InvalidAgentRef(t *testing.T) {
 	assert.NotNil(t, err)
 	err = system.HandleRemotingEnvelop(false, agentAddr, agentPath, senderAddr, senderPath, invalidAddr, receiverPath, "test message")
 	assert.NotNil(t, err)
+}
+
+func TestSystem_WithRemoting(t *testing.T) {
+	t.Run("normal", func(t *testing.T) {
+		system := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+	})
+
+	t.Run("no Remoting, send to remote system", func(t *testing.T) {
+		normalSystem := actor.NewTestSystem(t)
+		remoteSystem := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))
+		defer func() {
+			assert.NoError(t, normalSystem.Stop())
+			assert.NoError(t, remoteSystem.Stop())
+		}()
+
+		normalSystem.Tell(remoteSystem.Ref().Clone(), "hello")
+	})
+
+	t.Run("send to invalid remote system", func(t *testing.T) {
+		system := actor.NewTestSystem(t,
+			vivid.WithActorSystemRemoting("127.0.0.1:8080"),
+			vivid.WithActorSystemRemotingOption(vivid.WithActorSystemRemotingReconnectLimit(0))) // 不重试
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		wait := make(chan struct{})
+		watcher, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.EventStream().Subscribe(ctx, ves.RemotingConnectionFailedEvent{})
+			case ves.RemotingConnectionFailedEvent:
+				close(wait)
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, watcher)
+
+		invalidRemoteRef, err := actor.NewRef("127.0.0.1:8081", "/")
+		assert.NoError(t, err)
+		assert.NotNil(t, invalidRemoteRef)
+
+		system.Tell(invalidRemoteRef, "hello")
+
+		select {
+		case <-wait:
+		case <-time.After(time.Second * 3):
+			t.Fatal("timeout")
+		}
+	})
 }

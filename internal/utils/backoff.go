@@ -53,13 +53,13 @@ type ExponentialBackoff struct {
 // Try 尝试执行函数，如果失败则进行指数退避
 //
 // 参数:
+//   - limit: 最大尝试次数，如果 < 0 则不限制
 //   - fn: 要执行的函数
-//   - limit: 最大尝试次数，如果 <= 0 则不限制
 //
 // 返回:
 //   - abort: 是否终止
 //   - err: 执行函数的结果
-func (eb *ExponentialBackoff) Try(fn func() (abort bool, err error), limit int) (abort bool, err error) {
+func (eb *ExponentialBackoff) Try(limit int, fn func() (abort bool, err error)) (abort bool, err error) {
 	defer func() {
 		eb.Reset()
 	}()
@@ -68,8 +68,8 @@ func (eb *ExponentialBackoff) Try(fn func() (abort bool, err error), limit int) 
 		if abort || err == nil {
 			return abort, err
 		}
-		if limit > 0 && eb.currentAttempt >= limit {
-			return abort, fmt.Errorf("try failed after %d attempts", limit)
+		if limit >= 0 && eb.currentAttempt >= limit {
+			return abort, fmt.Errorf("try failed after %d attempts", eb.currentAttempt)
 		}
 		time.Sleep(eb.Next())
 	}
