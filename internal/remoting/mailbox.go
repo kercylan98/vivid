@@ -1,6 +1,7 @@
 package remoting
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -39,16 +40,9 @@ var (
 	_ vivid.Mailbox = &Mailbox{}
 )
 
-func newMailbox(
-	advertiseAddress string,
-	codec vivid.Codec,
-	envelopHandler NetworkEnvelopHandler,
-	actorLiaison vivid.ActorLiaison,
-	remotingServerRef vivid.ActorRef,
-	eventStream vivid.EventStream,
-	options vivid.ActorSystemRemotingOptions,
-) *Mailbox {
+func newMailbox(ctx context.Context, advertiseAddress string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, actorLiaison vivid.ActorLiaison, remotingServerRef vivid.ActorRef, eventStream vivid.EventStream, options vivid.ActorSystemRemotingOptions) *Mailbox {
 	return &Mailbox{
+		ctx:               ctx,
 		options:           options,
 		advertiseAddress:  advertiseAddress,
 		sf:                &singleflight.Group{},
@@ -62,6 +56,7 @@ func newMailbox(
 }
 
 type Mailbox struct {
+	ctx               context.Context
 	options           vivid.ActorSystemRemotingOptions
 	advertiseAddress  string
 	connections       [poolSize]*tcpConnectionActor
@@ -94,6 +89,11 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 	// 尝试获取有效连接，如果不存在或已关闭则创建新连接
 	var conn *tcpConnectionActor
 	_, err := m.backoff.Try(sugar.Max(m.options.ReconnectLimit, 0), func() (abort bool, err error) {
+		// 如果系统已停止，则不进行重试
+		if m.ctx.Err() != nil {
+			return true, vivid.ErrorActorSystemStopped.With(m.ctx.Err())
+		}
+
 		// 获取连接，如果没有则创建一个
 		m.connectionLock.RLock()
 		conn = m.connections[slot]
@@ -130,6 +130,11 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 				tcpConn := newTCPConnectionActor(true, conn, m.advertiseAddress, m.codec, m.envelopHandler,
 					withTCPConnectionActorReadFailedHandler(m.options.ConnectionReadFailedHandler),
 				)
+				// 若系统已在关闭，remotingServerRef 可能已停止，先检查避免 Ask 一直等到超时
+				if m.ctx.Err() != nil {
+					_ = tcpConn.Close()
+					return nil, vivid.ErrorActorSystemStopped.With(m.ctx.Err())
+				}
 				if err = m.actorLiaison.Ask(m.remotingServerRef, tcpConn).Wait(); err != nil {
 					closeErr := tcpConn.Close()
 					if closeErr != nil {
@@ -275,4 +280,11 @@ func publishRemotingConnectionFailedEvent(mailbox *Mailbox, remoteAddr string, a
 		Error:         error,
 		RetryCount:    retryCount,
 	})
+
+	mailbox.actorLiaison.Logger().Warn("remote connection failed",
+		log.String("remote_addr", remoteAddr),
+		log.String("advertise_addr", advertiseAddr),
+		log.Any("error", error),
+		log.Int("retry_count", retryCount),
+	)
 }

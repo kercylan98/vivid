@@ -114,7 +114,7 @@ func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
 // 该结构体随着 ActorSystem 的创建流程被逐步填充，所有配置项均应通过 ActorSystemOption 配置函数进行设置。
 // 增加新配置时，只需在此结构体内扩展字段，能够保证向后兼容与良好的扩展性。
 type ActorSystemOptions struct {
-	RemotingOptions ActorSystemRemotingOptions
+	RemotingOptions *ActorSystemRemotingOptions
 
 	// Context 指定 ActorSystem 的上下文。
 	// 若未指定，则使用默认的上下文。
@@ -381,14 +381,19 @@ func (h ActorSystemRemotingConnectionReadFailedHandlerFN) HandleRemotingConnecti
 // 开发者可通过一组链式 Option 函数灵活配置远程通信相关的高级参数，实现高度可扩展的定制能力。
 type ActorSystemRemotingOption func(options *ActorSystemRemotingOptions)
 
-func NewActorSystemRemotingOptions() ActorSystemRemotingOptions {
-	return ActorSystemRemotingOptions{
+func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSystemRemotingOptions {
+	options := &ActorSystemRemotingOptions{
 		ReconnectLimit:        10,
 		ReconnectInitialDelay: 500 * time.Millisecond,
 		ReconnectMaxDelay:     10 * time.Second,
 		ReconnectFactor:       2.5,
 		ReconnectJitter:       true,
+		ClusterOptions:        nil,
 	}
+	for _, opt := range opts {
+		opt(options)
+	}
+	return *options
 }
 
 // ActorSystemRemotingOptions 封装了 ActorSystem 远程通信组件在运行时的选项参数。
@@ -412,6 +417,9 @@ type ActorSystemRemotingOptions struct {
 
 	// ReconnectJitter 用于配置远程连接的重试退避抖动。
 	ReconnectJitter bool
+
+	// ClusterOptions 用于配置集群通信相关的选项。
+	ClusterOptions *ClusterOptions
 }
 
 // WithActorSystemRemotingOptions 返回一个 ActorSystemOption，用于批量配置 ActorSystem 远程通信的高级选项。
@@ -438,9 +446,9 @@ type ActorSystemRemotingOptions struct {
 //   - ActorSystemOption:  可传给 NewActorSystem 或其它配置参数的 Option 函数。
 func WithActorSystemRemotingOptions(options ActorSystemRemotingOptions, opts ...ActorSystemRemotingOption) ActorSystemOption {
 	return func(o *ActorSystemOptions) {
-		o.RemotingOptions = options
+		o.RemotingOptions = &options
 		for _, opt := range opts {
-			opt(&o.RemotingOptions)
+			opt(o.RemotingOptions)
 		}
 	}
 }
@@ -459,7 +467,7 @@ func WithActorSystemRemotingOptions(options ActorSystemRemotingOptions, opts ...
 func WithActorSystemRemotingOption(opts ...ActorSystemRemotingOption) ActorSystemOption {
 	return func(o *ActorSystemOptions) {
 		for _, opt := range opts {
-			opt(&o.RemotingOptions)
+			opt(o.RemotingOptions)
 		}
 	}
 }
@@ -545,5 +553,32 @@ func WithActorSystemRemotingReconnect(limit int, initialDelay, maxDelay time.Dur
 			opts.ReconnectFactor = factor
 		}
 		opts.ReconnectJitter = jitter
+	}
+}
+
+// WithActorSystemRemotingClusterOptions 返回一个 ActorSystemRemotingOption，用于配置集群通信相关的选项。
+//
+// 参数：
+//   - options: 集群通信选项。
+//
+// 返回值：
+//   - ActorSystemRemotingOption: 可传给 NewActorSystemRemotingOptions 或其它配置参数的 Option 函数。
+func WithActorSystemRemotingClusterOptions(options *ClusterOptions) ActorSystemRemotingOption {
+	return func(opts *ActorSystemRemotingOptions) {
+		opts.ClusterOptions = options
+	}
+}
+
+// WithActorSystemRemotingClusterOption 返回一个 ActorSystemRemotingOption，用于配置集群通信相关的选项。
+//
+// 参数：
+//   - opts ...ClusterOption: 集群通信选项。
+//
+// 返回值：
+//   - ActorSystemRemotingOption: 可传给 NewActorSystemRemotingOptions 或其它配置参数的 Option 函数。
+func WithActorSystemRemotingClusterOption(opts ...ClusterOption) ActorSystemRemotingOption {
+	clusterOptions := NewClusterOptions(opts...)
+	return func(opts *ActorSystemRemotingOptions) {
+		opts.ClusterOptions = clusterOptions
 	}
 }

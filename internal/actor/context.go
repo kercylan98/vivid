@@ -81,6 +81,10 @@ type Context struct {
 	scheduler     *Scheduler                         // 调度器
 }
 
+func (c *Context) Cluster() vivid.ClusterContext {
+	return c.system.Cluster()
+}
+
 func (c *Context) Stash() {
 	c.stash = append(c.stash, c.envelop)
 }
@@ -223,7 +227,10 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 	})
 	c.system.appendFuture(agentRef, futureIns)
 
-	envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message).WithAgent(agentRef.agent)
+	envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
+	if agentRef.agent != nil {
+		envelop.WithAgent(agentRef.agent)
+	}
 	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
 	receiverMailbox.Enqueue(envelop)
 
@@ -291,6 +298,10 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	currentState := atomic.LoadInt32(&c.state)
 	killingOrKilled := (currentState == killed) || (!envelop.System() && currentState != running) // 是否处于停止中或死亡状态
 	if killingOrKilled && !c.zombie {                                                             // 是否处于僵尸状态
+		// Future 自动拒绝
+		if envelop.Agent() != nil {
+			c.Tell(envelop.Sender(), vivid.ErrorActorDeaded)
+		}
 		c.system.TellSelf(ves.DeathLetterEvent{
 			Envelope: envelop,
 			Time:     time.Now(),
@@ -305,6 +316,10 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	behavior := c.behaviorStack.Peek()
 	if c.zombie {
 		behavior = emptyBehavior
+		// Future 自动拒绝
+		if envelop.Agent() != nil {
+			c.Tell(envelop.Sender(), vivid.ErrorActorDeaded)
+		}
 	}
 
 	switch message := c.envelop.Message().(type) {
@@ -525,6 +540,9 @@ func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
 
 func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 	c.Logger().Debug("receive kill", log.String("path", c.ref.path), log.Bool("restarting", c.restarting != nil), log.Bool("zombie", c.zombie))
+
+	// 清理所有正在等待自身的 Future
+	c.system.removeFuturesByAgentPath(c.ref.GetPath(), vivid.ErrorActorDeaded)
 
 	// 等待所有子 Actor 结束，假设是重启，子 Actor 不应该跟随重启，应该由父节点决定是否重启
 	for _, child := range c.children {

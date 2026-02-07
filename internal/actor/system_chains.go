@@ -3,6 +3,7 @@ package actor
 import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/chain"
+	"github.com/kercylan98/vivid/internal/cluster"
 	"github.com/kercylan98/vivid/internal/guard"
 	metricsActor "github.com/kercylan98/vivid/internal/metrics"
 	"github.com/kercylan98/vivid/internal/remoting"
@@ -46,13 +47,37 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 		}
 
 		system.remotingServer = remoting.NewServerActor(
+			system.options.Context,
 			system.options.RemotingBindAddress,
 			system.options.RemotingAdvertiseAddress,
 			system.options.RemotingCodec,
 			system, // NetworkEnvelopHandler 实现
-			system.options.RemotingOptions,
+			*system.options.RemotingOptions,
 		)
+		system.options.Logger = system.options.Logger.With("addr", system.options.RemotingAdvertiseAddress)
 		_, err = system.ActorOf(system.remotingServer, vivid.WithActorName("@remoting"))
 		return err
+	})
+}
+
+func (c *_systemChains) initializeCluster(system *System) chain.Chain {
+	return chain.ChainFN(func() (err error) {
+		if system.options.RemotingOptions != nil && system.options.RemotingOptions.ClusterOptions != nil {
+			actorRefParsor := func(address, path string) (vivid.ActorRef, error) {
+				return NewRef(address, path)
+			}
+
+			nodeActor := cluster.NewNodeActor(
+				actorRefParsor,
+				*system.options.RemotingOptions.ClusterOptions)
+
+			clusterRef, err := system.ActorOf(nodeActor, vivid.WithActorName("@cluster"))
+			if err != nil {
+				return err
+			}
+			system.clusterContext = cluster.NewClusterContext(system, *system.options.RemotingOptions.ClusterOptions, actorRefParsor, clusterRef)
+			return err
+		}
+		return nil
 	})
 }

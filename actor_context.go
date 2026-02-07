@@ -378,6 +378,22 @@ type actorRace interface {
 type actorBasic interface {
 	ActorLiaison
 
+	// Cluster 获取集群上下文（ClusterContext）实例，用于访问当前 Actor 所处的集群管理功能。
+	//
+	// 功能说明：
+	//   - 提供对当前集群内所有节点的可见视图及相关操作（如节点发现、成员管理等）。
+	//   - 可通过 ClusterContext 获取集群节点列表，支持应用于分布式场景的 Actor 协作与消息路由。
+	//   - 当 Actor 运行于集群模式下，该方法返回实际的集群上下文对象；若系统未启用集群功能，返回值可能为 nil，应做好判空处理。
+	//
+	// 典型应用场景：
+	//   - 构建分布式 Actor 架构，需感知其他节点信息进行负载均衡、服务发现等。
+	//   - 对集群成员变更进行监听，实现动态扩缩容或弹性调度。
+	//   - 通过集群能力实现跨节点 ActorRef 的消息传递和协作处理。
+	//
+	// 返回值：
+	//   - ClusterContext：当前 ActorContext 的集群上下文对象。
+	Cluster() ClusterContext
+
 	// Kill 请求指定 Actor 终止运行，支持优雅停机（poison=false）或立即销毁（poison=true）两种模式。
 	//
 	// 功能说明：

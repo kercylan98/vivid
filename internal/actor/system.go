@@ -8,6 +8,7 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/chain"
+	"github.com/kercylan98/vivid/internal/cluster"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/remoting"
@@ -36,26 +37,37 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 	system := &System{
 		options:           opts,
 		actorContexts:     sync.Map{},
+		futureAgents:      make(map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef),
 		guardClosedSignal: make(chan struct{}),
 		scheduler:         scheduler.NewScheduler(opts.Context),
 	}
+
+	system.options.Context, system.cancel = context.WithCancel(system.options.Context)
 
 	system.eventStream = newEventStream(system)
 	return system
 }
 
 type System struct {
-	*Context                                    // ActorSystem 本身就表示了根 Actor
-	actorOfLock       sync.Mutex                // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
-	options           *vivid.ActorSystemOptions // 系统选项
-	actorContexts     sync.Map                  // 用于加速访问的 ActorContext 缓存（含有 Future）
-	guardClosedSignal chan struct{}             // 用于通知系统关闭的信号
-	remotingServer    *remoting.ServerActor     // 远程服务器
-	eventStream       vivid.EventStream         // 事件流
-	metrics           metrics.Metrics           // 指标收集器
-	scheduler         *scheduler.Scheduler      // 调度器
-	status            int32                     // 系统状态
-	statusLock        sync.Mutex                // 系统状态锁
+	*Context                                                            // ActorSystem 本身就表示了根 Actor
+	actorOfLock       sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
+	options           *vivid.ActorSystemOptions                         // 系统选项
+	actorContexts     sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
+	futureAgents      map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
+	futureLock        sync.Mutex                                        // Future 的锁，保证 Future 的并发安全
+	guardClosedSignal chan struct{}                                     // 用于通知系统关闭的信号
+	remotingServer    *remoting.ServerActor                             // 远程服务器
+	eventStream       vivid.EventStream                                 // 事件流
+	metrics           metrics.Metrics                                   // 指标收集器
+	scheduler         *scheduler.Scheduler                              // 调度器
+	status            int32                                             // 系统状态
+	statusLock        sync.Mutex                                        // 系统状态锁
+	clusterContext    *cluster.Context                                  // 集群上下文
+	cancel            context.CancelFunc                                // 上下文停止函数
+}
+
+func (s *System) Cluster() vivid.ClusterContext {
+	return s.clusterContext
 }
 
 func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath string, messageInstance any) error {
@@ -81,7 +93,11 @@ func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, sender
 		return fmt.Errorf("%w: invalid receiver ref, %s/%s", err, receiverAddr, receiverPath)
 	}
 	receiverMailbox := s.findMailbox(receiver)
-	receiverMailbox.Enqueue(mailbox.NewEnvelop(system, sender, receiver, messageInstance).WithAgent(agent))
+	envelop := mailbox.NewEnvelop(system, sender, receiver, messageInstance)
+	if agent != nil {
+		envelop.WithAgent(agent)
+	}
+	receiverMailbox.Enqueue(envelop)
 	return nil
 }
 
@@ -130,6 +146,7 @@ func (s *System) Start() error {
 		Append(systemChains.spawnGuardActor(s)).
 		Append(systemChains.initializeMetrics(s)).
 		Append(systemChains.initializeRemoting(s)).
+		Append(systemChains.initializeCluster(s)).
 		Run()
 
 	if startErr != nil {
@@ -138,20 +155,35 @@ func (s *System) Start() error {
 	}
 
 	s.Logger().Debug("actor system started")
+
+	// 守护系统上下文
+	go func() {
+		<-s.options.Context.Done()
+		s.statusLock.Lock()
+		defer s.statusLock.Unlock()
+		_ = s.stop(false) // 无意义错误
+	}()
 	return nil
 }
-
 func (s *System) Stop(timeout ...time.Duration) error {
+	return s.stop(true, timeout...)
+}
+
+func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 	// 将锁范围限定在函数内部校验状态，避免每次 return 都重复编写锁释放代码
 	var stateError = func(s *System) error {
 		s.statusLock.Lock()
 		defer s.statusLock.Unlock()
 		switch s.status {
 		case ready:
-			s.Logger().Warn("actor system not started")
+			if checkLog {
+				s.Logger().Warn("actor system not started")
+			}
 			return vivid.ErrorActorSystemNotStarted
 		case stop:
-			s.Logger().Warn("actor system already stopped")
+			if checkLog {
+				s.Logger().Warn("actor system already stopped")
+			}
 			return vivid.ErrorActorSystemAlreadyStopped
 		default:
 			s.status = stop
@@ -164,19 +196,15 @@ func (s *System) Stop(timeout ...time.Duration) error {
 
 	var stopTimeout = sugar.Max(sugar.FirstOrDefault(timeout, s.options.StopTimeout), 0)
 	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
-	if s.Context != nil {
-		s.Context.Kill(s.Context.Ref(), true, "actor system stop")
-		ctx, cancel := context.WithTimeout(s.options.Context, stopTimeout)
-		defer cancel()
-		select {
-		case <-s.guardClosedSignal:
-			cancel()
-		case <-ctx.Done():
-			s.actorContexts.Range(func(key, value any) bool {
-				return true
-			})
-			return vivid.ErrorActorSystemStopFailed.With(ctx.Err())
-		}
+
+	s.Context.Kill(s.Context.Ref(), true, "actor system stop")
+	s.cancel()
+	select {
+	case <-s.guardClosedSignal:
+		break
+	case <-time.After(stopTimeout):
+		s.Logger().Error("actor system stop failed", log.Duration("timeout", stopTimeout))
+		return vivid.ErrorActorSystemStopFailed.With(context.DeadlineExceeded)
 	}
 
 	// 清理调度器
@@ -188,10 +216,44 @@ func (s *System) Stop(timeout ...time.Duration) error {
 
 func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) {
 	s.actorContexts.Store(agentRef.ref.GetPath(), future)
+
+	s.futureLock.Lock()
+	defer s.futureLock.Unlock()
+
+	agentPath := agentRef.agent.GetPath()
+	futureMap, exists := s.futureAgents[agentPath]
+	if !exists {
+		futureMap = make(map[vivid.ActorPath]*AgentRef)
+		s.futureAgents[agentPath] = futureMap
+	}
+	futureMap[agentRef.ref.GetPath()] = agentRef
 }
 
 func (s *System) removeFuture(agentRef *AgentRef) {
 	s.actorContexts.Delete(agentRef.ref.GetPath())
+
+	s.futureLock.Lock()
+	defer s.futureLock.Unlock()
+
+	agentPath := agentRef.agent.GetPath()
+	delete(s.futureAgents[agentPath], agentRef.ref.GetPath())
+	if len(s.futureAgents[agentPath]) == 0 {
+		delete(s.futureAgents, agentPath)
+	}
+}
+
+func (s *System) removeFuturesByAgentPath(agentPath vivid.ActorPath, err error) {
+	s.futureLock.Lock()
+	refs := s.futureAgents[agentPath]
+	s.futureLock.Unlock()
+
+	for ref := range refs {
+		if ctx, ok := s.actorContexts.Load(ref); ok {
+			if f, ok := ctx.(*future.Future[vivid.Message]); ok {
+				f.Close(err)
+			}
+		}
+	}
 }
 
 // appendActorContext 用于添加指定路径的 ActorContext。
@@ -244,6 +306,10 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 
 	// 检查是否为远程地址，使用远程邮箱
 	if ref.GetAddress() != s.Ref().GetAddress() {
+		// 当系统上下文已关闭，直接返回系统根 Actor 的 Mailbox 作为兜底
+		if s.options.Context.Err() != nil {
+			return s.Mailbox()
+		}
 		if s.remotingServer == nil {
 			s.Logger().Warn("remote disabled, remote actor ref not allowed", log.String("ref", ref.String()))
 			return s.Mailbox()
