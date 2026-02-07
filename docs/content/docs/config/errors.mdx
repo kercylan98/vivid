@@ -108,11 +108,12 @@ ActorRef 解析、格式及 Agent 引用。
 
 ### 集群
 
-集群名称校验等。
+集群名称校验及未启用时的调用。
 
 | 变量 | 说明 |
 |------|------|
 | **ErrorClusterNameMismatch** | 集群名称不匹配 |
+| **ErrorClusterDisabled** | 集群已禁用（未启用集群时调用 ClusterContext 的 GetMembers/Leader/IsLeader/InQuorum 等会返回此错误） |
 
 ---
 

@@ -22,7 +22,7 @@ system := bootstrap.NewActorSystem(
 )
 ```
 
-未设置 **ClusterOptions** 时，**ctx.Cluster()** 与 **system.Cluster()** 为 **nil**，使用前应做 nil 判断。
+未设置 **ClusterOptions** 时，**ctx.Cluster()** 与 **system.Cluster()** 为 **nil**，使用前应做 nil 判断。若在未启用集群时调用 **ClusterContext** 的 GetMembers、Leader、IsLeader、InQuorum 等方法，会得到 **ErrorClusterDisabled**（参见 [错误](/docs/config/errors)#集群）。
 
 ## ClusterOptions 配置
 
@@ -62,7 +62,7 @@ system := bootstrap.NewActorSystem(
 
 ## 错误码
 
-集群相关预定义错误见 [错误](/docs/config/errors)#集群：**ErrorClusterNameMismatch**（集群名称不匹配）。
+集群相关预定义错误见 [错误](/docs/config/errors)#集群：**ErrorClusterNameMismatch**（集群名称不匹配）、**ErrorClusterDisabled**（集群未启用时调用 ClusterContext 方法）。
 
 ## 与 Remoting 的关系
 
