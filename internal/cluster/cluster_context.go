@@ -32,6 +32,9 @@ func (c *Context) Name() string {
 }
 
 func (c *Context) GetMembers() ([]vivid.ClusterMemberInfo, error) {
+	if c == nil {
+		return nil, vivid.ErrorClusterDisabled
+	}
 	request := &publicMessageAsGetNodesQuery{
 		ClusterName: c.Name(),
 	}
@@ -47,6 +50,9 @@ func (c *Context) GetMembers() ([]vivid.ClusterMemberInfo, error) {
 }
 
 func (c *Context) getClusterState() (*publicMessageAsGetClusterStateResult, error) {
+	if c == nil {
+		return nil, vivid.ErrorClusterDisabled
+	}
 	result, err := c.system.Ask(c.nodeRef, &publicMessageAsGetClusterState{}, defaultClusterAskTimeout).Result()
 	if err != nil {
 		return nil, err
@@ -58,6 +64,9 @@ func (c *Context) getClusterState() (*publicMessageAsGetClusterStateResult, erro
 }
 
 func (c *Context) Leader() (vivid.ActorRef, error) {
+	if c == nil {
+		return nil, vivid.ErrorClusterDisabled
+	}
 	state, err := c.getClusterState()
 	if err != nil {
 		return nil, err
@@ -73,6 +82,9 @@ func (c *Context) Leader() (vivid.ActorRef, error) {
 }
 
 func (c *Context) IsLeader() (bool, error) {
+	if c == nil {
+		return false, vivid.ErrorClusterDisabled
+	}
 	state, err := c.getClusterState()
 	if err != nil {
 		return false, err
@@ -88,6 +100,9 @@ func (c *Context) IsLeader() (bool, error) {
 }
 
 func (c *Context) InQuorum() (bool, error) {
+	if c == nil {
+		return false, vivid.ErrorClusterDisabled
+	}
 	state, err := c.getClusterState()
 	if err != nil {
 		return false, err
@@ -96,16 +111,22 @@ func (c *Context) InQuorum() (bool, error) {
 }
 
 func (c *Context) SetNodeVersion(version string) {
+	if c == nil {
+		return
+	}
 	c.system.Tell(c.nodeRef, &publicMessageAsSetNodeVersion{version: version})
 }
 
 func (c *Context) UpdateMembers(addresses []string) {
-	if len(addresses) == 0 {
+	if c == nil || len(addresses) == 0 {
 		return
 	}
 	c.system.Tell(c.nodeRef, &publicMessageAsMembersUpdated{nodes: addresses})
 }
 
 func (c *Context) Leave() {
+	if c == nil {
+		return
+	}
 	c.system.Tell(c.nodeRef, &publicMessageAsInitiateLeave{})
 }

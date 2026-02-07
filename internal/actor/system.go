@@ -194,17 +194,22 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 		return stateError
 	}
 
+	// 离开集群（ClusterContext.Leave 空指针安全，未启用时为 no-op）
+	s.clusterContext.Leave()
+
 	var stopTimeout = sugar.Max(sugar.FirstOrDefault(timeout, s.options.StopTimeout), 0)
 	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
 
-	s.Context.Kill(s.Context.Ref(), true, "actor system stop")
-	s.cancel()
-	select {
-	case <-s.guardClosedSignal:
-		break
-	case <-time.After(stopTimeout):
-		s.Logger().Error("actor system stop failed", log.Duration("timeout", stopTimeout))
-		return vivid.ErrorActorSystemStopFailed.With(context.DeadlineExceeded)
+	if s.Context != nil {
+		s.Context.Kill(s.Context.Ref(), true, "actor system stop")
+		s.cancel()
+		select {
+		case <-s.guardClosedSignal:
+			break
+		case <-time.After(stopTimeout):
+			s.Logger().Error("actor system stop failed", log.Duration("timeout", stopTimeout))
+			return vivid.ErrorActorSystemStopFailed.With(context.DeadlineExceeded)
+		}
 	}
 
 	// 清理调度器

@@ -68,6 +68,7 @@ var (
 // Cluster 相关错误。
 var (
 	ErrorClusterNameMismatch = RegisterError(150000, "cluster name mismatch") // 集群名称不匹配
+	ErrorClusterDisabled     = RegisterError(150001, "cluster disabled")      // 集群已禁用
 )
 
 var _ error = (*Error)(nil)
