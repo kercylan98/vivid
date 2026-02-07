@@ -7,9 +7,8 @@ import (
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
-func newMailboxCentral(logger log.Logger, remotingServerRef vivid.ActorRef, actorLiaison vivid.ActorLiaison, codec vivid.Codec, eventStream vivid.EventStream, options vivid.ActorSystemRemotingOptions) *MailboxCentral {
+func newMailboxCentral(remotingServerRef vivid.ActorRef, actorLiaison vivid.ActorLiaison, codec vivid.Codec, eventStream vivid.EventStream, options vivid.ActorSystemRemotingOptions) *MailboxCentral {
 	return &MailboxCentral{
-		logger:            logger,
 		codec:             codec,
 		actorLiaison:      actorLiaison,
 		remotingServerRef: remotingServerRef,
@@ -20,7 +19,6 @@ func newMailboxCentral(logger log.Logger, remotingServerRef vivid.ActorRef, acto
 }
 
 type MailboxCentral struct {
-	logger            log.Logger
 	options           vivid.ActorSystemRemotingOptions
 	codec             vivid.Codec         // 编解码器
 	actorLiaison      vivid.ActorLiaison  // 演员联络员
@@ -53,7 +51,7 @@ func (rmc *MailboxCentral) GetOrCreate(advertiseAddr string, envelopHandler Netw
 
 	m, ok := rmc.mailboxes[advertiseAddr]
 	if !ok {
-		m = newMailbox(rmc.logger, advertiseAddr, rmc.codec, envelopHandler, rmc.actorLiaison, rmc.remotingServerRef, rmc.eventStream, rmc.options)
+		m = newMailbox(advertiseAddr, rmc.codec, envelopHandler, rmc.actorLiaison, rmc.remotingServerRef, rmc.eventStream, rmc.options)
 		rmc.mailboxes[advertiseAddr] = m
 	}
 

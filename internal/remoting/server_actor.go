@@ -122,7 +122,7 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 
 func (s *ServerActor) onLaunch(ctx vivid.ActorContext) {
 	// 可能存在 Actor 还未启动完成旧投递网络消息，因此需要使用 WaitGroup 等待初始化完成
-	s.remotingMailboxCentral = newMailboxCentral(ctx.Logger(), ctx.Ref(), ctx, s.codec, ctx.EventStream(), s.options)
+	s.remotingMailboxCentral = newMailboxCentral(ctx.Ref(), ctx, s.codec, ctx.EventStream(), s.options)
 	s.remotingMailboxCentralWG.Done()
 
 	// 投递 Acceptor 作为启动消息，实现重试启动

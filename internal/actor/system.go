@@ -15,6 +15,7 @@ import (
 	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
+	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 const (
@@ -57,7 +58,6 @@ type System struct {
 	statusLock        sync.Mutex                // 系统状态锁
 }
 
-// HandleRemotingEnvelop implements remoting.NetworkEnvelopHandler.
 func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath string, messageInstance any) error {
 	var agent, sender, receiver *Ref
 	if agentAddr != "" {
@@ -83,6 +83,14 @@ func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, sender
 	receiverMailbox := s.findMailbox(receiver)
 	receiverMailbox.Enqueue(mailbox.NewEnvelop(system, sender, receiver, messageInstance).WithAgent(agent))
 	return nil
+}
+
+func (s *System) HandleFailedRemotingEnvelop(envelop vivid.Envelop) {
+	// 将消息投递到死信队列
+	s.TellSelf(ves.DeathLetterEvent{
+		Envelope: envelop,
+		Time:     time.Now(),
+	})
 }
 
 func (s *System) Logger() log.Logger {
@@ -236,6 +244,10 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 
 	// 检查是否为远程地址，使用远程邮箱
 	if ref.GetAddress() != s.Ref().GetAddress() {
+		if s.remotingServer == nil {
+			s.Logger().Warn("remote disabled, remote actor ref not allowed", log.String("ref", ref.String()))
+			return s.Mailbox()
+		}
 		return s.remotingServer.GetRemotingMailboxCentral().GetOrCreate(ref.address, s)
 	}
 

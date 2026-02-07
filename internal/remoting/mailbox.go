@@ -10,6 +10,7 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/remoting/serialize"
+	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/ves"
@@ -39,7 +40,6 @@ var (
 )
 
 func newMailbox(
-	logger log.Logger,
 	advertiseAddress string,
 	codec vivid.Codec,
 	envelopHandler NetworkEnvelopHandler,
@@ -49,7 +49,6 @@ func newMailbox(
 	options vivid.ActorSystemRemotingOptions,
 ) *Mailbox {
 	return &Mailbox{
-		logger:            logger,
 		options:           options,
 		advertiseAddress:  advertiseAddress,
 		sf:                &singleflight.Group{},
@@ -63,7 +62,6 @@ func newMailbox(
 }
 
 type Mailbox struct {
-	logger            log.Logger
 	options           vivid.ActorSystemRemotingOptions
 	advertiseAddress  string
 	connections       [poolSize]*tcpConnectionActor
@@ -95,7 +93,7 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 
 	// 尝试获取有效连接，如果不存在或已关闭则创建新连接
 	var conn *tcpConnectionActor
-	_, err := m.backoff.Forever(func() (abort bool, err error) {
+	_, err := m.backoff.Try(sugar.Max(m.options.ReconnectLimit, 0), func() (abort bool, err error) {
 		// 获取连接，如果没有则创建一个
 		m.connectionLock.RLock()
 		conn = m.connections[slot]
@@ -125,21 +123,7 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 				conn, err := net.Dial("tcp", m.advertiseAddress)
 				if err != nil {
 					// 发布连接失败事件
-					if m.eventStream != nil {
-						retryCount := 0
-						if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
-							eventCtx := &eventStreamContext{
-								ref:    m.remotingServerRef,
-								logger: ctx.Logger(),
-							}
-							m.eventStream.Publish(eventCtx, ves.RemotingConnectionFailedEvent{
-								RemoteAddr:    m.advertiseAddress,
-								AdvertiseAddr: m.advertiseAddress,
-								Error:         err,
-								RetryCount:    retryCount,
-							})
-						}
-					}
+					publishRemotingConnectionFailedEvent(m, m.advertiseAddress, m.advertiseAddress, err, m.backoff.GetAttempt())
 					return nil, err
 				}
 
@@ -152,20 +136,7 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 						return nil, fmt.Errorf("%w, %s", err, closeErr)
 					}
 					// 发布连接失败事件
-					if m.eventStream != nil {
-						if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
-							eventCtx := &eventStreamContext{
-								ref:    m.remotingServerRef,
-								logger: ctx.Logger(),
-							}
-							m.eventStream.Publish(eventCtx, ves.RemotingConnectionFailedEvent{
-								RemoteAddr:    m.advertiseAddress,
-								AdvertiseAddr: m.advertiseAddress,
-								Error:         err,
-								RetryCount:    0,
-							})
-						}
-					}
+					publishRemotingConnectionFailedEvent(m, m.advertiseAddress, m.advertiseAddress, err, m.backoff.GetAttempt())
 					return nil, err
 				}
 
@@ -205,7 +176,7 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 					Error:         err,
 				})
 			}
-			m.logger.Warn("failed to enqueue message encode failed",
+			m.actorLiaison.Logger().Warn("failed to enqueue message encode failed",
 				log.String("advertise_address", m.advertiseAddress),
 				log.String("sender", sender.GetPath()),
 				log.String("receiver", envelop.Receiver().GetPath()),
@@ -287,11 +258,21 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 		return true, nil
 	})
 
+	// 连接持续失败，消息应该投递到死信队列
 	if err != nil {
-		// 如果是因为 abort=true 导致的退出（如序列化失败），直接 panic
-		// 注意：Forever 只有在 abort=true 或 err=nil 时才会退出
-		// 如果 err != nil，说明是 abort=true 导致的退出（如序列化失败）
-		panic(err)
+		m.envelopHandler.HandleFailedRemotingEnvelop(envelop)
 	}
-	// err == nil 说明操作成功（成功时返回 true, nil）
+}
+
+func publishRemotingConnectionFailedEvent(mailbox *Mailbox, remoteAddr string, advertiseAddr string, error error, retryCount int) {
+	eventCtx := &eventStreamContext{
+		ref:    mailbox.remotingServerRef,
+		logger: mailbox.actorLiaison.Logger(),
+	}
+	mailbox.eventStream.Publish(eventCtx, ves.RemotingConnectionFailedEvent{
+		RemoteAddr:    remoteAddr,
+		AdvertiseAddr: advertiseAddr,
+		Error:         error,
+		RetryCount:    retryCount,
+	})
 }
