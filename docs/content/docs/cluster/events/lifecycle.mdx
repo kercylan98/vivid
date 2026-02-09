@@ -20,11 +20,21 @@ description: 集群节点状态机与阶段说明
 
 ## 状态机简图
 
-```
-启动 → 发现/加入 → [同步] → 活跃 ⇄ [故障恢复]
-                        ↓
-                    离开 → 退出 → 停止
-```
+<Mermaid diagram={`stateDiagram-v2
+  direction LR
+  [*] --> 启动
+  启动 --> 发现: OnLaunch
+  发现 --> 加入: 向种子 JoinRequest
+  加入 --> 同步: JoinResponse, 合并视图
+  同步 --> 活跃: 启动 Gossip + 故障检测
+  活跃 --> 活跃: Gossip / 故障检测
+  活跃 --> 故障恢复: 失多数派时 tryQuorumRecovery
+  故障恢复 --> 活跃: 拉取视图合并
+  活跃 --> 离开: LeaveRequest
+  离开 --> 退出: 多轮广播, ExitingReady
+  退出 --> 停止: ClusterLeaveCompletedEvent
+  停止 --> [*]
+`} title="节点生命周期状态流转" />
 
 ## 成员状态 (MemberStatus)
 

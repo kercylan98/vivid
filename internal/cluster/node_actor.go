@@ -37,39 +37,41 @@ func NewNodeActor(address string, actorRefParser ActorRefParser, options vivid.C
 	gossipRate, gossipBurst := ApplyGossipRateLimiterOptions(options)
 	gossipLimiter := NewGossipRateLimiter(gossipRate, gossipBurst)
 	return &NodeActor{
-		options:           options,
-		actorRefParser:    actorRefParser,
-		nodeState:         state,
-		clusterView:       cv,
-		seedsProvider:     seedsProvider,
-		quorumCalc:        NewQuorumCalculator(options),
-		joinRateLimiter:   joinLimiter,
-		gossipRateLimiter: gossipLimiter,
-		gossipSelector:    NewGossipTargetSelector(options, seedsProvider.GetAllSeedsWithDC),
-		failureDetector:   NewFailureDetector(options),
-		events:            NewClusterEventPublisher(),
-		leaveCoord:        NewLeaveCoordinator(),
-		metricsUpdater:    NewClusterMetricsUpdater(),
-		joinBackoff:       utils.NewExponentialBackoffWithDefault(InitialJoinRetryDelay, MaxJoinRetryDelay),
+		options:                 options,
+		actorRefParser:          actorRefParser,
+		nodeState:               state,
+		clusterView:             cv,
+		seedsProvider:           seedsProvider,
+		quorumCalc:              NewQuorumCalculator(options),
+		joinRateLimiter:         joinLimiter,
+		gossipRateLimiter:       gossipLimiter,
+		gossipSelector:          NewGossipTargetSelector(options, seedsProvider.GetAllSeedsWithDC),
+		failureDetector:         NewFailureDetector(options),
+		events:                  NewClusterEventPublisher(),
+		leaveCoord:              NewLeaveCoordinator(),
+		metricsUpdater:          NewClusterMetricsUpdater(),
+		joinBackoff:             utils.NewExponentialBackoffWithDefault(InitialJoinRetryDelay, MaxJoinRetryDelay),
+		lastVersionVectorByAddr: make(map[string]VersionVector),
 	}
 }
 
 // NodeActor 集群节点 Actor，通过组合各功能组件管理加入、Gossip、故障检测、退出与事件发布。
 type NodeActor struct {
-	options           vivid.ClusterOptions
-	actorRefParser    ActorRefParser
-	nodeState         *NodeState
-	clusterView       *ClusterView
-	seedsProvider     *SeedsProvider
-	quorumCalc        *QuorumCalculator
-	joinRateLimiter   *JoinRateLimiter
-	gossipRateLimiter *GossipRateLimiter
-	gossipSelector    *GossipTargetSelector
-	failureDetector   *FailureDetector
-	events            *ClusterEventPublisher
-	leaveCoord        *LeaveCoordinator
-	metricsUpdater    *ClusterMetricsUpdater
-	joinBackoff       *utils.ExponentialBackoff
+	options                 vivid.ClusterOptions
+	actorRefParser          ActorRefParser
+	nodeState               *NodeState
+	clusterView             *ClusterView
+	seedsProvider           *SeedsProvider
+	quorumCalc              *QuorumCalculator
+	joinRateLimiter         *JoinRateLimiter
+	gossipRateLimiter       *GossipRateLimiter
+	gossipSelector          *GossipTargetSelector
+	failureDetector         *FailureDetector
+	events                  *ClusterEventPublisher
+	leaveCoord              *LeaveCoordinator
+	metricsUpdater          *ClusterMetricsUpdater
+	joinBackoff             *utils.ExponentialBackoff
+	lastVersionVectorByAddr map[string]VersionVector // 各地址上次发来的视图版本，用于发送前跳过“目标合并后不会变更”的同步
 }
 
 func (a *NodeActor) OnReceive(ctx vivid.ActorContext) {
@@ -179,6 +181,11 @@ func (a *NodeActor) getMergeOptions() MergeOptions {
 	}
 }
 
+// incrementLocalVersion 递增本节点在视图中的版本向量分量；版本由 ClusterView.VersionVector 维护，GetMembers 等从中读取。
+func (a *NodeActor) incrementLocalVersion() {
+	a.clusterView.IncrementVersion(a.nodeState.ID)
+}
+
 func (a *NodeActor) isSelfInSeeds(seeds []string) bool {
 	self, ok := utils.NormalizeAddress(a.nodeState.Address)
 	if !ok {
@@ -195,7 +202,7 @@ func (a *NodeActor) isSelfInSeeds(seeds []string) bool {
 func (a *NodeActor) bootstrapAsSeed(ctx vivid.ActorContext) {
 	a.nodeState.Status = MemberStatusUp
 	a.clusterView.AddMember(a.nodeState)
-	a.clusterView.IncrementVersion(a.nodeState.ID)
+	a.incrementLocalVersion()
 	a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, a.quorumCalc.SatisfiesQuorum(a.clusterView))
 	a.metricsUpdater.Update(ctx, a.clusterView)
 	a.broadcastViewOnce(ctx)
@@ -240,7 +247,7 @@ func (a *NodeActor) tryJoinSeeds(ctx vivid.ActorContext, seeds []string) error {
 		}
 		a.nodeState.Status = MemberStatusUp
 		a.clusterView.AddMember(a.nodeState)
-		a.clusterView.IncrementVersion(a.nodeState.ID)
+		a.incrementLocalVersion()
 		a.clusterView.MergeFromWithOptions(resp.View, a.getMergeOptions())
 		// 重启分代：若视图中已有本节点（例如上次离开后重启再入群），采用更高分代以便他节点采纳新实例
 		if prev := a.clusterView.Members[a.nodeState.ID]; prev != nil && prev.Generation >= a.nodeState.Generation {
@@ -300,7 +307,7 @@ func (a *NodeActor) handleForceMemberDown(ctx vivid.ActorContext, m *ForceMember
 	}
 	removedAddr := member.Address
 	a.clusterView.RemoveMember(m.NodeID)
-	a.clusterView.IncrementVersion(a.nodeState.ID)
+	a.incrementLocalVersion()
 	a.events.PublishMembersChanged(ctx, a.memberAddresses(), 0, []string{removedAddr})
 	a.events.PublishViewChanged(ctx, a.clusterView, 0, []string{removedAddr})
 	a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, a.quorumCalc.SatisfiesQuorum(a.clusterView))
@@ -361,7 +368,7 @@ func (a *NodeActor) handleJoinRequest(ctx vivid.ActorContext, m *JoinRequest) {
 	accepted := m.NodeState.Clone()
 	accepted.Status = MemberStatusUp
 	a.clusterView.AddMember(accepted)
-	a.clusterView.IncrementVersion(a.nodeState.ID)
+	a.incrementLocalVersion()
 	a.events.PublishMembersChanged(ctx, a.memberAddresses(), 1, nil)
 	a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, a.quorumCalc.SatisfiesQuorum(a.clusterView))
 	a.metricsUpdater.Update(ctx, a.clusterView)
@@ -389,6 +396,9 @@ func (a *NodeActor) handleGossip(ctx vivid.ActorContext, m *GossipMessage) {
 	sender := ctx.Sender()
 	if sender != nil {
 		if addr := sender.GetAddress(); addr != "" {
+			if norm, ok := utils.NormalizeAddress(addr); ok {
+				a.lastVersionVectorByAddr[norm] = m.View.VersionVector.Clone()
+			}
 			if member := a.clusterView.MemberByAddress(addr); member != nil {
 				member.LastSeen = time.Now().UnixNano()
 				if member.Status == MemberStatusSuspect {
@@ -397,13 +407,15 @@ func (a *NodeActor) handleGossip(ctx vivid.ActorContext, m *GossipMessage) {
 			}
 		}
 	}
-	a.clusterView.MergeFromWithOptions(m.View, a.getMergeOptions())
-	a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, a.quorumCalc.SatisfiesQuorum(a.clusterView))
-	a.broadcastViewOnce(ctx)
+	if a.clusterView.MergeFromWithOptions(m.View, a.getMergeOptions()) {
+		a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, a.quorumCalc.SatisfiesQuorum(a.clusterView))
+		a.broadcastViewOnce(ctx)
+	}
 }
 
 // runGossipRound 执行一轮 Gossip，由调度器周期触发。
 func (a *NodeActor) runGossipRound(ctx vivid.ActorContext) {
+	a.pruneLastVersionVectors()
 	targets := a.gossipSelector.SelectTargets(a.clusterView, a.nodeState)
 	snap := a.clusterView.Snapshot()
 	if snap == nil {
@@ -414,6 +426,9 @@ func (a *NodeActor) runGossipRound(ctx vivid.ActorContext) {
 		if !a.gossipRateLimiter.Allow() {
 			break
 		}
+		if !a.shouldSendGossipTo(snap.VersionVector, addr) {
+			continue
+		}
 		ref, err := a.actorRefParser(addr, "/@cluster")
 		if err != nil {
 			continue
@@ -423,6 +438,7 @@ func (a *NodeActor) runGossipRound(ctx vivid.ActorContext) {
 }
 
 func (a *NodeActor) runGossipRoundCrossDC(ctx vivid.ActorContext) {
+	a.pruneLastVersionVectors()
 	targets := a.gossipSelector.SelectTargetsCrossDC(a.clusterView, a.nodeState)
 	if len(targets) == 0 {
 		return
@@ -435,6 +451,9 @@ func (a *NodeActor) runGossipRoundCrossDC(ctx vivid.ActorContext) {
 	for _, addr := range targets {
 		if !a.gossipRateLimiter.Allow() {
 			break
+		}
+		if !a.shouldSendGossipTo(snap.VersionVector, addr) {
+			continue
 		}
 		ref, err := a.actorRefParser(addr, "/@cluster")
 		if err != nil {
@@ -467,7 +486,7 @@ func (a *NodeActor) runFailureDetection(ctx vivid.ActorContext) {
 		if m := a.clusterView.Members[id]; m != nil {
 			ctx.Logger().Debug("member suspect", log.String("nodeId", id), log.String("address", m.Address))
 			m.Status = MemberStatusSuspect
-			a.clusterView.IncrementVersion(a.nodeState.ID)
+			a.incrementLocalVersion()
 		}
 	}
 	if len(toSuspect) > 0 {
@@ -481,7 +500,7 @@ func (a *NodeActor) runFailureDetection(ctx vivid.ActorContext) {
 			ctx.Logger().Debug("member unreachable, removing", log.String("nodeId", id), log.String("address", m.Address))
 		}
 		a.clusterView.RemoveMember(id)
-		a.clusterView.IncrementVersion(a.nodeState.ID)
+		a.incrementLocalVersion()
 	}
 	if len(removedAddrs) > 0 {
 		a.events.PublishMembersChanged(ctx, a.memberAddresses(), 0, removedAddrs)
@@ -521,10 +540,11 @@ func (a *NodeActor) tryQuorumRecovery(ctx vivid.ActorContext) {
 			if !a.acceptProtocolVersion(resp.View.ProtocolVersion) {
 				continue
 			}
-			a.clusterView.MergeFromWithOptions(resp.View, a.getMergeOptions())
-			a.metricsUpdater.Update(ctx, a.clusterView)
-			a.broadcastViewOnce(ctx)
-			ctx.Logger().Debug("quorum recovery: merged view from seed", log.String("seed", seeds[i]))
+			if a.clusterView.MergeFromWithOptions(resp.View, a.getMergeOptions()) {
+				a.metricsUpdater.Update(ctx, a.clusterView)
+				a.broadcastViewOnce(ctx)
+				ctx.Logger().Debug("quorum recovery: merged view from seed", log.String("seed", seeds[i]))
+			}
 			return
 		}
 	}
@@ -578,7 +598,48 @@ func (a *NodeActor) publishLeaveCompleted(ctx vivid.ActorContext) {
 	es.Publish(ctx, ves.ClusterLeaveCompletedEvent{NodeRef: ctx.Ref()})
 }
 
+// shouldSendGossipTo 判断向 targetAddr 发送当前视图是否可能使对方发生变更。
+// 若已知对方上次发来的视图版本且我方视图相对其为 Before 或 Equal，则对方合并后不会变更，返回 false 以跳过不必要的同步。
+func (a *NodeActor) shouldSendGossipTo(ourVersion VersionVector, targetAddr string) bool {
+	norm, ok := utils.NormalizeAddress(targetAddr)
+	if !ok {
+		return true
+	}
+	theirs, ok := a.lastVersionVectorByAddr[norm]
+	if !ok {
+		return true
+	}
+	order := ourVersion.Compare(theirs)
+	return order != VersionBefore && !ourVersion.Equal(theirs)
+}
+
+// pruneLastVersionVectors 仅保留当前视图成员与种子地址的版本记录，避免 map 无限增长。
+func (a *NodeActor) pruneLastVersionVectors() {
+	allowed := make(map[string]bool)
+	if a.clusterView != nil && a.clusterView.Members != nil {
+		for _, m := range a.clusterView.Members {
+			if m != nil && m.Address != "" {
+				if n, ok := utils.NormalizeAddress(m.Address); ok {
+					allowed[n] = true
+				}
+			}
+		}
+	}
+	addrs, _ := a.seedsProvider.GetAllSeedsWithDC()
+	for _, addr := range addrs {
+		if n, ok := utils.NormalizeAddress(addr); ok {
+			allowed[n] = true
+		}
+	}
+	for k := range a.lastVersionVectorByAddr {
+		if !allowed[k] {
+			delete(a.lastVersionVectorByAddr, k)
+		}
+	}
+}
+
 func (a *NodeActor) broadcastViewOnce(ctx vivid.ActorContext) {
+	a.pruneLastVersionVectors()
 	snap := a.clusterView.Snapshot()
 	if snap == nil {
 		return
@@ -587,6 +648,9 @@ func (a *NodeActor) broadcastViewOnce(ctx vivid.ActorContext) {
 	for _, addr := range a.gossipSelector.SelectTargets(a.clusterView, a.nodeState) {
 		if !a.gossipRateLimiter.Allow() {
 			break
+		}
+		if !a.shouldSendGossipTo(snap.VersionVector, addr) {
+			continue
 		}
 		ref, err := a.actorRefParser(addr, "/@cluster")
 		if err != nil {

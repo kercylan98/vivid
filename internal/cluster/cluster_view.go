@@ -120,12 +120,13 @@ func (v *ClusterView) MergeFrom(other *ClusterView) {
 }
 
 // MergeFromWithOptions 将 other 合并到本视图，并按 opts 应用时钟偏差与 VersionConcurrent 策略。
+// 返回 true 表示本次合并导致视图发生变更（成员或版本向量等），调用方可用于决定是否需要继续扩散 Gossip。
 // 合并规则：同一节点按 IsNewerThan 采纳；版本向量取并合并。
 // 当 VersionConcurrent 时按 VersionConcurrentStrategy 决定是否采纳 other 的 Epoch/Timestamp；
 // 当 MaxClockSkew>0 且 other.Timestamp 与本地差超过阈值时不采纳 other 的 Epoch/Timestamp。
-func (v *ClusterView) MergeFromWithOptions(other *ClusterView, opts MergeOptions) {
+func (v *ClusterView) MergeFromWithOptions(other *ClusterView, opts MergeOptions) (changed bool) {
 	if other == nil || other.Members == nil || len(other.Members) == 0 {
-		return
+		return false
 	}
 	if v.Members == nil {
 		v.Members = make(map[string]*NodeState)
@@ -138,10 +139,15 @@ func (v *ClusterView) MergeFromWithOptions(other *ClusterView, opts MergeOptions
 		existing, ok := v.Members[id]
 		if !ok || otherState.IsNewerThan(existing) {
 			v.Members[id] = otherState.Clone()
+			changed = true
 		}
 	}
 	v.recomputeCounts()
-	v.VersionVector = v.VersionVector.Merge(other.VersionVector)
+	mergedVV := v.VersionVector.Merge(other.VersionVector)
+	if !mergedVV.Equal(v.VersionVector) {
+		changed = true
+	}
+	v.VersionVector = mergedVV
 
 	skipEpochTimestamp := false
 	if opts.MaxClockSkew > 0 {
@@ -169,15 +175,19 @@ func (v *ClusterView) MergeFromWithOptions(other *ClusterView, opts MergeOptions
 		if adoptEpochTimestamp {
 			if other.Epoch > v.Epoch {
 				v.Epoch = other.Epoch
+				changed = true
 			}
 			if other.Timestamp > v.Timestamp {
 				v.Timestamp = other.Timestamp
+				changed = true
 			}
 		}
 	}
 	if other.ProtocolVersion > v.ProtocolVersion {
 		v.ProtocolVersion = other.ProtocolVersion
+		changed = true
 	}
+	return changed
 }
 
 func (v *ClusterView) recomputeCounts() {
@@ -185,9 +195,10 @@ func (v *ClusterView) recomputeCounts() {
 	v.UnhealthyCount = 0
 	activeNodes := make([]string, 0, len(v.Members))
 	for id, m := range v.Members {
-		if m != nil {
-			activeNodes = append(activeNodes, id)
+		if m == nil {
+			continue
 		}
+		activeNodes = append(activeNodes, id)
 		// Suspect 不计入健康，避免分区时两边都自认 quorum
 		if m.Status == MemberStatusUp {
 			v.HealthyCount++

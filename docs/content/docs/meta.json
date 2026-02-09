@@ -24,6 +24,7 @@
         "---集群---",
         "cluster/index",
         "cluster/quick-start",
+        "cluster/deployment",
         "cluster/auth",
         "cluster/config/options",
         "cluster/runtime/context",

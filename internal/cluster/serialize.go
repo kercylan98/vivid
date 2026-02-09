@@ -63,7 +63,7 @@ func writeNodeState(w *messages.Writer, n *NodeState) error {
 
 func writerWriteNodeStateBody(w *messages.Writer, n *NodeState) {
 	w.WriteString(n.ID).WriteString(n.ClusterName).WriteString(n.Address)
-	w.WriteInt32(int32(n.Generation)).WriteUint64(n.Version).WriteInt64(n.Timestamp).WriteUint64(n.SeqNo)
+	w.WriteInt32(int32(n.Generation)).WriteInt64(n.Timestamp).WriteUint64(n.SeqNo)
 	w.WriteInt32(int32(n.Status)).WriteBool(n.Unreachable).WriteInt64(n.LastSeen).WriteUint64(n.LogicalClock)
 	writeMapStringString(w, n.Metadata)
 	writeMapStringString(w, n.Labels)
@@ -97,7 +97,6 @@ func readerReadNodeStateBody(r *messages.Reader) (*NodeState, error) {
 	clusterName, _ := r.ReadString()
 	address, _ := r.ReadString()
 	gen, _ := r.ReadInt32()
-	version, _ := r.ReadUint64()
 	timestamp, _ := r.ReadInt64()
 	seqNo, _ := r.ReadUint64()
 	status, _ := r.ReadInt32()
@@ -112,7 +111,7 @@ func readerReadNodeStateBody(r *messages.Reader) (*NodeState, error) {
 	}
 	return &NodeState{
 		ID: id, ClusterName: clusterName, Address: address,
-		Generation: int(gen), Version: version, Timestamp: timestamp, SeqNo: seqNo,
+		Generation: int(gen), Timestamp: timestamp, SeqNo: seqNo,
 		Status: MemberStatus(status), Unreachable: unreachable, LastSeen: lastSeen, LogicalClock: logicalClock,
 		Metadata: metadata, Labels: labels, Checksum: checksum,
 	}, nil

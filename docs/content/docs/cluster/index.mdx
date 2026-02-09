@@ -3,11 +3,32 @@ title: 集群概览
 description: Vivid 集群架构、NodeActor、成员发现与 ClusterContext
 ---
 
-集群功能在启用 [远程通讯](/docs/config/remoting) 的前提下，通过 **ActorSystemRemotingOptions.ClusterOptions** 开启。启用后，系统会创建 NodeActor（路径 `/cluster/node`），维护成员视图、故障检测与选主，并通过 **ClusterContext** 暴露给业务：获取成员、多数派状态及成员变更事件等。
+集群功能在启用 [远程通讯](/docs/config/remoting) 的前提下，通过 **ActorSystemRemotingOptions.ClusterOptions** 开启。启用后，系统会创建 **NodeActor**（名称为 `@cluster`，远程访问路径为 `/@cluster`），维护成员视图、故障检测与选主，并通过 **ClusterContext** 暴露给业务：获取成员、多数派状态及成员变更事件等。
 
 ## 架构概览
 
-- **NodeActor**：集群核心 Actor，由框架在初始化时创建（名称如 `@cluster`），负责 Gossip 协议、成员发现、故障检测、选主与视图合并。
+<Mermaid diagram={`flowchart TB
+  subgraph 业务层
+    Ctx["ctx.Cluster() / system.Cluster()"]
+    Ctx --> GetMembers["GetMembers()"]
+    Ctx --> InQuorum["InQuorum()"]
+    Ctx --> Leave["Leave()"]
+  end
+  subgraph 集群层
+    NA["NodeActor (@cluster)"]
+    CV["ClusterView\n成员视图 + VersionVector"]
+    NA --> CV
+    GetMembers --> NA
+    InQuorum --> NA
+    Leave --> NA
+  end
+  subgraph Remoting
+    NA --> Gossip["Gossip / Join / GetView"]
+    Gossip --> 网络
+  end
+`} title="集群与业务、Remoting 关系" />
+
+- **NodeActor**：集群核心 Actor，由框架在初始化时创建，**名称为 `@cluster`**，节点间通信使用路径 **`/@cluster`**。负责 Gossip 协议、成员发现、故障检测、选主与视图合并。
 - **ClusterView**：每个节点持有本地成员视图，通过 Gossip 与种子发现周期性同步，版本向量（VersionVector）用于合并时的因果顺序与脑裂防护。
 - **ClusterContext**：供业务在 Actor 内通过 `ctx.Cluster()` 访问，提供 GetMembers、InQuorum、Leave 等 API。
 - **依赖关系**：集群依赖 Remoting 的地址与编解码进行节点间通信；`advertiseAddr` 需与种子/成员使用的地址一致。
@@ -30,6 +51,7 @@ description: Vivid 集群架构、NodeActor、成员发现与 ClusterContext
 
 ### 入门与配置
 - [快速开始](/docs/cluster/quick-start) — 启用集群与最小配置
+- [集群部署](/docs/cluster/deployment) — 部署拓扑、加入/发现/退出流程与图示
 - [配置选项](/docs/cluster/config/options) — ClusterOptions 完整配置说明
 - [加入认证](/docs/cluster/auth/join-auth) — JoinSecret、ComputeJoinToken、AuthToken
 - [加入白名单](/docs/cluster/auth/join-allowlist) — JoinAllowDCs、JoinAllowAddresses、CIDR

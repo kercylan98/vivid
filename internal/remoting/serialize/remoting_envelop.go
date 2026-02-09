@@ -41,8 +41,12 @@ func EncodeEnvelopWithRemoting(codec vivid.Codec, envelop vivid.Envelop) (data [
 		return nil, err
 	}
 
-	// | data | messageName | system | agent | sender |
-	return writer.Bytes(), nil
+	// 返回副本，避免调用方持有 pooled writer 的 buf 引用导致被复用覆盖
+	// （在高并发/多连接同时建连时，曾出现 decode failed: read index 1 failed: unexpected EOF）
+	b := writer.Bytes()
+	out := make([]byte, len(b))
+	copy(out, b)
+	return out, nil
 }
 
 func DecodeEnvelopWithRemoting(codec vivid.Codec, data []byte) (

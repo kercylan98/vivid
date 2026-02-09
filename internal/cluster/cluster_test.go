@@ -91,3 +91,110 @@ func TestCluster_MultiNode(t *testing.T) {
 	}
 
 }
+
+func TestCluster_DataCenter(t *testing.T) {
+	asiaChina1 := bootstrap.NewActorSystem(
+		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
+		vivid.WithActorSystemRemoting("127.0.0.1:8080"),
+		vivid.WithActorSystemRemotingOptions(
+			vivid.NewActorSystemRemotingOptions(),
+			vivid.WithActorSystemRemotingClusterOption(
+				vivid.WithClusterName("MyCluster"),
+				vivid.WithClusterDatacenter("AsiaChina"),
+				vivid.WithClusterRegion("Asia"),
+				vivid.WithClusterRack("AsiaChina1"),
+				vivid.WithClusterSeedsByDC(map[string][]string{
+					"AsiaChina":    {"127.0.0.1:8080"},
+					"NorthAmerica": {"127.0.0.1:8082"},
+				}),
+			),
+		),
+	)
+
+	asiaChina2 := bootstrap.NewActorSystem(
+		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
+		vivid.WithActorSystemRemoting("127.0.0.1:8081"),
+		vivid.WithActorSystemRemotingOptions(
+			vivid.NewActorSystemRemotingOptions(),
+			vivid.WithActorSystemRemotingClusterOption(
+				vivid.WithClusterName("MyCluster"),
+				vivid.WithClusterDatacenter("AsiaChina"),
+				vivid.WithClusterRegion("Asia"),
+				vivid.WithClusterRack("AsiaChina1"),
+				vivid.WithClusterSeedsByDC(map[string][]string{
+					"AsiaChina":    {"127.0.0.1:8080"},
+					"NorthAmerica": {"127.0.0.1:8082"},
+				}),
+			),
+		),
+	)
+
+	northAmerica1 := bootstrap.NewActorSystem(
+		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
+		vivid.WithActorSystemRemoting("127.0.0.1:8082"),
+		vivid.WithActorSystemRemotingOptions(
+			vivid.NewActorSystemRemotingOptions(),
+			vivid.WithActorSystemRemotingClusterOption(
+				vivid.WithClusterName("MyCluster"),
+				vivid.WithClusterDatacenter("NorthAmerica"),
+				vivid.WithClusterRegion("NorthAmerica"),
+				vivid.WithClusterRack("NorthAmerica1"),
+				vivid.WithClusterSeedsByDC(map[string][]string{
+					"NorthAmerica": {"127.0.0.1:8082"},
+					"AsiaChina":    {"127.0.0.1:8080"},
+				}),
+			),
+		),
+	)
+
+	northAmerica2 := bootstrap.NewActorSystem(
+		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
+		vivid.WithActorSystemRemoting("127.0.0.1:8083"),
+		vivid.WithActorSystemRemotingOptions(
+			vivid.NewActorSystemRemotingOptions(),
+			vivid.WithActorSystemRemotingClusterOption(
+				vivid.WithClusterName("MyCluster"),
+				vivid.WithClusterDatacenter("NorthAmerica"),
+				vivid.WithClusterRegion("NorthAmerica"),
+				vivid.WithClusterRack("NorthAmerica2"),
+				vivid.WithClusterSeedsByDC(map[string][]string{
+					"NorthAmerica": {"127.0.0.1:8082"},
+					"AsiaChina":    {"127.0.0.1:8080"},
+				}),
+			),
+		),
+	)
+
+	assert.NoError(t, asiaChina1.Start())
+	assert.NoError(t, asiaChina2.Start())
+	assert.NoError(t, northAmerica2.Start())
+	assert.NoError(t, northAmerica1.Start())
+	defer func() {
+		assert.NoError(t, asiaChina1.Stop())
+		assert.NoError(t, asiaChina2.Stop())
+		assert.NoError(t, northAmerica1.Stop())
+		assert.NoError(t, northAmerica2.Stop())
+	}()
+
+	wait := make(chan struct{})
+
+	time.AfterFunc(time.Second*3, func() {
+		close(wait)
+	})
+	for {
+		select {
+		case <-time.After(time.Millisecond * 100):
+			members, err := northAmerica1.Cluster().GetMembers()
+			if !assert.NoError(t, err) {
+				return
+			}
+			if len(members) == 4 {
+				asiaChina1.Logger().Info("cluster members", log.Any("members", members))
+				return
+			}
+		case <-wait:
+			assert.Fail(t, "timeout")
+			return
+		}
+	}
+}

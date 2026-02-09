@@ -1,14 +1,1 @@
-{
-  "title": "集群",
-  "pages": [
-    "index",
-    "quick-start",
-    "auth",
-    "config/options",
-    "runtime/context",
-    "events",
-    "topology",
-    "errors",
-    "remoting"
-  ]
-}
+{"title":"集群","pages":["index","quick-start","deployment","auth","config/options","runtime/context","events","topology","errors","remoting"]}

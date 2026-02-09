@@ -38,7 +38,7 @@ type SeedsResolver interface {
 
 type ClusterMemberInfo struct {
 	Address    string // 节点 Remoting 地址 host:port
-	Version    string // 节点版本号（来自 NodeState.Version）
+	Version    string // 节点在视图中的因果版本号（来自 ClusterView.VersionVector.Get(nodeID)）
 	Datacenter string // 数据中心标识，未配置时为空
 	Rack       string // 机架标识，未配置时为空
 	Region     string // 区域标识，未配置时为空

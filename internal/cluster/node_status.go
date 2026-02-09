@@ -53,7 +53,6 @@ func newNodeState(id string, clusterName string, address string) *NodeState {
 		ClusterName:  clusterName,
 		Address:      address,
 		Generation:   1,
-		Version:      1,
 		Timestamp:    now,
 		SeqNo:        0,
 		Status:       MemberStatusJoining,
@@ -99,6 +98,7 @@ func (n *NodeState) Zone() string {
 }
 
 // NodeState 表示集群中某一节点的状态，用于 Gossip 与故障检测。
+// 节点在视图中的因果版本由 ClusterView.VersionVector 维护，GetMembers 等从 VersionVector.Get(nodeID) 获取。
 // Generation 在节点重启后递增，用于区分同一节点的不同 incarnation，避免脑裂时采纳旧实例。
 // Labels 可携带 datacenter/rack 等拓扑信息，用于多数据中心与跨 DC 故障检测。
 // LogicalClock 本节点产生的状态变更的逻辑时钟，用于同一节点多实例的偏序比较，减少对物理时钟偏差的依赖；0 表示未使用。
@@ -107,7 +107,6 @@ type NodeState struct {
 	ClusterName  string
 	Address      string
 	Generation   int    // 重启分代，每次进程重启递增，用于脑裂与重启检测
-	Version      uint64
 	Timestamp    int64
 	SeqNo        uint64
 	Status       MemberStatus

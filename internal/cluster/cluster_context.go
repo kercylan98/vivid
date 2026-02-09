@@ -47,9 +47,10 @@ func (c *Context) GetMembers() ([]vivid.ClusterMemberInfo, error) {
 		if m == nil {
 			continue
 		}
+		ver := resp.View.VersionVector.Get(m.ID)
 		out = append(out, vivid.ClusterMemberInfo{
 			Address:    m.Address,
-			Version:    strconv.FormatUint(m.Version, 10),
+			Version:    strconv.FormatUint(ver, 10),
 			Datacenter: m.Datacenter(),
 			Rack:       m.Rack(),
 			Region:     m.Region(),
