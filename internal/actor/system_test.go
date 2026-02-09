@@ -270,6 +270,61 @@ func TestSystem_WithRemoting(t *testing.T) {
 		}()
 	})
 
+	t.Run("remote close", func(t *testing.T) {
+		runningSystem := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))
+		closeSystem := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8081"))
+		defer func() {
+			assert.NoError(t, runningSystem.Stop())
+			assert.NoError(t, closeSystem.Stop())
+		}()
+
+		runningSystemConnected := make(chan struct{})
+		closeSystemConnected := make(chan struct{})
+
+		// 监听 Actor
+		runningWatcherRef, err := runningSystem.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.EventStream().Subscribe(ctx, ves.RemotingConnectionEstablishedEvent{})
+			case ves.RemotingConnectionEstablishedEvent:
+				if m.IsClient {
+					close(runningSystemConnected)
+				}
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, runningWatcherRef)
+
+		closeWatcherRef, err := closeSystem.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.EventStream().Subscribe(ctx, ves.RemotingConnectionEstablishedEvent{})
+			case ves.RemotingConnectionEstablishedEvent:
+				if !m.IsClient {
+					close(closeSystemConnected)
+				}
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, closeWatcherRef)
+
+		// 触发建立连接
+		message := &actor.TestRemoteMessage{Text: "hello"}
+		runningSystem.Tell(closeSystem.Ref().Clone(), message)
+		closeSystem.Tell(runningSystem.Ref().Clone(), message)
+
+		select {
+		case <-runningSystemConnected:
+		case <-time.After(time.Second * 3):
+			t.Fatal("timeout")
+		}
+		select {
+		case <-closeSystemConnected:
+		case <-time.After(time.Second * 3):
+			t.Fatal("timeout")
+		}
+	})
+
 	t.Run("no Remoting, send to remote system", func(t *testing.T) {
 		normalSystem := actor.NewTestSystem(t)
 		remoteSystem := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))

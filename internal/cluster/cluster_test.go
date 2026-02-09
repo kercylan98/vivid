@@ -35,7 +35,7 @@ func TestCluster(t *testing.T) {
 
 	t.Run("multiple nodes", func(t *testing.T) {
 		const nodeCount = 3
-		const basePort = 8090 // 与 single_node 的 8080 错开，避免端口冲突
+		const basePort = 8090
 
 		assert.Greater(t, nodeCount, 1)
 		assert.Greater(t, basePort, 0)
