@@ -300,7 +300,7 @@ func TestSystem_WithRemoting(t *testing.T) {
 			case *vivid.OnLaunch:
 				ctx.EventStream().Subscribe(ctx, ves.RemotingConnectionEstablishedEvent{})
 			case ves.RemotingConnectionEstablishedEvent:
-				if !m.IsClient {
+				if m.IsClient {
 					close(closeSystemConnected)
 				}
 			}
