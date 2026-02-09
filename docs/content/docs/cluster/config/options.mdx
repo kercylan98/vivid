@@ -23,7 +23,7 @@ description: ClusterOptions 与 ClusterOption 完整配置说明
 | **WithClusterFailureDetectionTimeout** | time.Duration | 40s | 故障检测超时；≤0 表示不自动剔除 |
 | **WithClusterMaxDiscoveryTargetsPerTick** | int | 20 | 每轮发现最多向多少个目标发请求；≤0 不限制 |
 | **WithClusterSuspectConfirmDuration** | time.Duration | 0 | Suspect 确认时长；>0 时先置 Suspect，超时后再剔除；减少跨 DC 误判 |
-| **WithClusterCrossDCFailureDetectionTimeout** | time.Duration | 0 | 跨 DC 故障超时；0 时内部使用 FailureDetectionTimeout 的 2 倍 |
+| **WithClusterCrossDCFailureDetectionTimeout** | time.Duration | 0 | 跨 DC 故障超时；0 时默认采用 FailureDetectionTimeout 的 2 倍 |
 | **WithClusterCrossDCDiscoveryInterval** | time.Duration | 0 | 跨 DC Gossip 轮次间隔；0 表示不单独调度 |
 
 ## 多数据中心与拓扑

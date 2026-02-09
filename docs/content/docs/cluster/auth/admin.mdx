@@ -35,4 +35,4 @@ ComputeAdminToken 基于 HMAC-SHA256，使用固定 payload `cluster-admin`。
 - 强制下线某节点
 - 触发广播等管理命令
 
-具体消息类型与用法以 internal/cluster 实现为准。
+管理消息类型包括 **ForceMemberDown**（强制下线指定节点）、**TriggerViewBroadcast**（立即触发一轮视图广播）等，调用时在请求中传入 **AdminToken**。具体字段与错误码见 [集群错误](/docs/cluster/errors)。

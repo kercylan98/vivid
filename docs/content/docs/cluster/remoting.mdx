@@ -18,8 +18,8 @@ description: 依赖、地址与编解码
 
 ## 编解码
 
-- 集群内部消息通过 Remoting 的 Codec 或 RegisterCustomMessage 序列化与反序列化。
-- 业务无需单独为集群消息注册；框架已注册内部消息类型。
+- 集群协议消息通过 Remoting 的 Codec 或 RegisterCustomMessage 序列化与反序列化。
+- 业务无需单独为集群消息注册；框架已注册集群协议所需的消息类型。
 
 ## 成员发现
 

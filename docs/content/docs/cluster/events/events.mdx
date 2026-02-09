@@ -91,7 +91,7 @@ description: 成员变更、Leader、Quorum、View、DC 健康事件
 
 ## ClusterLeaveCompletedEvent
 
-本节点完成优雅退出流程时发布（已广播离开视图并进入 Exiting、已回复 LeaveAck）。Leave() 内部会临时启动 LeaveWatcher 订阅此事件，收到后解除阻塞。
+本节点完成优雅退出流程时发布（已广播离开视图并进入 Exiting、已回复 LeaveAck）。Leave() 会临时启动 LeaveWatcher 订阅此事件，收到后解除阻塞。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|

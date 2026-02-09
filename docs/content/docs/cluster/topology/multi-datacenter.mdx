@@ -33,7 +33,7 @@ SeedsByDC 可与 Seeds 同时存在，合并使用；全球部署时建议每 DC
 
 ## 跨 DC 故障检测
 
-- **CrossDCFailureDetectionTimeout**：跨 DC 成员的故障检测超时。若 >0 则对其它 DC 的成员使用此超时；为 0 时集群内部使用 FailureDetectionTimeout 的 2 倍（推荐跨 DC 显式配置为 2–3 倍同 DC 超时）。
+- **CrossDCFailureDetectionTimeout**：跨 DC 成员的故障检测超时。若 >0 则对其它 DC 的成员使用此超时；为 0 时默认采用 FailureDetectionTimeout 的 2 倍（推荐跨 DC 显式配置为 2–3 倍同 DC 超时）。
 - **CrossDCDiscoveryInterval**：跨 DC Gossip 的轮次间隔。若 >0 则额外启动一轮仅向跨 DC 目标发送的 Gossip，降低跨 DC 带宽与误判；0 表示不单独调度。
 
 ## 跨 DC Gossip 目标数

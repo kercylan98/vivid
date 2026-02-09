@@ -78,4 +78,4 @@ Leave 会临时启动一个 **LeaveWatcher** Actor 订阅 **ClusterLeaveComplete
 
 - **GetMembers** 与 **InQuorum** 通过 Ask NodeActor 获取视图，有网络/超时成本，避免高频调用。
 - **InQuorum** 为 false 时表示可能处于分区或少数派，不应以 Leader 做单例迁移、写仲裁等关键决策。
-- 以当前 vivid 包与 ClusterContext 接口为准；GetMembers、InQuorum、Leave 为集群运行时主要 API。
+- ClusterContext 提供 GetMembers、InQuorum、Leave 三个运行时 API；接口定义以当前版本为准。

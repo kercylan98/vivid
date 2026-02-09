@@ -38,7 +38,7 @@ description: Remoting 启用、Codec、RegisterCustomMessage 与位置透明
 - **bindAddr**（必填）：本机监听地址，如 `"0.0.0.0:8080"`。框架在此地址上启动 Listener 接受连接。
 - **advertiseAddr**（可选）：对外暴露地址，如公网 IP 或集群内域名+端口，供其它节点连接。不传则使用 bindAddr。若 advertiseAddr 缺端口且**非域名**，会 panic；缺端口的域名会由框架或上层补充处理。
 
-TCP 与 UDP 复用同一端口，具体以实现为准。
+TCP 与 UDP 是否复用同一端口以当前版本实现与发布说明为准。
 
 ## 编解码（二选一）
 

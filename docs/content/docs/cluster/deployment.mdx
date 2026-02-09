@@ -3,7 +3,7 @@ title: 集群部署
 description: 部署拓扑、加入与发现、Gossip、优雅退出流程与图示
 ---
 
-本文用图示说明集群的部署形态、节点加入与发现、Gossip 同步、故障检测与优雅退出，便于与实现对齐并排查部署差异。
+本文用图示说明集群的部署形态、节点加入与发现、Gossip 同步、故障检测与优雅退出，便于理解部署拓扑与运行时行为。
 
 ## 部署拓扑
 
@@ -16,8 +16,13 @@ description: 部署拓扑、加入与发现、Gossip、优雅退出流程与图�
     N1[Node 1]
     N2[Node 2]
     N3[Node 3]
-    S1 & S2 --> N1 & N2 & N3
-    N1 & N2 & N3 <-->|Gossip| N1 & N2 & N3
+    S1 --> N1
+    S1 --> N2
+    S2 --> N2
+    S2 --> N3
+    N1 <-->|Gossip| N2
+    N2 <-->|Gossip| N3
+    N1 <-->|Gossip| N3
   end
 `} title="单数据中心：Seeds + Gossip" />
 
@@ -58,26 +63,26 @@ description: 部署拓扑、加入与发现、Gossip、优雅退出流程与图�
 
   N->>N: OnLaunch: 取 Seeds
   alt 无 Seeds 或 本节点在 Seeds 中
-    N->>N: bootstrapAsSeed(): 自举为种子
-    N->>View: AddMember(self), 启动 Gossip/FailureDetection
+    N->>N: 自举为种子
+    N->>View: 加入本节点并启动 Gossip / 故障检测
   else 有 Seeds 且 本节点不在 Seeds 中
     N->>Seed: Ask(host:port/@cluster, JoinRequest)
-    Seed->>Seed: handleJoinRequest: 校验白名单/认证/Quorum
+    Seed->>Seed: 校验白名单、认证与 Quorum
     Seed->>N: JoinResponse(View)
-    N->>N: MergeFromWithOptions(View), AddMember(self)
-    N->>View: 启动 Gossip / FailureDetection
+    N->>N: 合并视图并加入本节点
+    N->>View: 启动 Gossip / 故障检测
   end
 `} title="加入流程：自举为种子 或 向种子 Join" />
 
 <Mermaid diagram={`flowchart LR
   A[OnLaunch] --> B{Seeds 为空?}
-  B -->|是| C[bootstrapAsSeed]
+  B -->|是| C[自举为种子]
   B -->|否| D{本节点在 Seeds 中?}
   D -->|是| C
-  D -->|否| E[tryJoinSeeds]
+  D -->|否| E[向种子发起 Join]
   E --> F{任一种子 Join 成功?}
-  F -->|是| G[合并视图, 启动 Gossip/FD]
-  F -->|否| H[指数退避, 调度 JoinRetryTick]
+  F -->|是| G[合并视图并启动 Gossip / 故障检测]
+  F -->|否| H[指数退避后重试]
   H --> E
 `} title="加入决策：是否自举为种子" />
 
@@ -94,12 +99,12 @@ description: 部署拓扑、加入与发现、Gossip、优雅退出流程与图�
   participant VA as View A
   participant VB as View B
 
-  Note over A, B: 周期 GossipTick / GossipCrossDCTick
-  A->>A: 选目标: GossipTargetSelector
-  A->>VA: Snapshot()
-  A->>B: Tell(B/@cluster, GossipMessage(View))
-  B->>B: handleGossip: MergeFromWithOptions
-  B->>VB: 若 changed: 发布事件, 可选继续扩散
+  Note over A, B: 周期 Gossip 轮次
+  A->>A: 选择目标节点
+  A->>VA: 取视图快照
+  A->>B: GossipMessage(View)
+  B->>B: 合并视图（MergeFromWithOptions）
+  B->>VB: 若有变更则发布事件并可继续扩散
 `} title="Gossip 一轮：发送视图快照、接收方合并" />
 
 <Mermaid diagram={`flowchart TB
@@ -126,17 +131,17 @@ description: 部署拓扑、加入与发现、Gossip、优雅退出流程与图�
     View[ClusterView]
     Now[当前时间]
   end
-  View --> FD[FailureDetector.RunDetection]
+  View --> FD[执行故障检测]
   Now --> FD
-  FD --> Suspect["toSuspect\n(置为 Suspect)"]
-  FD --> Remove["toRemove\n(从视图剔除)"]
-  Suspect --> Publish["PublishViewChanged\n(可选 SuspectConfirmDuration)"]
+  FD --> Suspect["置为 Suspect\n(可选 SuspectConfirmDuration)"]
+  FD --> Remove["从视图剔除"]
+  Suspect --> Publish[发布视图变更事件]
   Remove --> Publish
-  Publish --> Quorum["重新计算 Quorum / 发布 Leader 事件"]
+  Publish --> Quorum[重新计算 Quorum 并发布 Leader 事件]
 `} title="故障检测：超时 → Suspect → 剔除 → 事件" />
 
 - **FailureDetectionTimeout**：同 DC 成员超时未刷新 LastSeen 则先 Suspect（若配置了 **SuspectConfirmDuration**），再剔除。
-- **CrossDCFailureDetectionTimeout**：对跨 DC 成员单独超时（未配置时内部使用同 DC 的 2 倍），减少跨 DC 延迟导致的误判。
+- **CrossDCFailureDetectionTimeout**：对跨 DC 成员单独超时；未配置时默认采用同 DC 超时的 2 倍，减少跨 DC 延迟导致的误判。
 
 ## 优雅退出（Leave）
 
@@ -149,25 +154,25 @@ description: 部署拓扑、加入与发现、Gossip、优雅退出流程与图�
   participant Others as 其他节点 @cluster
 
   App->>Watcher: 订阅 ClusterLeaveCompletedEvent
-  App->>NA: Tell(LeaveRequest)
-  NA->>NA: handleLeaveRequest: 调度 LeaveBroadcastRound
+  App->>NA: LeaveRequest
+  NA->>NA: 调度多轮广播
   loop 每轮 LeaveBroadcastDelay
-    NA->>Others: Tell(GossipMessage(View 不含本节点))
+    NA->>Others: GossipMessage(视图不含本节点)
   end
-  NA->>NA: ExitingReady: 状态 Exiting, Reply(LeaveAck)
+  NA->>NA: 进入 Exiting 并 Reply(LeaveAck)
   NA->>Watcher: 发布 ClusterLeaveCompletedEvent
   Watcher->>App: Leave() 返回
 `} title="优雅退出：多轮广播 → Exiting → LeaveAck → 事件" />
 
 <Mermaid diagram={`flowchart LR
   L[LeaveRequest] --> Schedule[调度 LeaveBroadcastDelay]
-  Schedule --> Round[LeaveBroadcastRound 1..N]
-  Round --> Broadcast[向当前视图成员 Gossip 不含本节点的 View]
+  Schedule --> Round[第 1..N 轮广播]
+  Round --> Broadcast[向当前视图成员发送不含本节点的视图]
   Broadcast --> Next{还有下一轮?}
   Next -->|是| Schedule
-  Next -->|否| Exiting[ExitingReady]
-  Exiting --> Ack[Reply LeaveAck]
-  Exiting --> Event[ClusterLeaveCompletedEvent]
+  Next -->|否| Exiting[进入 Exiting 状态]
+  Exiting --> Ack[回复 LeaveAck]
+  Exiting --> Event[发布 ClusterLeaveCompletedEvent]
 `} title="Leave 多轮广播与退出" />
 
 - **LeaveBroadcastRounds** > 1 时多轮广播，提高多 DC 场景下各 DC 收敛概率；**LeaveBroadcastDelay** 为每轮间隔，多 DC 建议 1–2s。
@@ -185,19 +190,19 @@ description: 部署拓扑、加入与发现、Gossip、优雅退出流程与图�
   Syncing --> Active: 启动 Gossip + 故障检测
   Active --> Active: Gossip / 故障检测 / 处理 Join·GetView
   Active --> Leaving: LeaveRequest
-  Leaving --> Exiting: 多轮广播完成, ExitingReady
+  Leaving --> Exiting: 多轮广播完成
   Exiting --> [*]: 发布 LeaveCompleted
   Joining --> Joining: 失败则指数退避重试
-  Active --> Discovering: 失多数派时 tryQuorumRecovery
+  Active --> Discovering: 失多数派时执行 Quorum 恢复
 `} title="节点生命周期状态" />
 
-## 与文档/实现的一致性
+## 架构要点摘要
 
 | 项目 | 说明 |
 |------|------|
 | **NodeActor 名称与路径** | 框架创建时使用名称 `@cluster`，节点间通信路径为 `/@cluster`。 |
-| **种子与自举** | 无 Seeds 或本节点在 Seeds 中 → bootstrapAsSeed；否则 tryJoinSeeds，目标为 `seed_host:port/@cluster`。 |
-| **Gossip** | 内部消息类型为 ClusterInternalMessageForGossip；GetViewRequest 用于拉取视图（如 quorum 恢复）。 |
-| **多 DC** | SeedsByDC、CrossDCFailureDetectionTimeout、CrossDCDiscoveryInterval、MaxDiscoveryTargetsPerTickCrossDC 见 [多数据中心](/docs/cluster/topology/multi-datacenter) 与 [配置选项](/docs/cluster/config/options)。 |
+| **种子与自举** | 无 Seeds 或本节点在 Seeds 中时，节点以种子身份自举；否则向 `seed_host:port/@cluster` 发起 Join。 |
+| **Gossip 与视图拉取** | 成员视图通过 Gossip 消息在节点间同步；GetViewRequest 用于按需拉取当前视图（如多数派恢复）。 |
+| **多 DC 配置** | SeedsByDC、CrossDCFailureDetectionTimeout、CrossDCDiscoveryInterval、MaxDiscoveryTargetsPerTickCrossDC 等见 [多数据中心](/docs/cluster/topology/multi-datacenter) 与 [配置选项](/docs/cluster/config/options)。 |
 
-若部署行为与上述图示不一致，可对照 [配置选项](/docs/cluster/config/options)、[与 Remoting 的关系](/docs/cluster/remoting) 及代码中的 `internal/cluster` 实现排查。
+更多配置与行为说明见 [配置选项](/docs/cluster/config/options)、[与 Remoting 的关系](/docs/cluster/remoting) 及 [多数据中心](/docs/cluster/topology/multi-datacenter)。
