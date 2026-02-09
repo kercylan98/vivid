@@ -1,132 +1,102 @@
 package cluster
 
 import (
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/utils"
+	"github.com/kercylan98/vivid/pkg/ves"
 )
 
-const defaultClusterAskTimeout = 5 * time.Second
+const (
+	getViewTimeout   = 3 * time.Second
+	leaveWatcherName = "leave-watcher"
+)
 
-var _ vivid.ClusterContext = (*Context)(nil)
-
-func NewClusterContext(system vivid.ActorSystem, options vivid.ClusterOptions, actorRefParser ActorRefParser, nodeRef vivid.ActorRef) *Context {
-	return &Context{
-		options:        options,
-		system:         system,
-		nodeRef:        nodeRef,
-		actorRefParser: actorRefParser,
-	}
-}
-
+// Context 是集群上下文，供 Actor 系统在运行时访问集群能力（如优雅退出、成员视图、多数派状态等）。
+// 由 initializeCluster 链创建，未启用集群时为 nil。
 type Context struct {
-	options        vivid.ClusterOptions
-	system         vivid.ActorSystem
-	nodeRef        vivid.ActorRef
-	actorRefParser ActorRefParser
+	system     vivid.ActorSystem
+	clusterRef vivid.ActorRef
+	leaveLock  sync.Mutex
+	leaveWait  chan struct{}
 }
 
-func (c *Context) Name() string {
-	return c.options.ClusterName
+// NewClusterContext 根据已创建的 NodeActor 引用构造集群上下文。
+func NewClusterContext(system vivid.ActorSystem, _ vivid.ClusterOptions, _ ActorRefParser, clusterRef vivid.ActorRef) *Context {
+	return &Context{system: system, clusterRef: clusterRef}
 }
 
+// GetMembers 返回当前视图中的成员列表；未启用集群或 clusterRef 为空时返回 ErrorClusterDisabled。
 func (c *Context) GetMembers() ([]vivid.ClusterMemberInfo, error) {
-	if c == nil {
+	if c == nil || c.clusterRef == nil || c.system == nil {
 		return nil, vivid.ErrorClusterDisabled
 	}
-	request := &publicMessageAsGetNodesQuery{
-		ClusterName: c.Name(),
-	}
-	result, err := c.system.Ask(c.nodeRef, request, defaultClusterAskTimeout).Result()
+	future := c.system.Ask(c.clusterRef, &GetViewRequest{}, getViewTimeout)
+	reply, err := future.Result()
 	if err != nil {
 		return nil, err
 	}
-	if errResult, ok := result.(error); ok && errResult != nil {
-		return nil, errResult
+	resp, ok := reply.(*GetViewResponse)
+	if !ok || resp == nil || resp.View == nil {
+		return nil, vivid.ErrorIllegalArgument
 	}
-	members := result.(*publicMessageAsGetNodesResult).Members
-	return members, nil
+	out := make([]vivid.ClusterMemberInfo, 0, len(resp.View.Members))
+	for _, m := range resp.View.Members {
+		if m == nil {
+			continue
+		}
+		out = append(out, vivid.ClusterMemberInfo{
+			Address:    m.Address,
+			Version:    strconv.FormatUint(m.Version, 10),
+			Datacenter: m.Datacenter(),
+			Rack:       m.Rack(),
+			Region:     m.Region(),
+			Zone:       m.Zone(),
+		})
+	}
+	return out, nil
 }
 
-func (c *Context) getClusterState() (*publicMessageAsGetClusterStateResult, error) {
-	if c == nil {
-		return nil, vivid.ErrorClusterDisabled
-	}
-	result, err := c.system.Ask(c.nodeRef, &publicMessageAsGetClusterState{}, defaultClusterAskTimeout).Result()
-	if err != nil {
-		return nil, err
-	}
-	if errResult, ok := result.(error); ok && errResult != nil {
-		return nil, errResult
-	}
-	return result.(*publicMessageAsGetClusterStateResult), nil
-}
-
-func (c *Context) Leader() (vivid.ActorRef, error) {
-	if c == nil {
-		return nil, vivid.ErrorClusterDisabled
-	}
-	state, err := c.getClusterState()
-	if err != nil {
-		return nil, err
-	}
-	if state.LeaderAddress == "" {
-		return nil, nil
-	}
-	ref, err := c.actorRefParser(state.LeaderAddress, c.nodeRef.GetPath())
-	if err != nil {
-		return nil, err
-	}
-	return ref, nil
-}
-
-func (c *Context) IsLeader() (bool, error) {
-	if c == nil {
-		return false, vivid.ErrorClusterDisabled
-	}
-	state, err := c.getClusterState()
-	if err != nil {
-		return false, err
-	}
-	if state.LeaderAddress == "" {
-		return false, nil
-	}
-	selfAddr := c.nodeRef.GetAddress()
-	if n, ok := utils.NormalizeAddress(selfAddr); ok {
-		selfAddr = n
-	}
-	return state.LeaderAddress == selfAddr, nil
-}
-
+// InQuorum 返回当前节点是否处于多数派（健康数 >= 法定人数）；未启用集群时返回 ErrorClusterDisabled。
 func (c *Context) InQuorum() (bool, error) {
-	if c == nil {
+	if c == nil || c.clusterRef == nil || c.system == nil {
 		return false, vivid.ErrorClusterDisabled
 	}
-	state, err := c.getClusterState()
+	future := c.system.Ask(c.clusterRef, &GetViewRequest{}, getViewTimeout)
+	reply, err := future.Result()
 	if err != nil {
 		return false, err
 	}
-	return state.InQuorum, nil
-}
-
-func (c *Context) SetNodeVersion(version string) {
-	if c == nil {
-		return
+	resp, ok := reply.(*GetViewResponse)
+	if !ok || resp == nil || resp.View == nil {
+		return false, vivid.ErrorIllegalArgument
 	}
-	c.system.Tell(c.nodeRef, &publicMessageAsSetNodeVersion{version: version})
+	return resp.InQuorum, nil
 }
 
-func (c *Context) UpdateMembers(addresses []string) {
-	if c == nil || len(addresses) == 0 {
-		return
-	}
-	c.system.Tell(c.nodeRef, &publicMessageAsMembersUpdated{nodes: addresses})
-}
-
+// Leave 向集群节点发送优雅退出请求，并等待「已退出」后再返回。
+// 内部会临时启动一个 Actor 监听 ClusterLeaveCompletedEvent，收到事件后解除阻塞；若超时则直接返回，不阻塞 Stop 流程。只执行一次，幂等。
+// 若未启用集群或 clusterRef 为空则直接返回。
 func (c *Context) Leave() {
-	if c == nil {
+	if c == nil || c.clusterRef == nil || c.system == nil {
 		return
 	}
-	c.system.Tell(c.nodeRef, &publicMessageAsInitiateLeave{})
+
+	c.leaveLock.Lock()
+	if c.leaveWait == nil {
+		c.leaveWait = make(chan struct{})
+		_, _ = c.system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.EventStream().Subscribe(ctx, ves.ClusterLeaveCompletedEvent{})
+				ctx.Tell(c.clusterRef, &LeaveRequest{})
+			case ves.ClusterLeaveCompletedEvent:
+				close(c.leaveWait)
+			}
+		}))
+	}
+	c.leaveLock.Unlock()
+	<-c.leaveWait
 }

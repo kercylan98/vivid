@@ -1,0 +1,92 @@
+---
+title: 配置选项
+description: ClusterOptions 与 ClusterOption 完整配置说明
+---
+
+通过 **NewClusterOptions** 与一系列 **ClusterOption** 函数构建；或在使用 **WithActorSystemRemotingClusterOption(opts...)** 时直接传入 ClusterOption 列表。**ClusterOptions** 在创建时确定，设计为不可变。
+
+## 基础配置
+
+| 选项 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| **WithClusterNodeID** | string | - | 本节点唯一标识符，用于集群内唯一标识 |
+| **WithClusterName** | string | - | 集群逻辑名；同名节点交换视图，空串表示不校验 |
+| **WithClusterSeeds** | []string | - | 种子节点地址列表（host:port），建议至少 2 个 |
+| **WithClusterSeedsByDC** | map[string][]string | - | 按 DC 分组种子，加入时优先本 DC 种子 |
+| **WithClusterSeedsResolver** | SeedsResolver | nil | 动态种子解析器（DNS、K8s 等）；nil 使用静态 Seeds/SeedsByDC |
+
+## 发现与故障检测
+
+| 选项 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| **WithClusterDiscoveryInterval** | time.Duration | 1s | Gossip 轮次间隔（状态变更会立即同步，此间隔为周期传播频率） |
+| **WithClusterFailureDetectionTimeout** | time.Duration | 40s | 故障检测超时；≤0 表示不自动剔除 |
+| **WithClusterMaxDiscoveryTargetsPerTick** | int | 20 | 每轮发现最多向多少个目标发请求；≤0 不限制 |
+| **WithClusterSuspectConfirmDuration** | time.Duration | 0 | Suspect 确认时长；>0 时先置 Suspect，超时后再剔除；减少跨 DC 误判 |
+| **WithClusterCrossDCFailureDetectionTimeout** | time.Duration | 0 | 跨 DC 故障超时；0 时内部使用 FailureDetectionTimeout 的 2 倍 |
+| **WithClusterCrossDCDiscoveryInterval** | time.Duration | 0 | 跨 DC Gossip 轮次间隔；0 表示不单独调度 |
+
+## 多数据中心与拓扑
+
+| 选项 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| **WithClusterDatacenter** | string | - | 本节点所在数据中心标识 |
+| **WithClusterRack** | string | - | 机架标识 |
+| **WithClusterRegion** | string | - | 区域标识（同 Region 优先 Gossip） |
+| **WithClusterZone** | string | - | 可用区标识 |
+| **WithClusterRequiredDCsForQuorum** | []string | - | 必须参与 quorum 的 DC 列表；非空时这些 DC 各至少 1 健康节点 |
+| **WithClusterMaxDiscoveryTargetsPerTickCrossDC** | int | - | 跨 DC 每轮 Gossip 最大目标数；>0 时跨 DC 轮次使用此值 |
+
+## 法定人数
+
+| 选项 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| **WithClusterQuorumStrategy** | QuorumStrategy | GlobalMajority | 法定人数策略：GlobalMajority、MajorityDCs、AtLeastOnePerDC |
+
+## 加入控制
+
+| 选项 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| **WithClusterJoinSecret** | string | - | 加入认证共享密钥；非空时 Join 须携带 AuthToken |
+| **WithClusterJoinAllowDCs** | []string | - | 仅允许指定 DC 的节点加入；空表示不限制 |
+| **WithClusterJoinAllowAddresses** | []string | - | 仅允许指定地址或 CIDR 发起 Join；空表示不限制 |
+| **WithClusterProtocolVersionRange** | min, max uint16 | 0 | 接受的协议版本范围；低于 min 或高于 max 拒绝 |
+| **WithClusterJoinRateLimit** | perSecond float64, burst int | - | 每地址 Join 限流；perSecond≤0 不限流 |
+| **WithClusterJoinAskTimeout** | time.Duration | DefaultAskTimeout | Join 请求超时；建议 1s–30s |
+| **WithClusterGetViewAskTimeout** | time.Duration | DefaultAskTimeout | GetView 请求超时；建议 1s–30s |
+
+## 优雅退出
+
+| 选项 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| **WithClusterLeaveBroadcastDelay** | time.Duration | 200ms | 优雅退出前等待广播发出的时间；多 DC 建议 1–2s |
+| **WithClusterLeaveBroadcastRounds** | int | 1 | 广播轮数；>1 时多轮广播以提高多 DC 收敛 |
+
+## 高级与防护
+
+| 选项 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| **WithClusterAdminSecret** | string | - | 管理操作密钥；非空时强制下线、触发广播须携带 AdminToken |
+| **WithClusterGossipRateLimit** | perSecond float64, burst int | - | 全局 Gossip 发送速率限制；>0 启用 |
+| **WithClusterMaxVersionVectorEntries** | int | 65535 | 版本向量最大条目数 |
+| **WithClusterMaxClockSkew** | time.Duration | 0 | 最大允许时钟偏差；超过则不采纳对方 Epoch/Timestamp |
+| **WithClusterVersionConcurrentStrategy** | VersionConcurrentStrategy | TakeMax | VersionConcurrent 时的 Epoch/Timestamp 采纳策略 |
+
+## 构建示例
+
+```go
+opts := vivid.NewClusterOptions(
+    vivid.WithClusterName("prod-cluster"),
+    vivid.WithClusterSeeds([]string{"seed1:8080", "seed2:8080"}),
+    vivid.WithClusterDatacenter("dc1"),
+    vivid.WithClusterFailureDetectionTimeout(30 * time.Second),
+    vivid.WithClusterJoinSecret("shared-secret"),
+)
+system := bootstrap.NewActorSystem(
+    vivid.WithActorSystemRemoting("0.0.0.0:8080", "node1:8080"),
+    vivid.WithActorSystemRemotingOptions(
+        vivid.NewActorSystemRemotingOptions(),
+        vivid.WithActorSystemRemotingClusterOptions(opts),
+    ),
+)
+```

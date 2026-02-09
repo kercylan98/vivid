@@ -124,6 +124,10 @@ func (c *Context) Metrics() metrics.Metrics {
 	return c.system.Metrics()
 }
 
+func (c *Context) MetricsEnabled() bool {
+	return c.system.MetricsEnabled()
+}
+
 func (c *Context) Logger() log.Logger {
 	return c.options.Logger
 }

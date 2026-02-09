@@ -194,8 +194,10 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 		return stateError
 	}
 
-	// 离开集群（ClusterContext.Leave 空指针安全，未启用时为 no-op）
-	s.clusterContext.Leave()
+	// 优先离开集群（未启用集群时 clusterContext 为 nil）
+	if s.clusterContext != nil {
+		s.clusterContext.Leave()
+	}
 
 	var stopTimeout = sugar.Max(sugar.FirstOrDefault(timeout, s.options.StopTimeout), 0)
 	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
@@ -295,6 +297,10 @@ func (s *System) Metrics() metrics.Metrics {
 		return metrics.NewDefaultMetrics()
 	}
 	return s.metrics
+}
+
+func (s *System) MetricsEnabled() bool {
+	return s.options.EnableMetrics
 }
 
 // findMailbox 负责根据给定的 ActorRef 查找并返回对应的邮箱（Mailbox）。

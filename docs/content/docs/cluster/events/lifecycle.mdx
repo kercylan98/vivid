@@ -1,0 +1,51 @@
+---
+title: 节点生命周期
+description: 集群节点状态机与阶段说明
+---
+
+集群节点的生命周期遵循规范化的状态流转，从启动到退出依次经过：启动 → 发现/加入 → 同步 → 活跃 ⇄ 故障恢复；活跃 → 离开 → 退出 → 停止。
+
+## 阶段说明
+
+| 阶段 | 说明 |
+|------|------|
+| **启动 (Starting)** | OnLaunch：加载配置、初始化（由 Actor 系统完成） |
+| **发现 (Discovering)** | 尝试连接种子，在 onLaunch 中 tryJoinSeeds |
+| **加入 (Joining)** | 发送 JoinRequest、等待接受；失败则按指数退避重试（InitialJoinRetryDelay → MaxJoinRetryDelay） |
+| **同步 (Syncing)** | 接收集群视图 MergeFromWithOptions(resp.View)，在 tryJoinSeeds 成功后完成 |
+| **活跃 (Active)** | 参与 Gossip（runGossipRound）、故障检测（runFailureDetection）、响应 Join/GetView/Leave |
+| **离开 (Leaving)** | handleLeaveRequest：广播离开视图、进入 Exiting、回复 LeaveAck 并发布 ClusterLeaveCompletedEvent |
+| **退出 (Exiting)** | ExitingReady：停止调度、发布退出完成事件，供 Leave() 侧监听解除阻塞 |
+| **故障恢复** | Joining 时持续重试；Active 时失联节点由故障检测剔除，本节点若失多数派则 tryQuorumRecovery |
+
+## 状态机简图
+
+```
+启动 → 发现/加入 → [同步] → 活跃 ⇄ [故障恢复]
+                        ↓
+                    离开 → 退出 → 停止
+```
+
+## 成员状态 (MemberStatus)
+
+NodeState 中的 Status 字段表示成员在视图中的状态：
+
+| 状态 | 说明 |
+|------|------|
+| **Joining** | 正在加入 |
+| **Up** | 健康在线 |
+| **Suspect** | 疑似故障（超时未刷新，但处于 SuspectConfirmDuration 内） |
+| **Unreachable** | 不可达 |
+| **Down** | 已下线 |
+| **Leaving** | 正在离开 |
+| **Exiting** | 正在退出 |
+| **Removed** | 已移除 |
+
+**Suspect** 不计入健康数，避免分区时两边都自认 quorum。若配置了 `SuspectConfirmDuration`，超时后先置为 Suspect，经过该时长再从视图剔除。
+
+## 多数据中心下的生命周期
+
+- 通过 ClusterOptions.Datacenter/Rack 设置本节点拓扑，写入 NodeState.Labels，随 Gossip 传播。
+- Gossip 目标选择（GossipTargetSelector）同 DC/同 Region 优先，减少跨 DC 流量、加快本 DC 收敛。
+- 跨 DC 成员可使用 CrossDCFailureDetectionTimeout 单独超时，减少因跨 DC 延迟导致的误判。
+- GetMembers() 返回的 ClusterMemberInfo 含 Datacenter/Rack，便于路由与展示。

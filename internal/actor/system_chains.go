@@ -68,6 +68,7 @@ func (c *_systemChains) initializeCluster(system *System) chain.Chain {
 			}
 
 			nodeActor := cluster.NewNodeActor(
+				system.options.RemotingAdvertiseAddress,
 				actorRefParsor,
 				*system.options.RemotingOptions.ClusterOptions)
 

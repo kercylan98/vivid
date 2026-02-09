@@ -1,0 +1,4 @@
+{
+  "title": "认证与安全",
+  "pages": ["join-auth", "join-allowlist", "admin"]
+}

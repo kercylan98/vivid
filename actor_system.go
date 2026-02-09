@@ -2,6 +2,7 @@ package vivid
 
 import (
 	"context"
+	"crypto/tls"
 	"time"
 
 	"github.com/kercylan98/vivid/internal/utils"
@@ -418,6 +419,9 @@ type ActorSystemRemotingOptions struct {
 	// ReconnectJitter 用于配置远程连接的重试退避抖动。
 	ReconnectJitter bool
 
+	// TLSConfig 可选；非空时 Remoting 服务端使用 TLS 监听，跨 DC/公网部署时建议启用以保证传输加密与身份校验（如 mTLS）。
+	TLSConfig *tls.Config
+
 	// ClusterOptions 用于配置集群通信相关的选项。
 	ClusterOptions *ClusterOptions
 }
@@ -553,6 +557,14 @@ func WithActorSystemRemotingReconnect(limit int, initialDelay, maxDelay time.Dur
 			opts.ReconnectFactor = factor
 		}
 		opts.ReconnectJitter = jitter
+	}
+}
+
+// WithActorSystemRemotingTLSConfig 返回一个 ActorSystemRemotingOption，用于配置 Remoting 服务端 TLS。
+// 非空时服务端使用 TLS 监听；跨 DC/公网部署时建议配置以保证传输加密，可选配合 mTLS 做节点身份校验。
+func WithActorSystemRemotingTLSConfig(cfg *tls.Config) ActorSystemRemotingOption {
+	return func(opts *ActorSystemRemotingOptions) {
+		opts.TLSConfig = cfg
 	}
 }
 

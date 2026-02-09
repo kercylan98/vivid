@@ -1,0 +1,51 @@
+---
+title: 集群概览
+description: Vivid 集群架构、NodeActor、成员发现与 ClusterContext
+---
+
+集群功能在启用 [远程通讯](/docs/config/remoting) 的前提下，通过 **ActorSystemRemotingOptions.ClusterOptions** 开启。启用后，系统会创建 NodeActor（路径 `/cluster/node`），维护成员视图、故障检测与选主，并通过 **ClusterContext** 暴露给业务：获取成员、多数派状态及成员变更事件等。
+
+## 架构概览
+
+- **NodeActor**：集群核心 Actor，由框架在初始化时创建（名称如 `@cluster`），负责 Gossip 协议、成员发现、故障检测、选主与视图合并。
+- **ClusterView**：每个节点持有本地成员视图，通过 Gossip 与种子发现周期性同步，版本向量（VersionVector）用于合并时的因果顺序与脑裂防护。
+- **ClusterContext**：供业务在 Actor 内通过 `ctx.Cluster()` 访问，提供 GetMembers、InQuorum、Leave 等 API。
+- **依赖关系**：集群依赖 Remoting 的地址与编解码进行节点间通信；`advertiseAddr` 需与种子/成员使用的地址一致。
+
+<Callout type="info" title="nil 检查">
+未设置 **ClusterOptions** 时，**ctx.Cluster()** 与 **system.Cluster()** 为 **nil**，使用前应做 nil 判断。若在未启用集群时调用 ClusterContext 的方法，会得到 **ErrorClusterDisabled**。
+</Callout>
+
+## 核心能力
+
+| 能力 | 说明 |
+|------|------|
+| **成员发现** | 通过 Seeds、SeedsByDC 与周期性 Gossip 收敛成员视图 |
+| **故障检测** | 超时未刷新的成员从视图剔除；支持 Suspect 确认以减少跨 DC 误判 |
+| **多数派（Quorum）** | 支持全局多数、多数 DC、每 DC 至少一票等策略 |
+| **优雅退出** | Leave() 广播离开视图，多轮广播支持多 DC 收敛 |
+| **加入控制** | JoinSecret 认证、JoinAllowDCs/JoinAllowAddresses 白名单、协议版本校验 |
+
+## 文档导航
+
+### 入门与配置
+- [快速开始](/docs/cluster/quick-start) — 启用集群与最小配置
+- [配置选项](/docs/cluster/config/options) — ClusterOptions 完整配置说明
+- [加入认证](/docs/cluster/auth/join-auth) — JoinSecret、ComputeJoinToken、AuthToken
+- [加入白名单](/docs/cluster/auth/join-allowlist) — JoinAllowDCs、JoinAllowAddresses、CIDR
+
+### 运行时与事件
+- [ClusterContext](/docs/cluster/runtime/context) — 运行时 API：GetMembers、InQuorum、Leave
+- [集群事件](/docs/cluster/events/events) — 成员变更、Leader、Quorum、View、DC 健康、Leave 完成
+- [节点生命周期](/docs/cluster/events/lifecycle) — Starting → Joining → Active → Leaving → Exiting
+
+### 拓扑与法定人数
+- [多数据中心](/docs/cluster/topology/multi-datacenter) — DC/Rack/Region/Zone、跨 DC 超时与 Gossip
+- [法定人数](/docs/cluster/topology/quorum) — QuorumStrategy、RequiredDCsForQuorum
+
+### 安全与排错
+- [管理操作](/docs/cluster/auth/admin) — AdminSecret、ComputeAdminToken、强制下线
+- [集群错误](/docs/cluster/errors) — 预定义错误码与处理
+
+### 与 Remoting
+- [与 Remoting 的关系](/docs/cluster/remoting) — 依赖、地址与编解码

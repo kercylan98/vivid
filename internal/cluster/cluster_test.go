@@ -12,82 +12,82 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCluster(t *testing.T) {
-	t.Run("single node", func(t *testing.T) {
+func TestCluster_SingleNode(t *testing.T) {
+	system := bootstrap.NewActorSystem(
+		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
+		vivid.WithActorSystemRemoting("127.0.0.1:8080"),
+		vivid.WithActorSystemRemotingOptions(
+			vivid.NewActorSystemRemotingOptions(),
+			vivid.WithActorSystemRemotingClusterOption(),
+		),
+	)
+
+	assert.NoError(t, system.Start())
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
+
+	cluster := system.Cluster()
+	assert.NotNil(t, cluster)
+
+	members, err := cluster.GetMembers()
+	assert.NoError(t, err)
+	assert.Len(t, members, 1)
+}
+
+func TestCluster_MultiNode(t *testing.T) {
+	const nodeCount = 3
+	const basePort = 8080
+	nodes := make([]vivid.ActorSystem, nodeCount)
+	seeds := make([]string, nodeCount)
+	defer func() {
+		for _, system := range nodes {
+			assert.NoError(t, system.Stop())
+		}
+	}()
+
+	wait := make(chan struct{})
+
+	for i := 0; i < nodeCount; i++ {
+		addr := fmt.Sprintf("127.0.0.1:%d", basePort+i)
+		if i == 0 {
+			seeds = append(seeds, addr)
+		}
 		system := bootstrap.NewActorSystem(
 			vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
-			vivid.WithActorSystemRemoting("127.0.0.1:8080"),
-			vivid.WithActorSystemRemotingOption(
-				vivid.WithActorSystemRemotingClusterOption(),
+			vivid.WithActorSystemRemoting(addr),
+			vivid.WithActorSystemRemotingOptions(
+				vivid.NewActorSystemRemotingOptions(),
+				vivid.WithActorSystemRemotingClusterOption(
+					vivid.WithClusterSeeds(seeds),
+				),
 			),
 		)
-
 		assert.NoError(t, system.Start())
-		defer func() {
-			assert.NoError(t, system.Stop())
-		}()
+		nodes[i] = system
 
-		clusterContext := system.Cluster()
-		members, err := clusterContext.GetMembers()
-		assert.NoError(t, err)
-		assert.Len(t, members, 1)
-	})
-
-	t.Run("multiple nodes", func(t *testing.T) {
-		const nodeCount = 3
-		const basePort = 8090
-
-		assert.Greater(t, nodeCount, 1)
-		assert.Greater(t, basePort, 0)
-		assert.Greater(t, basePort+nodeCount-1, 0)
-
-		var systems = make([]vivid.ActorSystem, nodeCount)
-		var seed = make([]string, 0)
-		var wait = make(chan struct{})
-		for i := 0; i < nodeCount; i++ {
-			bindAddr := fmt.Sprintf("127.0.0.1:%d", basePort+i)
-			system := bootstrap.NewActorSystem(
-				vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
-				vivid.WithActorSystemRemoting(bindAddr),
-				vivid.WithActorSystemRemotingOption(
-					vivid.WithActorSystemRemotingClusterOption(
-						vivid.WithClusterSeeds(seed),
-						vivid.WithClusterDiscoveryInterval(500*time.Millisecond),
-					),
-				),
-			)
-			assert.NoError(t, system.Start())
-			systems[i] = system
-
-			if i == 0 {
-				seed = append(seed, bindAddr)
-				watcher, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-					switch m := ctx.Message().(type) {
-					case *vivid.OnLaunch:
-						ctx.EventStream().Subscribe(ctx, ves.ClusterMembersChangedEvent{})
-					case ves.ClusterMembersChangedEvent:
-						ctx.Logger().Info("cluster members changed", log.Any("members", m))
-						if len(m.Members) == nodeCount {
-							ctx.Logger().Info("all nodes joined")
-							close(wait)
-						}
+		if i == 0 {
+			watcherRef, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+				switch m := ctx.Message().(type) {
+				case *vivid.OnLaunch:
+					ctx.EventStream().Subscribe(ctx, ves.ClusterMembersChangedEvent{})
+				case ves.ClusterMembersChangedEvent:
+					// 是否所有节点都加入了集群
+					if len(m.Members) == nodeCount {
+						close(wait)
 					}
-				}))
-				assert.NoError(t, err)
-				assert.NotNil(t, watcher)
-			}
+				}
+			}))
+			assert.NoError(t, err)
+			assert.NotNil(t, watcherRef)
 		}
+	}
 
-		defer func() {
-			for _, system := range systems {
-				assert.NoError(t, system.Stop())
-			}
-		}()
+	select {
+	case <-wait:
+	case <-time.After(3 * time.Second):
+		assert.Fail(t, "timeout")
+		return
+	}
 
-		select {
-		case <-wait:
-		case <-time.After(time.Second * 3):
-			assert.Fail(t, "timeout")
-		}
-	})
 }

@@ -2,6 +2,7 @@ package remoting
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"sync"
@@ -82,7 +83,11 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 
 	addr, err = net.ResolveTCPAddr("tcp", s.bindAddr)
 	if err == nil {
-		s.acceptorListener, err = net.ListenTCP("tcp", addr)
+		if s.options.TLSConfig != nil {
+			s.acceptorListener, err = tls.Listen("tcp", s.bindAddr, s.options.TLSConfig.Clone())
+		} else {
+			s.acceptorListener, err = net.ListenTCP("tcp", addr)
+		}
 		if err != nil {
 			delay := s.backoff.Next()
 			ctx.Logger().Warn("server listener listen failed, restart later", log.String("bind_addr", s.bindAddr), log.Duration("delay", delay), log.Any("err", err))
@@ -139,8 +144,12 @@ func (s *ServerActor) onConnection(ctx vivid.ActorContext, connection *tcpConnec
 	if !connection.client {
 		prefix = "accept" // 维护当前已建立并被服务器管理的连接集合
 	}
-	// 连接至服务端的无需绑定，客户端自行维护连接，不进行复用
-	ref, err := ctx.ActorOf(connection, vivid.WithActorName(fmt.Sprintf("%s-%s", prefix, connection.conn.RemoteAddr().String())))
+	// 连接名：accept 用远端地址即可（每条 accept 的 RemoteAddr 含临时端口，唯一）；dial 需加 LocalAddr，因 Mailbox 多 slot 会对同一远程建多条连接，仅 RemoteAddr 会重名
+	name := connection.conn.RemoteAddr().String()
+	if connection.client {
+		name = name + "-" + connection.conn.LocalAddr().String()
+	}
+	ref, err := ctx.ActorOf(connection, vivid.WithActorName(fmt.Sprintf("%s-%s", prefix, name)))
 	if err != nil {
 		ctx.Logger().Error("server accept connect failed", log.Any("err", err))
 		return

@@ -1,0 +1,41 @@
+---
+title: 加入白名单
+description: JoinAllowDCs、JoinAllowAddresses、CIDR
+---
+
+通过 **JoinAllowDCs** 与 **JoinAllowAddresses** 限制哪些节点可以加入集群，实现加入白名单控制。
+
+## JoinAllowDCs
+
+仅允许指定 DC 的节点加入：
+
+```go
+vivid.WithClusterJoinAllowDCs([]string{"dc1", "dc2"}),
+```
+
+- 空列表表示不按 DC 限制。
+- 未配置 DC 的节点视为 `_default`。
+
+若请求方的 Datacenter 不在列表中，拒绝加入，返回 **ErrorClusterJoinNotAllowed**。
+
+## JoinAllowAddresses
+
+仅允许指定地址或 CIDR 的节点发起 Join：
+
+```go
+vivid.WithClusterJoinAllowAddresses([]string{
+    "192.168.1.0/24",      // CIDR
+    "10.0.0.1",            // 精确 IP
+    "node1.example.com",   // 主机名
+    "node2.example.com:8080", // host:port
+}),
+```
+
+- 空列表表示不限制。
+- 支持格式：`host`、`host:port`、`CIDR`。
+- 若请求方地址不在白名单中，拒绝加入，返回 **ErrorClusterJoinNotAllowed**。
+
+## 匹配逻辑
+
+- **AllowJoinByDC**：allowDCs 为空则通过；否则请求方 DC（空则 `_default`）须在列表中。
+- **AllowJoinByAddress**：allowList 为空则通过；否则从请求方地址解析 host，支持 CIDR 包含、精确 host、精确 host:port 匹配。

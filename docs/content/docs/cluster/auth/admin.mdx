@@ -1,0 +1,38 @@
+---
+title: 管理操作
+description: AdminSecret、ComputeAdminToken、强制下线
+---
+
+当配置了 **AdminSecret** 时，管理消息（如强制下线、触发广播）须携带匹配的 **AdminToken**，否则拒绝并返回 **ErrorClusterAdminAuthFailed**。
+
+## 启用方式
+
+```go
+vivid.WithClusterAdminSecret("admin-secret"),
+```
+
+非空时管理操作须携带由此生成的 AdminToken。
+
+## 生成 AdminToken
+
+使用 **cluster.ComputeAdminToken**（需导入 `github.com/kercylan98/vivid/internal/cluster`）：
+
+```go
+import "github.com/kercylan98/vivid/internal/cluster"
+
+token := cluster.ComputeAdminToken(secret)
+// 将 token 填入管理消息的 AdminToken 字段
+```
+
+ComputeAdminToken 基于 HMAC-SHA256，使用固定 payload `cluster-admin`。
+
+## 校验逻辑
+
+接收方使用 **cluster.VerifyAdminToken** 校验；若 secret 为空则跳过校验。
+
+## 适用场景
+
+- 强制下线某节点
+- 触发广播等管理命令
+
+具体消息类型与用法以 internal/cluster 实现为准。

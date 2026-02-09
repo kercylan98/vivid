@@ -41,6 +41,20 @@ func NormalizeAddress(address string) (string, bool) {
 	return address, true
 }
 
+// NormalizeAddresses 规范化并校验 addresses，返回规范化后的地址列表。
+func NormalizeAddresses(addresses []string) []string {
+	if len(addresses) == 0 {
+		return nil
+	}
+	var out []string
+	for _, address := range addresses {
+		if normalized, ok := NormalizeAddress(address); ok {
+			out = append(out, normalized)
+		}
+	}
+	return out
+}
+
 // NormalizePath 规范化并校验 path，要求以 / 开头。
 func NormalizePath(path string) (string, bool) {
 	path = strings.TrimSpace(path)

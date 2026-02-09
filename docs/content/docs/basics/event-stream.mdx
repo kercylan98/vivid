@@ -44,7 +44,7 @@ ctx.EventStream().Publish(ctx, MyEvent{Source: ctx.Ref().GetPath(), Data: payloa
 ## 典型用法
 
 - **跨模块解耦**：模块 A 发布领域事件，模块 B/C 只订阅感兴趣的类型，无需直接引用 A。
-- **监控与审计**：订阅系统事件（如生命周期、死信），在 OnReceive 中记录或告警。死信事件类型为 **`ves.DeathLetterEvent`**，参见 [消息投递 - 死信](/docs/basics/message-delivery#死信)。启用集群后，可订阅 **`ves.ClusterMembersChangedEvent`**、**`ves.ClusterLeaderChangedEvent`** 做成员与主节点变更监控，参见 [集群](/docs/config/cluster)。
+- **监控与审计**：订阅系统事件（如生命周期、死信），在 OnReceive 中记录或告警。死信事件类型为 **`ves.DeathLetterEvent`**，参见 [消息投递 - 死信](/docs/basics/message-delivery#死信)。启用集群后，可订阅 **`ves.ClusterMembersChangedEvent`**、**`ves.ClusterLeaderChangedEvent`** 做成员与主节点变更监控，参见 [集群事件](/docs/cluster/events/events)。
 - **与 Stash 配合**：在条件未满足时 Stash 当前消息，订阅“条件就绪”事件，在 OnReceive 中收到该事件时 Unstash 并继续处理。
 
 事件与普通消息使用同一邮箱与行为，保证顺序与一致性。

@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"math/rand"
-	"sort"
 	"time"
 
 	"github.com/kercylan98/vivid"
@@ -11,462 +10,601 @@ import (
 	"github.com/kercylan98/vivid/pkg/ves"
 )
 
-const (
-	discoverySchedulerRef  = "cluster-discovery"
-	discoveryJitterPercent = 20 // 每轮间隔的随机抖动上限（%），用于错峰，减轻流量尖峰
-)
+var _ vivid.Actor = (*NodeActor)(nil)
 
-var (
-	_ vivid.Actor          = (*NodeActor)(nil)
-	_ vivid.PrelaunchActor = (*NodeActor)(nil)
-)
-
-// ActorRefParser 用于解析 ActorRef 的函数类型。避免内部包循环依赖。
-type ActorRefParser = func(address, path string) (vivid.ActorRef, error)
-
-func NewNodeActor(actorRefParser ActorRefParser, options vivid.ClusterOptions) *NodeActor {
-	return &NodeActor{options: options, actorRefParser: actorRefParser}
+func NewNodeActor(address string, actorRefParser ActorRefParser, options vivid.ClusterOptions) *NodeActor {
+	state := newNodeState(options.NodeID, options.ClusterName, address)
+	if state.Labels == nil {
+		state.Labels = make(map[string]string)
+	}
+	if options.Datacenter != "" {
+		state.Labels[LabelDatacenter] = options.Datacenter
+	}
+	if options.Rack != "" {
+		state.Labels[LabelRack] = options.Rack
+	}
+	if options.Region != "" {
+		state.Labels[LabelRegion] = options.Region
+	}
+	if options.Zone != "" {
+		state.Labels[LabelZone] = options.Zone
+	}
+	cv := newClusterView()
+	cv.MaxVersionVectorEntries = options.MaxVersionVectorEntries
+	seedsProvider := NewSeedsProvider(options)
+	rate, burst, maxEnt := ApplyJoinRateLimiterOptions(options)
+	joinLimiter := NewJoinRateLimiter(rate, burst, maxEnt)
+	gossipRate, gossipBurst := ApplyGossipRateLimiterOptions(options)
+	gossipLimiter := NewGossipRateLimiter(gossipRate, gossipBurst)
+	return &NodeActor{
+		options:           options,
+		actorRefParser:    actorRefParser,
+		nodeState:         state,
+		clusterView:       cv,
+		seedsProvider:     seedsProvider,
+		quorumCalc:        NewQuorumCalculator(options),
+		joinRateLimiter:   joinLimiter,
+		gossipRateLimiter: gossipLimiter,
+		gossipSelector:    NewGossipTargetSelector(options, seedsProvider.GetAllSeedsWithDC),
+		failureDetector:   NewFailureDetector(options),
+		events:            NewClusterEventPublisher(),
+		leaveCoord:        NewLeaveCoordinator(),
+		metricsUpdater:    NewClusterMetricsUpdater(),
+		joinBackoff:       utils.NewExponentialBackoffWithDefault(InitialJoinRetryDelay, MaxJoinRetryDelay),
+	}
 }
 
-// NodeActor 维护本节点的集群成员视图、种子列表与选主结果；串行处理，无需锁。
-// 持有 options 并直接使用，与 System 持有 ActorSystemOptions 一致。
+// NodeActor 集群节点 Actor，通过组合各功能组件管理加入、Gossip、故障检测、退出与事件发布。
 type NodeActor struct {
-	options              vivid.ClusterOptions    // 集群选项
-	actorRefParser       ActorRefParser          // 用于解析 ActorRef 的函数，避免内部包循环依赖。
-	nodeVersion          string                  // 节点版本
-	selfAddr             string                  // 本节点地址
-	normalizedSeeds      []string                // 由 options.Seeds 在 onLaunch 时归一化并缓存
-	members              map[string]*memberState // key: normalized address
-	lastLeaderAddr       string                  // 上一轮选出的 Leader 地址
-	lastInQuorum         bool                    // 上一轮是否处于多数派，用于检测 InQuorum 变化并发布事件
-	lastKnownClusterSize int                     // 历史上出现过的最大成员数（合并时增大，仅显式 Leave 时缩小），用于多数派判定
+	options           vivid.ClusterOptions
+	actorRefParser    ActorRefParser
+	nodeState         *NodeState
+	clusterView       *ClusterView
+	seedsProvider     *SeedsProvider
+	quorumCalc        *QuorumCalculator
+	joinRateLimiter   *JoinRateLimiter
+	gossipRateLimiter *GossipRateLimiter
+	gossipSelector    *GossipTargetSelector
+	failureDetector   *FailureDetector
+	events            *ClusterEventPublisher
+	leaveCoord        *LeaveCoordinator
+	metricsUpdater    *ClusterMetricsUpdater
+	joinBackoff       *utils.ExponentialBackoff
 }
 
 func (a *NodeActor) OnReceive(ctx vivid.ActorContext) {
-	switch msg := ctx.Message().(type) {
+	switch m := ctx.Message().(type) {
 	case *vivid.OnLaunch:
 		a.onLaunch(ctx)
-	case *nodeMessageAsGetNodesRequest:
-		a.handleGetNodesRequest(ctx, msg)
-	case *nodeMessageAsGetNodesResponse:
-		a.handleGetNodesResponse(ctx, msg)
-	case *nodeMessageAsLeaveCluster:
-		a.handleLeaveCluster(ctx)
-	case *publicMessageAsSetNodeVersion:
-		a.handleSetNodeVersion(ctx, msg)
-	case *publicMessageAsGetNodesQuery:
-		a.handleGetNodesQuery(ctx, msg)
-	case *publicMessageAsMembersUpdated:
-		a.handleMembersUpdated(ctx, msg)
-	case *publicMessageAsInitiateLeave:
-		a.handleInitiateLeave(ctx)
-	case *publicMessageAsGetClusterState:
-		a.handleGetClusterState(ctx)
-	case *discoverTick:
-		a.handleDiscoverTick(ctx)
+	case *JoinRetryTick:
+		a.onJoinRetryTick(ctx)
+	case *LeaveRequest:
+		if a.nodeState.Status == MemberStatusJoining {
+			a.onLeaveWhileJoining(ctx)
+		} else {
+			a.handleLeaveRequest(ctx)
+		}
+	case *JoinRequest:
+		a.handleJoinRequest(ctx, m)
+	case *GossipMessage:
+		a.handleGossip(ctx, m)
+	case *GossipTick:
+		a.runGossipRound(ctx)
+	case *GossipCrossDCTick:
+		a.runGossipRoundCrossDC(ctx)
+	case *FailureDetectionTick:
+		a.runFailureDetection(ctx)
+	case *GetViewRequest:
+		a.handleGetView(ctx)
+	case *ForceMemberDown:
+		a.handleForceMemberDown(ctx, m)
+	case *TriggerViewBroadcast:
+		a.handleTriggerBroadcast(ctx, m)
+	case *ExitingReady:
+		if a.nodeState != nil {
+			a.nodeState.Status = MemberStatusExiting
+			ctx.Logger().Debug("cluster node exiting", log.String("nodeId", a.nodeState.ID))
+		}
+		if ref := a.leaveCoord.GetAndClearReplyTo(); ref != nil {
+			ctx.Tell(ref, &LeaveAck{})
+		}
+		a.publishLeaveCompleted(ctx)
 	}
-}
-
-func (a *NodeActor) OnPrelaunch(_ vivid.PrelaunchContext) error {
-	return nil
 }
 
 func (a *NodeActor) onLaunch(ctx vivid.ActorContext) {
-	addr := ctx.Ref().GetAddress()
-	if normalized, ok := utils.NormalizeAddress(addr); ok {
-		a.selfAddr = normalized
-	} else {
-		a.selfAddr = addr
-	}
-	a.normalizedSeeds = normalizeSeeds(a.options.Seeds)
-	if a.members == nil {
-		a.members = make(map[string]*memberState)
-	}
-	now := time.Now()
-	a.members[a.selfAddr] = &memberState{Address: a.selfAddr, Version: a.nodeVersion, LastSeen: now}
-	if a.lastKnownClusterSize < len(a.members) {
-		a.lastKnownClusterSize = len(a.members)
-	}
-
-	ctx.Logger().Debug("cluster node launched",
-		log.String("self_addr", a.selfAddr),
-		log.String("path", ctx.Ref().GetPath()),
-		log.String("cluster_name", a.options.ClusterName),
-		log.String("node_version", a.nodeVersion))
-
-	a.updateLeaderAndPublish(ctx)
-	// 启动后立即触发一轮发现，尽快与种子/已有成员同步；后续轮次由 handleDiscoverTick 按 DiscoveryInterval 调度。
-	if a.options.DiscoveryInterval > 0 {
-		ctx.TellSelf(discoverTickMessage)
-	}
-}
-
-func (a *NodeActor) scheduleDiscovery(ctx vivid.ActorContext) {
-	interval := a.options.DiscoveryInterval
-	if interval <= 0 {
+	seeds := a.seedsProvider.GetSeedsForJoin(a.nodeState.Datacenter())
+	if len(seeds) == 0 || a.isSelfInSeeds(seeds) {
+		a.bootstrapAsSeed(ctx)
+		a.startGossipLoop(ctx)
+		a.startFailureDetectionLoop(ctx)
 		return
 	}
-	_ = ctx.Scheduler().Cancel(discoverySchedulerRef)
-	delay := interval + discoveryJitter(interval)
-	if err := ctx.Scheduler().Once(ctx.Ref(), delay, discoverTickMessage, vivid.WithSchedulerReference(discoverySchedulerRef)); err != nil {
-		ctx.Logger().Warn("cluster discovery scheduler start failed", log.Any("err", err))
-	}
-}
-
-// discoveryJitter 返回 [0, interval*discoveryJitterPercent/100) 的随机抖动，用于错峰。
-func discoveryJitter(interval time.Duration) time.Duration {
-	if interval <= 0 {
-		return 0
-	}
-	j := int64(interval) * int64(discoveryJitterPercent) / 100
-	if j <= 0 {
-		return 0
-	}
-	return time.Duration(rand.Int63n(j))
-}
-
-func (a *NodeActor) handleGetNodesRequest(ctx vivid.ActorContext, req *nodeMessageAsGetNodesRequest) {
-	sender := ctx.Sender()
-	if sender == nil {
+	if err := a.tryJoinSeeds(ctx, seeds); err == nil {
+		_ = ctx.Scheduler().Cancel(SchedRefJoinRetry)
+		a.joinBackoff.Reset()
+		ctx.Logger().Debug("joined cluster")
+		a.startGossipLoop(ctx)
+		a.startFailureDetectionLoop(ctx)
 		return
 	}
-	// 配置了集群名且与请求不一致时不回复，避免向其他集群泄露成员列表
-	clusterName := a.options.ClusterName
-	if clusterName != "" && req.ClusterName != "" && req.ClusterName != clusterName {
+	ctx.Logger().Warn("join failed, will retry with backoff")
+	a.joinBackoff.Reset()
+	a.scheduleJoinRetry(ctx)
+}
+
+func (a *NodeActor) onJoinRetryTick(ctx vivid.ActorContext) {
+	seeds := a.seedsProvider.GetSeedsForJoin(a.nodeState.Datacenter())
+	if err := a.tryJoinSeeds(ctx, seeds); err == nil {
+		_ = ctx.Scheduler().Cancel(SchedRefJoinRetry)
+		a.joinBackoff.Reset()
+		ctx.Logger().Debug("joined cluster after retry")
+		a.startGossipLoop(ctx)
+		a.startFailureDetectionLoop(ctx)
 		return
 	}
-	// 请求方主动联系本节点，说明其已加入集群，将其加入成员视图以保证双向发现
-	senderAddr := sender.GetAddress()
-	if addr, ok := utils.NormalizeAddress(senderAddr); ok && addr != a.selfAddr {
-		a.mergeMembers(ctx, []vivid.ClusterMemberInfo{{Address: addr, Version: ""}}, senderAddr)
-		a.removeStaleMembers(ctx)
-		a.updateLeaderAndPublish(ctx)
-	}
-	resp := &nodeMessageAsGetNodesResponse{
-		ClusterName: clusterName,
-		Members:     a.membersToSlice(),
-	}
-	ctx.Tell(sender, resp)
+	nextDelay := a.scheduleJoinRetry(ctx)
+	ctx.Logger().Debug("join retry failed, next in "+nextDelay.String(), log.Any("nextDelay", nextDelay))
 }
 
-func (a *NodeActor) handleGetNodesResponse(ctx vivid.ActorContext, msg *nodeMessageAsGetNodesResponse) {
-	if a.options.ClusterName != "" && msg.ClusterName != a.options.ClusterName {
+func (a *NodeActor) onLeaveWhileJoining(ctx vivid.ActorContext) {
+	a.cancelAllSchedulers(ctx)
+	a.nodeState.Status = MemberStatusExiting
+	ctx.TellSelf(&ExitingReady{})
+}
+
+// scheduleJoinRetry 使用指数退避调度下一次 Join 重试，返回本次使用的延迟（用于日志）。
+func (a *NodeActor) scheduleJoinRetry(ctx vivid.ActorContext) time.Duration {
+	delay := a.joinBackoff.Next()
+	_ = ctx.Scheduler().Once(ctx.Ref(), delay, &JoinRetryTick{NextDelay: delay},
+		vivid.WithSchedulerReference(SchedRefJoinRetry))
+	return delay
+}
+
+// acceptProtocolVersion 判断收到的视图协议版本是否在配置的接受范围内。
+func (a *NodeActor) acceptProtocolVersion(version uint16) bool {
+	if a.options.MinProtocolVersion > 0 && version < a.options.MinProtocolVersion {
+		return false
+	}
+	if a.options.MaxProtocolVersion > 0 && version > a.options.MaxProtocolVersion {
+		return false
+	}
+	return true
+}
+
+func (a *NodeActor) getMergeOptions() MergeOptions {
+	return MergeOptions{
+		MaxClockSkew:              a.options.MaxClockSkew,
+		VersionConcurrentStrategy: int(a.options.VersionConcurrentStrategy),
+	}
+}
+
+func (a *NodeActor) isSelfInSeeds(seeds []string) bool {
+	self, ok := utils.NormalizeAddress(a.nodeState.Address)
+	if !ok {
+		return false
+	}
+	for _, s := range seeds {
+		if s == self {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *NodeActor) bootstrapAsSeed(ctx vivid.ActorContext) {
+	a.nodeState.Status = MemberStatusUp
+	a.clusterView.AddMember(a.nodeState)
+	a.clusterView.IncrementVersion(a.nodeState.ID)
+	a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, a.quorumCalc.SatisfiesQuorum(a.clusterView))
+	a.metricsUpdater.Update(ctx, a.clusterView)
+	a.broadcastViewOnce(ctx)
+	ctx.Logger().Debug("started as seed node", log.String("address", a.nodeState.Address), log.String("nodeId", a.nodeState.ID))
+}
+
+func (a *NodeActor) tryJoinSeeds(ctx vivid.ActorContext, seeds []string) error {
+	if len(seeds) == 0 {
+		return vivid.ErrorIllegalArgument
+	}
+	if a.nodeState == nil {
+		return vivid.ErrorIllegalArgument
+	}
+	shuffled := make([]string, len(seeds))
+	copy(shuffled, seeds)
+	rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+	req := &JoinRequest{NodeState: a.nodeState.Clone()}
+	if a.options.JoinSecret != "" {
+		req.AuthToken = ComputeJoinToken(a.options.JoinSecret, a.nodeState)
+	}
+	var lastErr error
+	for _, seed := range shuffled {
+		ref, err := a.actorRefParser(seed, "/@cluster")
+		if err != nil {
+			ctx.Logger().Warn("create seed ref failed", log.String("seed", seed), log.Any("error", err))
+			lastErr = err
+			continue
+		}
+		reply, err := ctx.Ask(ref, req, JoinAskTimeout(a.options)).Result()
+		if err != nil {
+			ctx.Logger().Warn("join seed failed", log.String("seed", seed), log.Any("error", err))
+			lastErr = err
+			continue
+		}
+		resp, ok := reply.(*JoinResponse)
+		if !ok || resp.View == nil {
+			continue
+		}
+		if !a.acceptProtocolVersion(resp.View.ProtocolVersion) {
+			lastErr = vivid.ErrorClusterProtocolVersionMismatch
+			continue
+		}
+		a.nodeState.Status = MemberStatusUp
+		a.clusterView.AddMember(a.nodeState)
+		a.clusterView.IncrementVersion(a.nodeState.ID)
+		a.clusterView.MergeFromWithOptions(resp.View, a.getMergeOptions())
+		// 重启分代：若视图中已有本节点（例如上次离开后重启再入群），采用更高分代以便他节点采纳新实例
+		if prev := a.clusterView.Members[a.nodeState.ID]; prev != nil && prev.Generation >= a.nodeState.Generation {
+			a.nodeState.Generation = prev.Generation + 1
+			a.nodeState.Timestamp = time.Now().UnixNano()
+			if prev.LogicalClock != 0 {
+				a.nodeState.LogicalClock = prev.LogicalClock + 1
+			} else {
+				a.nodeState.LogicalClock = 1
+			}
+			a.clusterView.AddMember(a.nodeState)
+		}
+		a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, a.quorumCalc.SatisfiesQuorum(a.clusterView))
+		a.broadcastViewOnce(ctx)
+		return nil
+	}
+	return lastErr
+}
+
+func (a *NodeActor) cancelAllSchedulers(ctx vivid.ActorContext) {
+	_ = ctx.Scheduler().Cancel(SchedRefGossip)
+	_ = ctx.Scheduler().Cancel(SchedRefGossipCrossDC)
+	_ = ctx.Scheduler().Cancel(SchedRefFailureDetection)
+	_ = ctx.Scheduler().Cancel(SchedRefJoinRetry)
+	_ = ctx.Scheduler().Cancel(SchedRefLeaveDelay)
+}
+
+func (a *NodeActor) handleGetView(ctx vivid.ActorContext) {
+	if a.clusterView == nil {
+		ctx.Reply(vivid.ErrorIllegalArgument)
 		return
 	}
-	fromAddr := ""
-	if sender := ctx.Sender(); sender != nil {
-		fromAddr = sender.GetAddress()
+	snap := a.clusterView.Snapshot()
+	if snap == nil {
+		ctx.Reply(vivid.ErrorIllegalArgument)
+		return
 	}
-	added := a.mergeMembers(ctx, msg.Members, fromAddr)
-	a.removeStaleMembers(ctx)
-	a.updateLeaderAndPublish(ctx)
-	if added > 0 {
-		ctx.Logger().Debug("cluster members merged from response",
-			log.Int("added", added),
-			log.Int("total", len(a.members)))
-	}
+	ctx.Reply(&GetViewResponse{View: snap, InQuorum: a.quorumCalc.SatisfiesQuorum(a.clusterView)})
 }
 
-func (a *NodeActor) handleSetNodeVersion(ctx vivid.ActorContext, msg *publicMessageAsSetNodeVersion) {
-	a.nodeVersion = msg.version
-	if s, ok := a.members[a.selfAddr]; ok {
-		s.Version = a.nodeVersion
+func (a *NodeActor) handleForceMemberDown(ctx vivid.ActorContext, m *ForceMemberDown) {
+	if m == nil {
+		return
 	}
-	ctx.Logger().Debug("cluster node version updated", log.String("version", a.nodeVersion))
+	if a.options.AdminSecret != "" && !VerifyAdminToken(a.options.AdminSecret, m.AdminToken) {
+		ctx.Reply(vivid.ErrorClusterAdminAuthFailed)
+		return
+	}
+	if a.clusterView == nil || m.NodeID == "" {
+		ctx.Reply(vivid.ErrorIllegalArgument)
+		return
+	}
+	member := a.clusterView.Members[m.NodeID]
+	if member == nil {
+		ctx.Reply(nil)
+		return
+	}
+	removedAddr := member.Address
+	a.clusterView.RemoveMember(m.NodeID)
+	a.clusterView.IncrementVersion(a.nodeState.ID)
+	a.events.PublishMembersChanged(ctx, a.memberAddresses(), 0, []string{removedAddr})
+	a.events.PublishViewChanged(ctx, a.clusterView, 0, []string{removedAddr})
+	a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, a.quorumCalc.SatisfiesQuorum(a.clusterView))
+	a.metricsUpdater.Update(ctx, a.clusterView)
+	ctx.Logger().Debug("member force down", log.String("nodeId", m.NodeID), log.String("address", removedAddr))
+	a.broadcastViewOnce(ctx)
+	ctx.Reply(nil)
 }
 
-func (a *NodeActor) handleGetNodesQuery(ctx vivid.ActorContext, msg *publicMessageAsGetNodesQuery) {
-	if a.options.ClusterName != "" && msg.ClusterName != a.options.ClusterName {
+func (a *NodeActor) handleTriggerBroadcast(ctx vivid.ActorContext, m *TriggerViewBroadcast) {
+	if a.options.AdminSecret != "" {
+		if m == nil || !VerifyAdminToken(a.options.AdminSecret, m.AdminToken) {
+			ctx.Reply(vivid.ErrorClusterAdminAuthFailed)
+			return
+		}
+	}
+	a.broadcastViewOnce(ctx)
+	ctx.Reply(nil)
+}
+
+func (a *NodeActor) handleJoinRequest(ctx vivid.ActorContext, m *JoinRequest) {
+	if m == nil || m.NodeState == nil {
+		ctx.Reply(vivid.ErrorIllegalArgument)
+		return
+	}
+	senderAddr := ""
+	if ctx.Sender() != nil {
+		senderAddr = ctx.Sender().GetAddress()
+	}
+	if !a.joinRateLimiter.Allow(senderAddr) {
+		ctx.Reply(vivid.ErrorClusterJoinRateLimited)
+		return
+	}
+	if len(a.options.JoinAllowAddresses) > 0 && !AllowJoinByAddress(senderAddr, a.options.JoinAllowAddresses) {
+		ctx.Reply(vivid.ErrorClusterJoinNotAllowed)
+		return
+	}
+	if len(a.options.JoinAllowDCs) > 0 && !AllowJoinByDC(m.NodeState.Datacenter(), a.options.JoinAllowDCs) {
+		ctx.Reply(vivid.ErrorClusterJoinNotAllowed)
+		return
+	}
+	if a.options.ClusterName != "" && m.NodeState.ClusterName != a.options.ClusterName {
 		ctx.Reply(vivid.ErrorClusterNameMismatch)
 		return
 	}
-	ctx.Reply(&publicMessageAsGetNodesResult{Members: a.membersToSlice()})
-}
-
-func (a *NodeActor) handleGetClusterState(ctx vivid.ActorContext) {
-	inQuorum := a.hasQuorum()
-	ctx.Reply(&publicMessageAsGetClusterStateResult{
-		LeaderAddress: a.lastLeaderAddr,
-		InQuorum:      inQuorum,
-	})
-}
-
-func (a *NodeActor) handleMembersUpdated(ctx vivid.ActorContext, msg *publicMessageAsMembersUpdated) {
-	if len(msg.nodes) == 0 {
+	if m.NodeState.Status != MemberStatusJoining {
+		ctx.Reply(vivid.ErrorClusterNodeStatusMismatch)
 		return
 	}
-	infos := make([]vivid.ClusterMemberInfo, 0, len(msg.nodes))
-	for _, addr := range msg.nodes {
-		infos = append(infos, vivid.ClusterMemberInfo{Address: addr, Version: ""})
+	if a.options.JoinSecret != "" && !VerifyJoinToken(a.options.JoinSecret, m.AuthToken, m.NodeState) {
+		ctx.Reply(vivid.ErrorClusterJoinAuthFailed)
+		return
 	}
-	added := a.mergeMembers(ctx, infos, "")
-	if added > 0 {
-		ctx.Logger().Debug("cluster members updated from provider", log.Int("added", added))
+	if !a.quorumCalc.SatisfiesQuorum(a.clusterView) {
+		ctx.Reply(vivid.ErrorClusterNotInQuorum)
+		return
 	}
-	a.updateLeaderAndPublish(ctx)
+	accepted := m.NodeState.Clone()
+	accepted.Status = MemberStatusUp
+	a.clusterView.AddMember(accepted)
+	a.clusterView.IncrementVersion(a.nodeState.ID)
+	a.events.PublishMembersChanged(ctx, a.memberAddresses(), 1, nil)
+	a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, a.quorumCalc.SatisfiesQuorum(a.clusterView))
+	a.metricsUpdater.Update(ctx, a.clusterView)
+	snap := a.clusterView.Snapshot()
+	if snap == nil {
+		ctx.Reply(vivid.ErrorIllegalArgument)
+		return
+	}
+	ctx.Reply(&JoinResponse{View: snap})
+	a.broadcastViewOnce(ctx) // 状态变更立即同步
 }
 
-// handleLeaveCluster 发送方主动离开，将其从成员表移除并发布事件、更新选主。
-func (a *NodeActor) handleLeaveCluster(ctx vivid.ActorContext) {
+func (a *NodeActor) handleGossip(ctx vivid.ActorContext, m *GossipMessage) {
+	if m == nil || m.View == nil {
+		return
+	}
+	if a.clusterView == nil {
+		return
+	}
+	if !a.acceptProtocolVersion(m.View.ProtocolVersion) {
+		ctx.Logger().Debug("gossip view rejected: protocol version out of range", log.Any("version", m.View.ProtocolVersion))
+		return
+	}
+	a.metricsUpdater.UpdateViewDivergence(ctx, a.clusterView, m.View)
 	sender := ctx.Sender()
-	if sender == nil {
-		return
-	}
-	addr, ok := utils.NormalizeAddress(sender.GetAddress())
-	if !ok || addr == a.selfAddr {
-		return
-	}
-	if _, ok := a.members[addr]; !ok {
-		return
-	}
-	delete(a.members, addr)
-	a.lastKnownClusterSize = len(a.members)
-	if a.lastKnownClusterSize <= 0 {
-		a.lastKnownClusterSize = 0
-	}
-	ctx.EventStream().Publish(ctx, ves.ClusterMembersChangedEvent{
-		NodeRef:    ctx.Ref(),
-		Members:    a.memberAddresses(),
-		AddedNum:   0,
-		RemovedNum: 1,
-		Removed:    []string{addr},
-	})
-	a.updateLeaderAndPublish(ctx)
-	ctx.Logger().Debug("cluster member left", log.String("addr", addr))
-}
-
-// handleInitiateLeave 本节点主动离开：向当前已知全部成员广播 LeaveCluster，然后从本地成员表移除自身。
-func (a *NodeActor) handleInitiateLeave(ctx vivid.ActorContext) {
-	allAddrs := a.memberAddresses()
-	var targets []string
-	for _, addr := range allAddrs {
-		if addr != a.selfAddr && addr != "" {
-			targets = append(targets, addr)
+	if sender != nil {
+		if addr := sender.GetAddress(); addr != "" {
+			if member := a.clusterView.MemberByAddress(addr); member != nil {
+				member.LastSeen = time.Now().UnixNano()
+				if member.Status == MemberStatusSuspect {
+					member.Status = MemberStatusUp
+				}
+			}
 		}
 	}
-	req := &nodeMessageAsLeaveCluster{}
+	a.clusterView.MergeFromWithOptions(m.View, a.getMergeOptions())
+	a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, a.quorumCalc.SatisfiesQuorum(a.clusterView))
+	a.broadcastViewOnce(ctx)
+}
+
+// runGossipRound 执行一轮 Gossip，由调度器周期触发。
+func (a *NodeActor) runGossipRound(ctx vivid.ActorContext) {
+	targets := a.gossipSelector.SelectTargets(a.clusterView, a.nodeState)
+	snap := a.clusterView.Snapshot()
+	if snap == nil {
+		return
+	}
+	msg := &GossipMessage{View: snap}
 	for _, addr := range targets {
-		ref, err := a.actorRefParser(addr, ctx.Ref().GetPath())
+		if !a.gossipRateLimiter.Allow() {
+			break
+		}
+		ref, err := a.actorRefParser(addr, "/@cluster")
 		if err != nil {
 			continue
 		}
-		ctx.Tell(ref, req)
+		ctx.Tell(ref, msg)
 	}
-	delete(a.members, a.selfAddr)
-	a.lastKnownClusterSize = len(a.members)
-	if a.lastKnownClusterSize <= 0 {
-		a.lastKnownClusterSize = 0
-	}
-	a.updateLeaderAndPublish(ctx)
-	ctx.Logger().Debug("cluster node initiated leave", log.String("self_addr", a.selfAddr))
 }
 
-// handleDiscoverTick 先做故障剔除与选主，再向「种子 + 当前成员」发送 GetNodesRequest，
-// 使视图在全体间充分传播，保证最终一致：各节点使用相同剔除规则与超时，经多轮交换后收敛到同一存活集。
-func (a *NodeActor) handleDiscoverTick(ctx vivid.ActorContext) {
-	a.removeStaleMembers(ctx)
-	a.updateLeaderAndPublish(ctx)
-
-	targets := a.discoveryTargets()
-	req := &nodeMessageAsGetNodesRequest{ClusterName: a.options.ClusterName}
-	now := time.Now()
+func (a *NodeActor) runGossipRoundCrossDC(ctx vivid.ActorContext) {
+	targets := a.gossipSelector.SelectTargetsCrossDC(a.clusterView, a.nodeState)
+	if len(targets) == 0 {
+		return
+	}
+	snap := a.clusterView.Snapshot()
+	if snap == nil {
+		return
+	}
+	msg := &GossipMessage{View: snap}
 	for _, addr := range targets {
-		ref, err := a.actorRefParser(addr, ctx.Ref().GetPath())
+		if !a.gossipRateLimiter.Allow() {
+			break
+		}
+		ref, err := a.actorRefParser(addr, "/@cluster")
 		if err != nil {
-			ctx.Logger().Debug("cluster discovery parse ref failed",
-				log.String("addr", addr),
-				log.Any("err", err))
 			continue
 		}
-		ctx.Tell(ref, req)
-		if s, ok := a.members[addr]; ok {
-			s.LastProbed = now
-		}
+		ctx.Tell(ref, msg)
 	}
-	// 无论本轮是否有目标都调度下一轮，避免无种子/无成员时发现永久停止
+}
+
+func (a *NodeActor) startGossipLoop(ctx vivid.ActorContext) {
 	interval := a.options.DiscoveryInterval
-	_ = ctx.Scheduler().Cancel(discoverySchedulerRef)
-	delay := interval + discoveryJitter(interval)
-	if err := ctx.Scheduler().Once(ctx.Ref(), delay, discoverTickMessage, vivid.WithSchedulerReference(discoverySchedulerRef)); err != nil {
-		ctx.Logger().Warn("cluster discovery scheduler start failed", log.Any("err", err))
+	if interval <= 0 {
+		interval = DefaultGossipInterval
+	}
+	_ = ctx.Scheduler().Loop(ctx.Ref(), interval, &GossipTick{},
+		vivid.WithSchedulerReference(SchedRefGossip))
+	if a.options.CrossDCDiscoveryInterval > 0 {
+		_ = ctx.Scheduler().Loop(ctx.Ref(), a.options.CrossDCDiscoveryInterval, &GossipCrossDCTick{},
+			vivid.WithSchedulerReference(SchedRefGossipCrossDC))
 	}
 }
 
-// discoveryTargets 返回本轮发现的目标地址集合：种子优先，非种子成员按 LastProbed 升序取最久未同步的至多 maxDiscoveryTargetsPerTick 个（≤0 不限制），
-// 保证优先向未同步/最久未同步的节点同步，在超时前每个成员都能被探测到。
-func (a *NodeActor) discoveryTargets() []string {
-	seedSet := make(map[string]struct{})
-	for _, addr := range a.normalizedSeeds {
-		seedSet[addr] = struct{}{}
+func (a *NodeActor) runFailureDetection(ctx vivid.ActorContext) {
+	if a.clusterView == nil {
+		return
 	}
-	var nonSeedMembers []string
-	for addr := range a.members {
-		if addr != a.selfAddr && addr != "" {
-			if _, isSeed := seedSet[addr]; !isSeed {
-				nonSeedMembers = append(nonSeedMembers, addr)
-			}
-		}
-	}
-	maxDiscoveryTargetsPerTick := a.options.MaxDiscoveryTargetsPerTick
-	seedList := a.normalizedSeeds
-	if maxDiscoveryTargetsPerTick > 0 && len(seedList)+len(nonSeedMembers) > maxDiscoveryTargetsPerTick {
-		// 种子全保留，非种子成员按 LastProbed 升序选最久未同步的 need 个，确保在超时前每个节点都能被探测到
-		need := maxDiscoveryTargetsPerTick - len(seedList)
-		if need <= 0 {
-			return seedList
-		}
-		sort.Slice(nonSeedMembers, func(i, j int) bool {
-			ti, tj := a.members[nonSeedMembers[i]].LastProbed, a.members[nonSeedMembers[j]].LastProbed
-			return ti.Before(tj)
-		})
-		if need > len(nonSeedMembers) {
-			need = len(nonSeedMembers)
-		}
-		out := make([]string, 0, len(seedList)+need)
-		out = append(out, seedList...)
-		out = append(out, nonSeedMembers[:need]...)
-		return out
-	}
-	out := make([]string, 0, len(seedList)+len(nonSeedMembers))
-	out = append(out, seedList...)
-	seen := make(map[string]struct{})
-	for _, s := range seedList {
-		seen[s] = struct{}{}
-	}
-	for _, addr := range nonSeedMembers {
-		if _, ok := seen[addr]; !ok {
-			seen[addr] = struct{}{}
-			out = append(out, addr)
-		}
-	}
-	return out
-}
-
-// mergeMembers 将 MemberInfo 列表并入 members。仅对本次响应的发送方 fromAddr 刷新 LastSeen，
-// 其余成员只做并集与 Version 更新，不刷新 LastSeen，这样只有「曾直接回复过」的节点会被视为存活，
-// 下线节点不再回复后其 LastSeen 不再更新，超时后会被 removeStaleMembers 剔除。
-func (a *NodeActor) mergeMembers(ctx vivid.ActorContext, infos []vivid.ClusterMemberInfo, fromAddr string) int {
 	now := time.Now()
-	before := len(a.members)
-	senderNormalized := ""
-	if fromAddr != "" {
-		senderNormalized, _ = utils.NormalizeAddress(fromAddr)
+	toSuspect, toRemove := a.failureDetector.RunDetection(a.clusterView, a.nodeState.Address, a.nodeState.Datacenter(), now)
+	for _, id := range toSuspect {
+		if m := a.clusterView.Members[id]; m != nil {
+			ctx.Logger().Debug("member suspect", log.String("nodeId", id), log.String("address", m.Address))
+			m.Status = MemberStatusSuspect
+			a.clusterView.IncrementVersion(a.nodeState.ID)
+		}
 	}
-	for _, mi := range infos {
-		addr, ok := utils.NormalizeAddress(mi.Address)
-		if !ok {
+	if len(toSuspect) > 0 {
+		a.events.PublishViewChanged(ctx, a.clusterView, 0, nil)
+		a.broadcastViewOnce(ctx)
+	}
+	removedAddrs := make([]string, 0, len(toRemove))
+	for _, id := range toRemove {
+		if m := a.clusterView.Members[id]; m != nil {
+			removedAddrs = append(removedAddrs, m.Address)
+			ctx.Logger().Debug("member unreachable, removing", log.String("nodeId", id), log.String("address", m.Address))
+		}
+		a.clusterView.RemoveMember(id)
+		a.clusterView.IncrementVersion(a.nodeState.ID)
+	}
+	if len(removedAddrs) > 0 {
+		a.events.PublishMembersChanged(ctx, a.memberAddresses(), 0, removedAddrs)
+		a.events.PublishViewChanged(ctx, a.clusterView, 0, removedAddrs)
+		a.broadcastViewOnce(ctx)
+	}
+	inQuorum := a.quorumCalc.SatisfiesQuorum(a.clusterView)
+	a.events.PublishLeaderIfChanged(ctx, a.clusterView, a.nodeState.Address, inQuorum)
+	a.metricsUpdater.Update(ctx, a.clusterView)
+	a.events.PublishDCHealthChangedIfNeeded(ctx, a.clusterView)
+	seeds := a.seedsProvider.GetSeedsForJoin(a.nodeState.Datacenter())
+	if !inQuorum && len(seeds) > 0 {
+		a.tryQuorumRecovery(ctx)
+	}
+}
+
+func (a *NodeActor) tryQuorumRecovery(ctx vivid.ActorContext) {
+	if a.clusterView == nil {
+		return
+	}
+	seeds := a.seedsProvider.GetSeedsForJoin(a.nodeState.Datacenter())
+	req := &GetViewRequest{}
+	n := MaxGetViewTargets
+	if n > len(seeds) {
+		n = len(seeds)
+	}
+	for i := 0; i < n; i++ {
+		ref, err := a.actorRefParser(seeds[i], "/@cluster")
+		if err != nil {
 			continue
 		}
-		if existing, ok := a.members[addr]; ok {
-			existing.Version = mi.Version
-			if addr == senderNormalized {
-				existing.LastSeen = now
+		reply, err := ctx.Ask(ref, req, GetViewAskTimeout(a.options)).Result()
+		if err != nil {
+			continue
+		}
+		if resp, ok := reply.(*GetViewResponse); ok && resp.View != nil {
+			if !a.acceptProtocolVersion(resp.View.ProtocolVersion) {
+				continue
 			}
-		} else {
-			a.members[addr] = &memberState{Address: addr, Version: mi.Version, LastSeen: now}
+			a.clusterView.MergeFromWithOptions(resp.View, a.getMergeOptions())
+			a.metricsUpdater.Update(ctx, a.clusterView)
+			a.broadcastViewOnce(ctx)
+			ctx.Logger().Debug("quorum recovery: merged view from seed", log.String("seed", seeds[i]))
+			return
 		}
 	}
-	if senderNormalized != "" {
-		if s, ok := a.members[senderNormalized]; ok {
-			s.LastSeen = now
-		}
-	}
-	added := len(a.members) - before
-	if added > 0 {
-		if len(a.members) > a.lastKnownClusterSize {
-			a.lastKnownClusterSize = len(a.members)
-		}
-		ctx.EventStream().Publish(ctx, ves.ClusterMembersChangedEvent{
-			NodeRef:    ctx.Ref(),
-			Members:    a.memberAddresses(),
-			AddedNum:   added,
-			RemovedNum: 0,
-		})
-	}
-	return added
 }
 
-// removeStaleMembers 剔除超过 failureDetectionTimeout 未更新的成员（不含自身）。
-func (a *NodeActor) removeStaleMembers(ctx vivid.ActorContext) {
+func (a *NodeActor) startFailureDetectionLoop(ctx vivid.ActorContext) {
 	timeout := a.options.FailureDetectionTimeout
 	if timeout <= 0 {
 		return
 	}
-	deadline := time.Now().Add(-timeout)
-	var removed []string
-	for addr, s := range a.members {
-		if addr == a.selfAddr {
+	interval := timeout / 2
+	if interval < time.Second {
+		interval = time.Second
+	}
+	_ = ctx.Scheduler().Loop(ctx.Ref(), interval, &FailureDetectionTick{},
+		vivid.WithSchedulerReference(SchedRefFailureDetection))
+}
+
+func (a *NodeActor) handleLeaveRequest(ctx vivid.ActorContext) {
+	if a.nodeState == nil {
+		ctx.Reply(nil)
+		return
+	}
+	sender := ctx.Sender()
+	if a.nodeState.Status == MemberStatusLeaving || a.nodeState.Status == MemberStatusExiting {
+		if sender != nil {
+			ctx.Tell(sender, &LeaveAck{})
+		}
+		return
+	}
+	a.leaveCoord.SetReplyTo(sender)
+	a.cancelAllSchedulers(ctx)
+	a.nodeState.Status = MemberStatusLeaving
+	a.broadcastViewOnce(ctx)
+	a.nodeState.Status = MemberStatusExiting
+	ctx.Logger().Debug("cluster node exiting", log.String("nodeId", a.nodeState.ID))
+	if ref := a.leaveCoord.GetAndClearReplyTo(); ref != nil {
+		ctx.Reply(&LeaveAck{})
+	}
+	a.publishLeaveCompleted(ctx)
+}
+
+func (a *NodeActor) publishLeaveCompleted(ctx vivid.ActorContext) {
+	if ctx == nil {
+		return
+	}
+	es := ctx.EventStream()
+	if es == nil {
+		return
+	}
+	es.Publish(ctx, ves.ClusterLeaveCompletedEvent{NodeRef: ctx.Ref()})
+}
+
+func (a *NodeActor) broadcastViewOnce(ctx vivid.ActorContext) {
+	snap := a.clusterView.Snapshot()
+	if snap == nil {
+		return
+	}
+	msg := &GossipMessage{View: snap}
+	for _, addr := range a.gossipSelector.SelectTargets(a.clusterView, a.nodeState) {
+		if !a.gossipRateLimiter.Allow() {
+			break
+		}
+		ref, err := a.actorRefParser(addr, "/@cluster")
+		if err != nil {
 			continue
 		}
-		if s.LastSeen.Before(deadline) {
-			removed = append(removed, addr)
-		}
+		ctx.Tell(ref, msg)
 	}
-	for _, addr := range removed {
-		delete(a.members, addr)
-	}
-	if len(removed) > 0 {
-		ctx.EventStream().Publish(ctx, ves.ClusterMembersChangedEvent{
-			NodeRef:    ctx.Ref(),
-			Members:    a.memberAddresses(),
-			AddedNum:   0,
-			RemovedNum: len(removed),
-			Removed:    removed,
-		})
-		ctx.Logger().Debug("cluster members removed by failure detection", log.Any("removed", removed))
-	}
-}
-
-// hasQuorum 判断当前视图是否达到多数派：lastKnownClusterSize<=1 视为单节点有 quorum；
-// 否则要求 len(members) > lastKnownClusterSize/2（分区时少数派无 quorum）。
-func (a *NodeActor) hasQuorum() bool {
-	if a.lastKnownClusterSize <= 1 {
-		return true
-	}
-	return len(a.members) > a.lastKnownClusterSize/2
-}
-
-// updateLeaderAndPublish 按当前 members 做确定性选主（最小地址），若 LeaderAddr 或 InQuorum 变化则发布事件。
-func (a *NodeActor) updateLeaderAndPublish(ctx vivid.ActorContext) {
-	if len(a.members) == 0 {
-		return
-	}
-	addrs := a.memberAddresses()
-	sort.Strings(addrs)
-	leaderAddr := addrs[0]
-	inQuorum := a.hasQuorum()
-	if leaderAddr == a.lastLeaderAddr && inQuorum == a.lastInQuorum {
-		return
-	}
-	a.lastLeaderAddr = leaderAddr
-	a.lastInQuorum = inQuorum
-	ctx.EventStream().Publish(ctx, ves.ClusterLeaderChangedEvent{
-		NodeRef:    ctx.Ref(),
-		LeaderAddr: leaderAddr,
-		IAmLeader:  a.selfAddr == leaderAddr,
-		InQuorum:   inQuorum,
-	})
-	ctx.Logger().Debug("cluster leader changed", log.String("leader", leaderAddr), log.Bool("i_am_leader", a.selfAddr == leaderAddr), log.Bool("in_quorum", inQuorum))
-}
-
-func (a *NodeActor) membersToSlice() []vivid.ClusterMemberInfo {
-	if len(a.members) == 0 {
-		return nil
-	}
-	out := make([]vivid.ClusterMemberInfo, 0, len(a.members))
-	for _, s := range a.members {
-		out = append(out, vivid.ClusterMemberInfo{Address: s.Address, Version: s.Version})
-	}
-	return out
 }
 
 func (a *NodeActor) memberAddresses() []string {
-	if len(a.members) == 0 {
+	if a.clusterView == nil || a.clusterView.Members == nil {
 		return nil
 	}
-	out := make([]string, 0, len(a.members))
-	for addr := range a.members {
-		out = append(out, addr)
+	out := make([]string, 0, len(a.clusterView.Members))
+	for _, m := range a.clusterView.Members {
+		if m != nil && m.Address != "" {
+			out = append(out, m.Address)
+		}
 	}
 	return out
 }

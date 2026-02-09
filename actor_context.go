@@ -455,6 +455,12 @@ type actorBasic interface {
 	//   - 如果你在未启用（未配置）全局指标采集时调用本方法，采集到的数据不会被纳入集中观察与管理，建议只在开发或测试场景下采用。
 	Metrics() metrics.Metrics
 
+	// MetricsEnabled 方法用于判断当前 ActorContext 是否启用指标收集功能。
+	//
+	// 返回值：
+	//   - bool: 若启用指标收集则返回 true，否则返回 false。
+	MetricsEnabled() bool
+
 	// Ping 向目标 ActorRef 发送系统级 Ping 消息，并同步等待返回其 Pong 响应，用于可达性检测与时延评估。
 	//
 	// 功能说明：

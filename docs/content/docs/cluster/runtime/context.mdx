@@ -1,0 +1,81 @@
+---
+title: ClusterContext
+description: 运行时 API：GetMembers、InQuorum、Leave
+---
+
+在 Actor 内通过 **ctx.Cluster()** 获取 ClusterContext；系统级通过 **system.Cluster()**。未启用集群时返回 **nil**，调用前需做 nil 判断。
+
+## 方法说明
+
+| 方法 | 签名 | 说明 |
+|------|------|------|
+| **GetMembers** | `() ([]ClusterMemberInfo, error)` | 返回当前视图中的成员列表；未启用时返回 ErrorClusterDisabled |
+| **InQuorum** | `() (bool, error)` | 当前节点是否处于多数派；false 时不应以 Leader 做关键决策 |
+| **Leave** | `()` | 本节点主动离开集群，优雅下线；幂等，仅执行一次 |
+
+## ClusterMemberInfo
+
+GetMembers 返回的成员信息结构：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| **Address** | string | 节点 Remoting 地址（host:port） |
+| **Version** | string | 节点版本号（NodeState.Version） |
+| **Datacenter** | string | 数据中心标识 |
+| **Rack** | string | 机架标识 |
+| **Region** | string | 区域标识 |
+| **Zone** | string | 可用区标识 |
+
+## 使用示例
+
+```go
+func (a *MyActor) OnReceive(ctx vivid.ActorContext) {
+    cluster := ctx.Cluster()
+    if cluster == nil {
+        return
+    }
+
+    members, err := cluster.GetMembers()
+    if err != nil {
+        if errors.Is(err, vivid.ErrorClusterDisabled) {
+            return
+        }
+        // 处理其他错误（如 Ask 超时）
+        return
+    }
+
+    for _, m := range members {
+        log.Printf("member: %s dc=%s", m.Address, m.Datacenter)
+    }
+
+    inQuorum, err := cluster.InQuorum()
+    if err != nil {
+        return
+    }
+    if !inQuorum {
+        // 当前不在多数派，不应执行关键写操作
+        return
+    }
+
+    // 执行需要 quorum 保证的操作
+}
+```
+
+## 优雅退出
+
+在系统 Stop 前调用 `Leave()`，等待「已退出」后再继续：
+
+```go
+if system.Cluster() != nil {
+    system.Cluster().Leave()
+}
+system.Stop()
+```
+
+Leave 会临时启动一个 **LeaveWatcher** Actor 订阅 **ClusterLeaveCompletedEvent**，同时向 NodeActor 发送 LeaveRequest；当本节点完成广播离开视图并进入 Exiting 后，NodeActor 会发布该事件，LeaveWatcher 收到后解除阻塞使 Leave() 返回。若在 LeaveGraceTimeout 内未收到事件则超时返回，不阻塞 Stop 流程。
+
+## 注意事项
+
+- **GetMembers** 与 **InQuorum** 通过 Ask NodeActor 获取视图，有网络/超时成本，避免高频调用。
+- **InQuorum** 为 false 时表示可能处于分区或少数派，不应以 Leader 做单例迁移、写仲裁等关键决策。
+- 以当前 vivid 包与 ClusterContext 接口为准；GetMembers、InQuorum、Leave 为集群运行时主要 API。

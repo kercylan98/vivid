@@ -1,0 +1,55 @@
+---
+title: 多数据中心
+description: DC、Rack、Region、Zone 与跨 DC Gossip
+---
+
+集群支持多数据中心（Multi-Datacenter）部署，通过拓扑标签区分节点所在位置，并针对跨 DC 场景做超时与 Gossip 优化。
+
+## 拓扑标签
+
+在 ClusterOptions 中设置，会写入 NodeState.Labels 并随 Gossip 传播：
+
+| 标签 | 选项 | 说明 |
+|------|------|------|
+| **datacenter** | WithClusterDatacenter | 数据中心标识 |
+| **rack** | WithClusterRack | 机架标识 |
+| **region** | WithClusterRegion | 区域标识（同 Region 优先 Gossip） |
+| **zone** | WithClusterZone | 可用区标识 |
+
+GetMembers() 返回的 ClusterMemberInfo 包含 Datacenter、Rack、Region、Zone。
+
+## 种子按 DC 分组
+
+使用 **WithClusterSeedsByDC** 按 DC 分组种子，加入时优先尝试本 DC 种子：
+
+```go
+vivid.WithClusterSeedsByDC(map[string][]string{
+    "dc1": []string{"seed-dc1-a:8080", "seed-dc1-b:8080"},
+    "dc2": []string{"seed-dc2-a:8080", "seed-dc2-b:8080"},
+}),
+```
+
+SeedsByDC 可与 Seeds 同时存在，合并使用；全球部署时建议每 DC 至少配置一种子。
+
+## 跨 DC 故障检测
+
+- **CrossDCFailureDetectionTimeout**：跨 DC 成员的故障检测超时。若 >0 则对其它 DC 的成员使用此超时；为 0 时集群内部使用 FailureDetectionTimeout 的 2 倍（推荐跨 DC 显式配置为 2–3 倍同 DC 超时）。
+- **CrossDCDiscoveryInterval**：跨 DC Gossip 的轮次间隔。若 >0 则额外启动一轮仅向跨 DC 目标发送的 Gossip，降低跨 DC 带宽与误判；0 表示不单独调度。
+
+## 跨 DC Gossip 目标数
+
+**MaxDiscoveryTargetsPerTickCrossDC**：跨 DC 每轮 Gossip 最大目标数；>0 时跨 DC 轮次使用此值，否则使用 MaxDiscoveryTargetsPerTick。
+
+## 必须参与 Quorum 的 DC
+
+**RequiredDCsForQuorum**：必须参与 quorum 的 DC 列表；非空时这些 DC 中每个至少需有 1 个健康节点才满足 quorum，用于关键 DC 必须参与的多活。
+
+## Gossip 选择优先级
+
+GossipTargetSelector 按优先级选择目标：同 Region 同 DC 优先，再同 Region 跨 DC，再跨 Region；减少跨 DC 流量、加快本 DC 收敛。
+
+## 多 DC 下的优雅退出
+
+多 DC 时建议：
+- **LeaveBroadcastDelay** 增大至 1–2s，给跨 DC 传播留足时间。
+- **LeaveBroadcastRounds** 设为 >1，多轮广播以提高高延迟 DC 收敛概率。

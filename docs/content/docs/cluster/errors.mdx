@@ -1,0 +1,36 @@
+---
+title: 集群错误
+description: 集群相关预定义错误码
+---
+
+集群相关预定义错误均为 **vivid.Error**，可用 **errors.Is** 判定。
+
+| 变量 | 错误码 | 说明 |
+|------|--------|------|
+| **ErrorClusterNameMismatch** | 150000 | 集群名称不匹配 |
+| **ErrorClusterDisabled** | 150001 | 集群已禁用（未启用集群时调用 ClusterContext 方法） |
+| **ErrorClusterNodeStatusMismatch** | 150002 | 节点状态不匹配 |
+| **ErrorClusterNotInQuorum** | 150003 | 当前不在多数派，拒绝加入/决策 |
+| **ErrorClusterJoinAuthFailed** | 150004 | Join 认证失败（Token 无效或缺失） |
+| **ErrorClusterJoinRateLimited** | 150005 | Join 请求被限流 |
+| **ErrorClusterProtocolVersionMismatch** | 150006 | 集群协议版本不兼容 |
+| **ErrorClusterJoinNotAllowed** | 150007 | 地址或 DC 不在白名单 |
+| **ErrorClusterAdminAuthFailed** | 150008 | 管理操作 Token 无效 |
+
+## 判定示例
+
+```go
+if errors.Is(err, vivid.ErrorClusterDisabled) {
+    // 未启用集群
+}
+if errors.Is(err, vivid.ErrorClusterJoinAuthFailed) {
+    // Join 认证失败，检查 JoinSecret 与 AuthToken
+}
+if errors.Is(err, vivid.ErrorClusterJoinNotAllowed) {
+    // 地址或 DC 不在白名单
+}
+```
+
+## 更多错误
+
+完整错误体系见 [错误处理](/docs/config/errors)。

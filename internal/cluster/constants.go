@@ -1,6 +1,22 @@
 package cluster
 
+import "time"
+
+// 调度器引用，用于 Cancel/Loop 标识
 const (
-	// maxGetNodesResponseMembers 反序列化 GetNodesResponse 时允许的 Members 数量上限，防止恶意或异常消息导致 OOM。
-	maxGetNodesResponseMembers = 65536
+	SchedRefGossip           = "cluster-gossip"
+	SchedRefGossipCrossDC    = "cluster-gossip-cross-dc"
+	SchedRefFailureDetection = "cluster-failure-detection"
+	SchedRefJoinRetry        = "cluster-join-retry"
+	SchedRefLeaveDelay       = "cluster-leave-delay"
+)
+
+const (
+	DefaultGossipInterval       = 1 * time.Second
+	DefaultMaxTargetsPerTick    = 20
+	InitialJoinRetryDelay       = 2 * time.Second
+	MaxJoinRetryDelay           = 30 * time.Second
+	MaxGetViewTargets           = 5
+	LeaveGraceTimeout           = 5 * time.Second
+	MaxJoinRateLimitEntries     = 10000
 )

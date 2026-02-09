@@ -67,8 +67,15 @@ var (
 
 // Cluster 相关错误。
 var (
-	ErrorClusterNameMismatch = RegisterError(150000, "cluster name mismatch") // 集群名称不匹配
-	ErrorClusterDisabled     = RegisterError(150001, "cluster disabled")      // 集群已禁用
+	ErrorClusterNameMismatch       = RegisterError(150000, "cluster name mismatch")        // 集群名称不匹配
+	ErrorClusterDisabled           = RegisterError(150001, "cluster disabled")             // 集群已禁用
+	ErrorClusterNodeStatusMismatch = RegisterError(150002, "cluster node status mismatch") // 节点状态不匹配
+	ErrorClusterNotInQuorum        = RegisterError(150003, "cluster not in quorum")       // 当前不在多数派，拒绝加入/决策
+	ErrorClusterJoinAuthFailed       = RegisterError(150004, "cluster join auth failed")        // Join 认证失败（Token 无效或缺失）
+	ErrorClusterJoinRateLimited      = RegisterError(150005, "cluster join rate limited")       // Join 请求被限流
+	ErrorClusterProtocolVersionMismatch = RegisterError(150006, "cluster protocol version mismatch") // 集群协议版本不兼容
+	ErrorClusterJoinNotAllowed         = RegisterError(150007, "cluster join not allowed")          // 地址或 DC 不在白名单
+	ErrorClusterAdminAuthFailed        = RegisterError(150008, "cluster admin auth failed")        // 管理操作 Token 无效
 )
 
 var _ error = (*Error)(nil)

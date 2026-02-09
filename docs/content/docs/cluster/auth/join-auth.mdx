@@ -1,0 +1,36 @@
+---
+title: 加入认证
+description: JoinSecret、ComputeJoinToken、AuthToken
+---
+
+当配置了 **JoinSecret** 时，接收方会校验 Join 请求中的 **AuthToken**，只有携带有效 Token 的请求才会被接受。请求方需使用相同的 secret 和 NodeState 调用 **ComputeJoinToken** 生成 Token。
+
+## 启用方式
+
+```go
+vivid.WithClusterJoinSecret("your-shared-secret"),
+```
+
+非空时 Join 请求须携带由此生成的 AuthToken，否则拒绝加入，返回 **ErrorClusterJoinAuthFailed**。
+
+## 生成 Token
+
+使用 **cluster.ComputeJoinToken** 生成 AuthToken（需导入 `github.com/kercylan98/vivid/internal/cluster`）：
+
+```go
+import "github.com/kercylan98/vivid/internal/cluster"
+
+token := cluster.ComputeJoinToken(secret, nodeState)
+// 将 token 填入 Join 请求的 AuthToken 字段
+```
+
+ComputeJoinToken 基于 HMAC-SHA256，输入为 secret 与 NodeState 的 ClusterName、ID、Address。
+
+## 校验逻辑
+
+接收方使用 **cluster.VerifyJoinToken** 校验：若 secret 为空则跳过校验；否则比较请求中的 token 与本地用 secret 和请求中的 NodeState 计算的期望值。
+
+## 安全建议
+
+- JoinSecret 应与所有允许加入的节点共享，通过安全通道分发。
+- 不要在代码或配置文件中明文暴露；建议使用环境变量或密钥管理服务。

@@ -1,126 +1,74 @@
 package cluster
 
-import (
-	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/messages"
-)
+import "time"
 
-func init() {
-	vivid.RegisterCustomMessage[*nodeMessageAsGetNodesRequest]("nodeMessageAsGetNodesRequest", nodeMessageAsGetNodesRequestReader, nodeMessageAsGetNodesRequestWriter)
-	vivid.RegisterCustomMessage[*nodeMessageAsGetNodesResponse]("getNodesResponse", nodeMessageAsGetNodesResponseReader, nodeMessageAsGetNodesResponseWriter)
-	vivid.RegisterCustomMessage[*nodeMessageAsLeaveCluster]("leaveCluster", nodeMessageAsLeaveClusterReader, nodeMessageAsLeaveClusterWriter)
+// 以下消息类型在序列化时仍使用 "ClusterInternalMessageFor*" 作为 wire 名称以保持兼容。
+
+// StartJoinRequest 启动加入集群请求（当前未使用，保留供扩展）。
+type StartJoinRequest struct {
+	Seeds []string
 }
 
-// nodeMessageAsGetNodesRequest 表示向远程 NodeActor 请求其当前成员列表的协议消息。
-// ClusterName 用于仅与同集群节点交换；空串表示不校验集群名。
-type nodeMessageAsGetNodesRequest struct {
-	ClusterName string
+// JoinRequest 节点向种子发起的加入请求。
+type JoinRequest struct {
+	NodeState *NodeState
+	AuthToken string // 加入认证令牌，当接收方配置了 JoinSecret 时必填
 }
 
-func nodeMessageAsGetNodesRequestReader(message any, reader *messages.Reader, codec messages.Codec) error {
-	m := message.(*nodeMessageAsGetNodesRequest)
-	s, err := reader.ReadString()
-	if err != nil {
-		return err
-	}
-	m.ClusterName = s
-	return nil
+// JoinResponse 种子节点对加入请求的回复，携带当前视图。
+type JoinResponse struct {
+	View *ClusterView
 }
 
-func nodeMessageAsGetNodesRequestWriter(message any, writer *messages.Writer, codec messages.Codec) error {
-	m := message.(*nodeMessageAsGetNodesRequest)
-	writer.WriteString(m.ClusterName)
-	return writer.Err()
+// GossipMessage 携带视图的 Gossip 消息，用于成员视图扩散。
+type GossipMessage struct {
+	View *ClusterView
 }
 
-// nodeMessageAsGetNodesResponse 表示对 GetNodesRequest 的回复。
-// 请求方仅当 ClusterName 与自身一致时合并 Members，并更新对应成员的 LastSeen。
-type nodeMessageAsGetNodesResponse struct {
-	ClusterName string
-	Members     []vivid.ClusterMemberInfo
+// GossipTick 触发本 DC 内一轮 Gossip 的定时消息。
+type GossipTick struct{}
+
+// GossipCrossDCTick 触发跨 DC 一轮 Gossip 的定时消息。
+type GossipCrossDCTick struct{}
+
+// FailureDetectionTick 触发故障检测轮次的定时消息。
+type FailureDetectionTick struct{}
+
+// LeaveRequest 请求本节点优雅退出集群（Ask 后等待 LeaveAck）。
+type LeaveRequest struct{}
+
+// LeaveAck 本节点完成「广播离开视图并进入 Exiting」后回复给 Leave 调用方。
+type LeaveAck struct{}
+
+// ExitingReady 内部消息，表示已进入 Exiting 状态并可回复 LeaveAck。
+type ExitingReady struct{}
+
+// LeaveBroadcastRound 优雅退出时多轮广播的轮次消息，Round 从 1 开始。
+type LeaveBroadcastRound struct {
+	Round int
 }
 
-func nodeMessageAsGetNodesResponseReader(message any, reader *messages.Reader, codec messages.Codec) error {
-	m := message.(*nodeMessageAsGetNodesResponse)
-	cn, err := reader.ReadString()
-	if err != nil {
-		return err
-	}
-	m.ClusterName = cn
-	n, err := reader.ReadUint32()
-	if err != nil {
-		return err
-	}
-	if n > maxGetNodesResponseMembers {
-		n = maxGetNodesResponseMembers
-	}
-	m.Members = make([]vivid.ClusterMemberInfo, 0, int(n))
-	for i := uint32(0); i < n; i++ {
-		addr, err := reader.ReadString()
-		if err != nil {
-			return err
-		}
-		ver, err := reader.ReadString()
-		if err != nil {
-			return err
-		}
-		m.Members = append(m.Members, vivid.ClusterMemberInfo{Address: addr, Version: ver})
-	}
-	return nil
+// JoinRetryTick 加入重试定时消息，NextDelay 为本次调度使用的延迟（用于日志/序列化）。
+type JoinRetryTick struct {
+	NextDelay time.Duration
 }
 
-func nodeMessageAsGetNodesResponseWriter(message any, writer *messages.Writer, codec messages.Codec) error {
-	m := message.(*nodeMessageAsGetNodesResponse)
-	writer.WriteString(m.ClusterName)
-	writer.WriteUint32(uint32(len(m.Members)))
-	for _, mi := range m.Members {
-		writer.WriteString(mi.Address)
-		writer.WriteString(mi.Version)
-	}
-	return writer.Err()
+// GetViewRequest 请求当前集群视图（用于 Context.GetMembers/InQuorum 及 quorum 恢复）。
+type GetViewRequest struct{}
+
+// GetViewResponse 返回当前视图及是否满足法定人数。
+type GetViewResponse struct {
+	View     *ClusterView
+	InQuorum bool
 }
 
-// publicMessageAsGetNodesQuery 用于向本节点 NodeActor 查询当前成员列表（本地 Ask），返回 GetNodesResult。
-type publicMessageAsGetNodesQuery struct {
-	ClusterName string
+// ForceMemberDown 管理消息：将指定节点强制下线并从视图移除。
+type ForceMemberDown struct {
+	NodeID     string
+	AdminToken string
 }
 
-// publicMessageAsGetNodesResult 为 GetNodesQuery 的回复。
-type publicMessageAsGetNodesResult struct {
-	Members []vivid.ClusterMemberInfo
-}
-
-// publicMessageAsMembersUpdated 由外部服务发现向 NodeActor 推送最新节点列表时使用。
-type publicMessageAsMembersUpdated struct {
-	nodes []string
-}
-
-// publicMessageAsSetNodeVersion 用于配置本节点版本号（仅本地投递），会体现在成员信息中。
-type publicMessageAsSetNodeVersion struct {
-	version string
-}
-
-// nodeMessageAsLeaveCluster 表示发送方节点主动离开集群；收到方应将发送方从成员表移除，无需等待故障检测超时。
-// 由即将下线的节点向其已知成员广播（跨节点需注册 Remoting）。
-type nodeMessageAsLeaveCluster struct{}
-
-func nodeMessageAsLeaveClusterReader(message any, reader *messages.Reader, codec messages.Codec) error {
-	return nil
-}
-
-func nodeMessageAsLeaveClusterWriter(message any, writer *messages.Writer, codec messages.Codec) error {
-	return nil
-}
-
-// publicMessageAsInitiateLeave 用于让本节点主动离开集群（仅本地投递）。向 NodeActor Tell 后，其会向当前已知成员发送 LeaveCluster，
-// 并将自身从本地成员表移除，其它节点收到 LeaveCluster 后会立即移除本节点，实现及时更新。
-type publicMessageAsInitiateLeave struct{}
-
-// publicMessageAsGetClusterState 用于向本节点 NodeActor 查询当前选主与多数派状态（本地 Ask）。
-type publicMessageAsGetClusterState struct{}
-
-// publicMessageAsGetClusterStateResult 为 GetClusterState 的回复，供 ClusterContext.Leader/IsLeader/InQuorum 使用。
-type publicMessageAsGetClusterStateResult struct {
-	LeaderAddress string
-	InQuorum      bool
+// TriggerViewBroadcast 管理消息：立即触发一轮视图广播（用于运维收敛）。
+type TriggerViewBroadcast struct {
+	AdminToken string
 }

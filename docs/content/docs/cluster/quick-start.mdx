@@ -1,0 +1,74 @@
+---
+title: 快速开始
+description: 启用集群、最小配置与依赖导入
+---
+
+## 前置条件
+
+集群依赖 **Remoting**，必须先启用 Remoting 并配置地址与编解码。详见 [远程通讯](/docs/config/remoting)。
+
+## 启用集群
+
+通过 **WithActorSystemRemotingOptions** 传入 **WithActorSystemRemotingClusterOption**（或 **WithActorSystemRemotingClusterOptions**）启用：
+
+```go
+import (
+    "github.com/kercylan98/vivid"
+    "github.com/kercylan98/vivid/bootstrap"
+    _ "github.com/kercylan98/vivid/internal/cluster" // 必须导入以注册 cluster 包
+)
+
+system := bootstrap.NewActorSystem(
+    vivid.WithActorSystemRemoting("0.0.0.0:8080", "node1:8080"),
+    vivid.WithActorSystemRemotingOptions(
+        vivid.NewActorSystemRemotingOptions(),
+        vivid.WithActorSystemRemotingClusterOption(
+            vivid.WithClusterName("my-cluster"),
+            vivid.WithClusterSeeds([]string{"seed1:8080", "seed2:8080"}),
+        ),
+    ),
+)
+```
+
+## 最小配置
+
+| 选项 | 说明 |
+|------|------|
+| **WithClusterName** | 集群逻辑名；同名节点交换成员视图，空串表示不校验 |
+| **WithClusterSeeds** | 种子节点地址列表（host:port），建议至少 2 个 |
+
+其他选项使用默认值：发现间隔 1s、故障超时 40s、每轮目标数 20、Leave 广播延迟 200ms。
+
+## 依赖导入
+
+**必须**在 `main` 或 `init` 中增加：
+
+```go
+import _ "github.com/kercylan98/vivid/internal/cluster"
+```
+
+否则 `SpawnNodeActor` 会在创建集群时 panic（cluster 未注册）。
+
+## 使用 ClusterContext
+
+在 Actor 内通过 `ctx.Cluster()` 获取，需先做 nil 检查：
+
+```go
+func (a *MyActor) OnReceive(ctx vivid.Context) {
+    if ctx.Cluster() == nil {
+        return // 未启用集群
+    }
+    members, err := ctx.Cluster().GetMembers()
+    if err != nil {
+        return
+    }
+    inQuorum, _ := ctx.Cluster().InQuorum()
+    // ...
+}
+```
+
+## 下一步
+
+- 完整配置见 [配置选项](/docs/cluster/config/options)
+- API 详情见 [ClusterContext](/docs/cluster/runtime/context)
+- 事件订阅见 [集群事件](/docs/cluster/events/events)

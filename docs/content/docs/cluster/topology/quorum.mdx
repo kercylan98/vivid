@@ -1,0 +1,27 @@
+---
+title: 法定人数
+description: QuorumStrategy、RequiredDCsForQuorum
+---
+
+**Quorum**（法定人数）表示集群达成一致所需的最小健康节点数。当 `HealthyCount >= QuorumSize` 时，当前节点认为自己在多数派（InQuorum 为 true），可安全执行需要共识的关键操作（如单例迁移、写仲裁）。
+
+## QuorumStrategy
+
+法定人数策略由 **WithClusterQuorumStrategy** 配置：
+
+| 策略 | 常量 | 说明 |
+|------|------|------|
+| **GlobalMajority** | QuorumStrategyGlobalMajority | 全局多数：HealthyCount >= (HealthyCount/2)+1（默认） |
+| **MajorityDCs** | QuorumStrategyMajorityDCs | 多数 DC 参与：至少 ceil(DC总数/2) 个 DC 各有至少 1 个健康节点 |
+| **AtLeastOnePerDC** | QuorumStrategyAtLeastOnePerDC | 每 DC 至少一票：每个有成员的 DC 至少 1 个健康节点 |
+
+## RequiredDCsForQuorum
+
+**WithClusterRequiredDCsForQuorum**：必须参与 quorum 的 DC 列表。非空时，这些 DC 中每个至少需有 1 个健康节点才满足 quorum，用于关键 DC 必须参与的多活场景。
+
+## 使用场景
+
+- **InQuorum()** 为 false 时，不应以 Leader 做关键决策（如单例迁移、写仲裁）。
+- **ClusterQuorumLostEvent** 表示失去多数派，可暂停关键写操作。
+- **ClusterQuorumReachedEvent** 表示重新达到多数派，可恢复操作。
+- **ClusterLeaderChangedEvent.InQuorum** 为 false 时表示当前视图未达多数派，不应信任 Leader。

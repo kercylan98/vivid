@@ -1,0 +1,121 @@
+---
+title: 集群事件
+description: 成员变更、Leader、Quorum、View、DC 健康事件
+---
+
+集群成员变更、选主结果变化、多数派状态变化等会发布到 **EventStream**，可订阅以做监控、告警或迁移逻辑。订阅方式与 [事件流](/docs/basics/event-stream) 一致，在 OnReceive 中根据 `ctx.Message()` 类型断言处理。
+
+## 事件类型
+
+| 事件类型 | 说明 |
+|----------|------|
+| **ves.ClusterMembersChangedEvent** | 成员列表变更（新增或故障剔除） |
+| **ves.ClusterLeaderChangedEvent** | 选主结果变化 |
+| **ves.ClusterQuorumLostEvent** | 当前节点失去多数派 |
+| **ves.ClusterQuorumReachedEvent** | 当前节点重新达到多数派 |
+| **ves.ClusterViewChangedEvent** | 成员视图变更（新增、剔除、Suspect 等） |
+| **ves.ClusterDCHealthChangedEvent** | 某 DC 健康状态变化 |
+| **ves.ClusterLeaveCompletedEvent** | 本节点完成优雅退出（已广播离开视图并进入 Exiting、已回复 LeaveAck）；供 LeaveWatcher 等监听以解除 Leave() 阻塞 |
+
+## ClusterMembersChangedEvent
+
+成员列表发生变更时发布。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| **NodeRef** | vivid.ActorRef | 变更的节点引用 |
+| **Members** | []string | 变更后的成员列表 |
+| **AddedNum** | int | 新增成员数量 |
+| **RemovedNum** | int | 移除成员数量 |
+| **Removed** | []string | 移除的成员列表 |
+
+## ClusterLeaderChangedEvent
+
+确定性选主结果变化时发布，便于集群单例等迁移。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| **NodeRef** | vivid.ActorRef | 变更的节点引用 |
+| **LeaderAddr** | string | 新的领导者地址 |
+| **IAmLeader** | bool | 当前节点是否为领导者 |
+| **InQuorum** | bool | 当前节点是否处于多数派；false 时不应以 Leader 做关键决策 |
+
+## ClusterQuorumLostEvent
+
+当前节点失去多数派时发布（HealthyCount < QuorumSize）。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| **NodeRef** | vivid.ActorRef | 节点引用 |
+| **HealthyCount** | int | 健康节点数 |
+| **QuorumSize** | int | 法定人数 |
+| **UnhealthyCount** | int | 不健康节点数 |
+
+## ClusterQuorumReachedEvent
+
+当前节点重新达到多数派时发布。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| **NodeRef** | vivid.ActorRef | 节点引用 |
+| **HealthyCount** | int | 健康节点数 |
+| **QuorumSize** | int | 法定人数 |
+
+## ClusterViewChangedEvent
+
+成员视图发生变更时发布（新增、剔除、Suspect 等），便于监控与告警。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| **NodeRef** | vivid.ActorRef | 节点引用 |
+| **HealthyCount** | int | 健康节点数 |
+| **UnhealthyCount** | int | 不健康节点数 |
+| **QuorumSize** | int | 法定人数 |
+| **MemberCount** | int | 成员总数 |
+| **AddedNum** | int | 新增数量 |
+| **RemovedNum** | int | 移除数量 |
+| **Removed** | []string | 移除的成员列表 |
+
+## ClusterDCHealthChangedEvent
+
+某 DC 健康状态变化时发布（从有健康节点变为无，或从无变为有），便于区域级故障感知与切换。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| **NodeRef** | vivid.ActorRef | 节点引用 |
+| **Datacenter** | string | 数据中心标识 |
+| **HealthyCount** | int | 健康节点数 |
+| **UnhealthyCount** | int | 不健康节点数 |
+| **MemberCount** | int | 成员总数 |
+| **IsHealthy** | bool | 该 DC 是否至少有一个健康节点 |
+
+## ClusterLeaveCompletedEvent
+
+本节点完成优雅退出流程时发布（已广播离开视图并进入 Exiting、已回复 LeaveAck）。Leave() 内部会临时启动 LeaveWatcher 订阅此事件，收到后解除阻塞。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| **NodeRef** | vivid.ActorRef | 集群节点 Actor 引用 |
+
+## 订阅示例
+
+事件通过 EventStream 投递到订阅者邮箱，消息类型与发布时一致（通常为值类型，如 `ves.ClusterMembersChangedEvent`）：
+
+```go
+func (a *MyActor) OnReceive(ctx vivid.ActorContext) {
+    switch msg := ctx.Message().(type) {
+    case ves.ClusterMembersChangedEvent:
+        log.Printf("members changed: added=%d removed=%d", msg.AddedNum, msg.RemovedNum)
+    case ves.ClusterLeaderChangedEvent:
+        if msg.IAmLeader && msg.InQuorum {
+            // 成为 Leader 且在多数派，可执行单例迁移等
+        }
+    case ves.ClusterQuorumLostEvent:
+        // 失去多数派，暂停关键写操作
+    case ves.ClusterQuorumReachedEvent:
+        // 恢复多数派
+    }
+}
+```
+
+订阅需在 OnLaunch 或首次 OnReceive 中调用 `ctx.EventStream().Subscribe(ctx, ves.ClusterMembersChangedEvent{})` 等。

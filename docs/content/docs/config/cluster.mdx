@@ -1,69 +1,12 @@
 ---
-title: 集群
-description: 集群启用、ClusterOptions、ClusterContext 与成员发现
+title: 集群（已迁移）
+description: 集群文档已迁移至集群栏目
 ---
 
-集群功能在启用 [远程通讯](/docs/config/remoting) 的前提下，通过 **ActorSystemRemotingOptions.ClusterOptions** 开启。启用后，系统会创建 NodeActor（路径 `/cluster/node`），维护成员视图、故障检测与选主，并通过 **ClusterContext** 暴露给业务：获取成员、Leader、多数派状态及成员变更事件等。
+集群文档已独立为专门栏目，请参阅：
 
-## 启用集群
-
-集群依赖 Remoting，且通过 **WithActorSystemRemotingOptions** 传入 **WithActorSystemRemotingClusterOption**（或 **WithActorSystemRemotingClusterOptions**）启用：
-
-```go
-system := bootstrap.NewActorSystem(
-    vivid.WithActorSystemRemoting("0.0.0.0:8080", "node1:8080"),
-    vivid.WithActorSystemRemotingOptions(
-        vivid.NewActorSystemRemotingOptions(),
-        vivid.WithActorSystemRemotingClusterOption(
-            vivid.WithClusterName("my-cluster"),
-            vivid.WithClusterSeeds([]string{"seed1:8080", "seed2:8080"}),
-        ),
-    ),
-)
-```
-
-未设置 **ClusterOptions** 时，**ctx.Cluster()** 与 **system.Cluster()** 为 **nil**，使用前应做 nil 判断。若在未启用集群时调用 **ClusterContext** 的 GetMembers、Leader、IsLeader、InQuorum 等方法，会得到 **ErrorClusterDisabled**（参见 [错误](/docs/config/errors)#集群）。
-
-## ClusterOptions 配置
-
-通过 **NewClusterOptions** 与 **ClusterOption** 构建；或在使用 **WithActorSystemRemotingClusterOption(opts...)** 时直接传入 **ClusterOption** 列表。
-
-| 选项 | 说明 |
-|------|------|
-| **WithClusterName** | 集群逻辑名；同名节点交换成员视图，空串表示不校验、与任意节点互通 |
-| **WithClusterSeeds** | 种子节点地址列表（host:port），建议至少 2 个 |
-| **WithClusterDiscoveryInterval** | 发现轮次间隔，默认 10s |
-| **WithClusterFailureDetectionTimeout** | 故障检测超时，超时未刷新的成员从视图剔除，默认 40s；≤0 表示不自动剔除 |
-| **WithClusterMaxDiscoveryTargetsPerTick** | 每轮发现最多向多少个目标发请求，默认 20；≤0 不限制 |
-
-## ClusterContext API
-
-在 Actor 内通过 **ctx.Cluster()** 获取（需先确认集群已启用，即返回值非 nil）。**ClusterContext** 提供：
-
-| 方法 | 说明 |
-|------|------|
-| **Name()** | 当前集群名 |
-| **GetMembers()** | 当前视图中的成员列表（[]ClusterMemberInfo：Address、Version） |
-| **Leader()** | 当前视图下的 Leader ActorRef；无成员或未达多数时可能为空 |
-| **IsLeader()** | 当前节点是否为 Leader |
-| **InQuorum()** | 当前节点是否在多数派；为 false 时不应以 Leader 做关键决策（如单例迁移、写仲裁） |
-| **SetNodeVersion(version string)** | 设置本节点对外展示的版本号 |
-| **UpdateMembers(addresses []string)** | 将外部服务发现得到的地址列表推送给集群，与本地视图合并（可与种子发现并存） |
-| **Leave()** | 本节点主动离开集群，优雅下线 |
-
-## 集群事件
-
-集群成员变更与选主结果变更会发布到 **EventStream**，可订阅以做监控或迁移逻辑：
-
-- **ves.ClusterMembersChangedEvent**：成员列表变更（新增或故障剔除）。字段：NodeRef、Members、AddedNum、RemovedNum、Removed。
-- **ves.ClusterLeaderChangedEvent**：选主结果变化。字段：NodeRef、LeaderAddr、IAmLeader、InQuorum。InQuorum 为 false 时表示当前视图未达多数派，不应以 Leader 做关键决策。
-
-订阅方式与 [事件流](/docs/basics/event-stream) 一致，例如在 OnReceive 中根据 **ctx.Message()** 类型断言处理。
-
-## 错误码
-
-集群相关预定义错误见 [错误](/docs/config/errors)#集群：**ErrorClusterNameMismatch**（集群名称不匹配）、**ErrorClusterDisabled**（集群未启用时调用 ClusterContext 方法）。
-
-## 与 Remoting 的关系
-
-集群使用 Remoting 的地址与编解码进行节点间通信；**advertiseAddr** 需与种子/成员使用的地址一致（host:port）。成员发现依赖种子与周期性 GetNodes 请求；**UpdateMembers** 可与 etcd/Consul 等外部服务发现结合使用。
+- [集群概览](/docs/cluster/index)
+- [快速开始](/docs/cluster/quick-start)
+- [配置选项](/docs/cluster/config/options)
+- [ClusterContext](/docs/cluster/runtime/context)
+- [集群事件](/docs/cluster/events/events)
