@@ -63,21 +63,40 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 func (c *_systemChains) initializeCluster(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
 		if system.options.RemotingOptions != nil && system.options.RemotingOptions.ClusterOptions != nil {
-			actorRefParser := func(address, path string) (vivid.ActorRef, error) {
-				return NewRef(address, path)
-			}
-
+			clusterOpts := system.options.RemotingOptions.ClusterOptions
 			nodeActor := cluster.NewNodeActor(
 				system.options.RemotingAdvertiseAddress,
-				actorRefParser,
-				*system.options.RemotingOptions.ClusterOptions)
+				*clusterOpts)
 
 			clusterRef, err := system.ActorOf(nodeActor, vivid.WithActorName("@cluster"))
 			if err != nil {
 				return err
 			}
-			system.clusterContext = cluster.NewContext(system, clusterRef)
-			return err
+			var singletonNames []string
+			if clusterOpts.SingletonTemplates != nil {
+				for n := range clusterOpts.SingletonTemplates {
+					singletonNames = append(singletonNames, n)
+				}
+			}
+			system.clusterContext = cluster.NewContext(system, clusterRef, singletonNames)
+
+			proxyManager := cluster.NewSingletonProxyManager(func(ctx vivid.ActorContext) vivid.ActorRef {
+				return ctx.(*Context).envelop.Sender()
+			})
+			proxyManagerRef, err := system.ActorOf(proxyManager, vivid.WithActorName(cluster.SingletonProxyActorName))
+			if err != nil {
+				return err
+			}
+			system.clusterContext.SetProxyManagerRef(proxyManagerRef)
+
+			if len(clusterOpts.SingletonTemplates) > 0 {
+				manager := cluster.NewSingletonManager(clusterOpts.SingletonTemplates)
+				_, err = system.ActorOf(manager, vivid.WithActorName(cluster.SingletonsActorName))
+				if err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		return nil
 	})

@@ -11,6 +11,9 @@ const (
 	SchedRefLeaveDelay       = "cluster-leave-delay"
 )
 
+// ClusterSingletonsPathPrefix 集群单例 Manager 及其子 Actor 的路径前缀，用于 SingletonRef 解析。
+const ClusterSingletonsPathPrefix = "/@cluster-singletons"
+
 const (
 	DefaultGossipInterval    = 1 * time.Second
 	DefaultMaxTargetsPerTick = 20

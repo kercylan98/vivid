@@ -9,12 +9,26 @@ var (
 )
 
 func NewEnvelop(system bool, sender, receiver vivid.ActorRef, message vivid.Message) *Envelop {
-	return &Envelop{
+	e := &Envelop{
 		system:   system,
 		sender:   sender,
 		message:  message,
 		receiver: receiver,
 	}
+
+	// 用于伪造他人信封
+	if withEnvelop, ok := message.(*Envelop); ok {
+		if withEnvelop.sender != nil {
+			e.sender = withEnvelop.sender
+		}
+		if withEnvelop.agent != nil {
+			e.agent = withEnvelop.agent
+		}
+		if withEnvelop.message != nil {
+			e.message = withEnvelop.message
+		}
+	}
+	return e
 }
 
 type Envelop struct {

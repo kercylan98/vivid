@@ -94,7 +94,7 @@ func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, sender
 	}
 	receiverMailbox := s.findMailbox(receiver)
 	envelop := mailbox.NewEnvelop(system, sender, receiver, messageInstance)
-	if agent != nil {
+	if agent != nil && envelop.Agent() == nil {
 		envelop.WithAgent(agent)
 	}
 	receiverMailbox.Enqueue(envelop)
@@ -289,6 +289,10 @@ func (s *System) FindActorRef(actorRef string) (vivid.ActorRef, error) {
 	}
 
 	return nil, vivid.ErrorNotFound
+}
+
+func (s *System) CreateRef(address string, path string) (vivid.ActorRef, error) {
+	return NewRef(address, path)
 }
 
 func (s *System) Metrics() metrics.Metrics {

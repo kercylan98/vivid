@@ -56,10 +56,11 @@ type JoinRetryTick struct {
 // GetViewRequest 请求当前集群视图（用于 Context.GetMembers/InQuorum 及 quorum 恢复）。
 type GetViewRequest struct{}
 
-// GetViewResponse 返回当前视图及是否满足法定人数。
+// GetViewResponse 返回当前视图、是否满足法定人数及当前 Leader 地址。
 type GetViewResponse struct {
-	View     *ClusterView
-	InQuorum bool
+	View       *ClusterView
+	InQuorum   bool
+	LeaderAddr string // 当前确定性 Leader 的 Remoting 地址，用于 SingletonRef 等
 }
 
 // ForceMemberDown 管理消息：将指定节点强制下线并从视图移除。

@@ -306,7 +306,10 @@ func clusterGetViewResponseReader(message any, reader *messages.Reader, codec me
 		return err
 	}
 	m.View = v
-	return reader.ReadInto(&m.InQuorum)
+	if err := reader.ReadInto(&m.InQuorum); err != nil {
+		return err
+	}
+	return reader.ReadInto(&m.LeaderAddr)
 }
 
 func clusterGetViewResponseWriter(message any, writer *messages.Writer, codec messages.Codec) error {
@@ -314,7 +317,10 @@ func clusterGetViewResponseWriter(message any, writer *messages.Writer, codec me
 	if err := writeClusterView(writer, m.View); err != nil {
 		return err
 	}
-	return writer.WriteFrom(m.InQuorum)
+	if err := writer.WriteFrom(m.InQuorum); err != nil {
+		return err
+	}
+	return writer.WriteFrom(m.LeaderAddr)
 }
 
 func clusterLeaveBroadcastRoundReader(message any, reader *messages.Reader, codec messages.Codec) error {

@@ -232,7 +232,8 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 	c.system.appendFuture(agentRef, futureIns)
 
 	envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
-	if agentRef.agent != nil {
+	// 如果 envelop 已经是 AgentMessage，则不需要再设置 Agent
+	if agentRef.agent != nil && envelop.Agent() == nil {
 		envelop.WithAgent(agentRef.agent)
 	}
 	receiverMailbox := c.system.findMailbox(recipient.(*Ref))

@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,17 +15,39 @@ const (
 )
 
 // NewContext 根据已创建的 NodeActor 引用构造集群上下文。
-func NewContext(system vivid.ActorSystem, clusterRef vivid.ActorRef) *Context {
-	return &Context{system: system, clusterRef: clusterRef}
+// singletonNames 为已注册的集群单例名称集合，用于 SingletonRef 校验；nil 表示不校验。
+func NewContext(system vivid.ActorSystem, clusterRef vivid.ActorRef, singletonNames []string) *Context {
+	var names map[string]struct{}
+	if len(singletonNames) > 0 {
+		names = make(map[string]struct{}, len(singletonNames))
+		for _, n := range singletonNames {
+			names[n] = struct{}{}
+		}
+	}
+	return &Context{
+		system:         system,
+		clusterRef:     clusterRef,
+		singletonNames: names,
+	}
 }
 
 // Context 是集群上下文，供 Actor 系统在运行时访问集群能力（如优雅退出、成员视图、多数派状态等）。
 // 由 initializeCluster 链创建，未启用集群时为 nil。
 type Context struct {
-	system     vivid.ActorSystem
-	clusterRef vivid.ActorRef
-	leaveLock  sync.Mutex
-	leaveWait  chan struct{}
+	system          vivid.ActorSystem
+	clusterRef      vivid.ActorRef
+	proxyManagerRef vivid.ActorRef
+	singletonNames  map[string]struct{}
+	leaveLock       sync.Mutex
+	leaveWait       chan struct{}
+}
+
+// SetProxyManagerRef 设置集群单例代理管理器的 ActorRef，由 initializeCluster 在创建 ProxyManager 后调用。
+func (c *Context) SetProxyManagerRef(ref vivid.ActorRef) {
+	if c == nil {
+		return
+	}
+	c.proxyManagerRef = ref
 }
 
 // GetMembers 返回当前视图中的成员列表；未启用集群或 clusterRef 为空时返回 ErrorClusterDisabled。
@@ -59,23 +82,6 @@ func (c *Context) GetMembers() ([]vivid.ClusterMemberInfo, error) {
 	return out, nil
 }
 
-// InQuorum 返回当前节点是否处于多数派（健康数 >= 法定人数）；未启用集群时返回 ErrorClusterDisabled。
-func (c *Context) InQuorum() (bool, error) {
-	if c == nil || c.clusterRef == nil || c.system == nil {
-		return false, vivid.ErrorClusterDisabled
-	}
-	future := c.system.Ask(c.clusterRef, &GetViewRequest{}, getViewTimeout)
-	reply, err := future.Result()
-	if err != nil {
-		return false, err
-	}
-	resp, ok := reply.(*GetViewResponse)
-	if !ok || resp == nil || resp.View == nil {
-		return false, vivid.ErrorIllegalArgument
-	}
-	return resp.InQuorum, nil
-}
-
 // Leave 向集群节点发送优雅退出请求，并等待「已退出」后再返回。
 // 内部会临时启动一个 Actor 监听 ClusterLeaveCompletedEvent，收到事件后解除阻塞；若超时则直接返回，不阻塞 Stop 流程。只执行一次，幂等。
 // 若未启用集群或 clusterRef 为空则直接返回。
@@ -99,4 +105,58 @@ func (c *Context) Leave() {
 	}
 	c.leaveLock.Unlock()
 	<-c.leaveWait
+}
+
+// getView 向 NodeActor 请求当前视图，用于 GetMembers、InQuorum。
+func (c *Context) GetView() (*vivid.ClusterView, error) {
+	if c == nil || c.clusterRef == nil || c.system == nil {
+		return nil, vivid.ErrorClusterDisabled
+	}
+	future := c.system.Ask(c.clusterRef, &GetViewRequest{}, getViewTimeout)
+	reply, err := future.Result()
+	if err != nil {
+		return nil, err
+	}
+	resp, ok := reply.(*GetViewResponse)
+	if !ok || resp == nil || resp.View == nil {
+		return nil, vivid.ErrorIllegalArgument
+	}
+	return &vivid.ClusterView{
+		LeaderAddr: resp.LeaderAddr,
+		InQuorum:   resp.InQuorum,
+	}, nil
+}
+
+// SingletonRef 返回名为 name 的集群单例的 ActorRef（本地代理）。
+// 代理会订阅 Leader 变更并转发消息到当前单例，单例迁移后无需重新获取 ref；无可用单例时消息会缓存在代理中，待单例就绪后转发。
+// 集群未启用、代理管理器未就绪或未配置该 name 的模板时返回错误。
+func (c *Context) SingletonRef(name string) (vivid.ActorRef, error) {
+	if c == nil || c.clusterRef == nil || c.system == nil {
+		return nil, vivid.ErrorClusterDisabled
+	}
+	if c.proxyManagerRef == nil {
+		return nil, vivid.ErrorClusterDisabled
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, vivid.ErrorIllegalArgument
+	}
+	if c.singletonNames != nil {
+		if _, ok := c.singletonNames[name]; !ok {
+			return nil, vivid.ErrorNotFound
+		}
+	}
+	future := c.system.Ask(c.proxyManagerRef, &GetOrCreateProxyRequest{Name: name}, getViewTimeout)
+	reply, err := future.Result()
+	if err != nil {
+		return nil, err
+	}
+	resp, ok := reply.(*GetOrCreateProxyResponse)
+	if !ok || resp == nil {
+		return nil, vivid.ErrorIllegalArgument
+	}
+	if resp.Err != nil {
+		return nil, resp.Err
+	}
+	return resp.Ref, nil
 }

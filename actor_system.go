@@ -61,6 +61,10 @@ type ActorSystem interface {
 	// 用于把存储、传输的字符串形式 actor ref 转为可用的 ActorRef 对象。
 	FindActorRef(actorRef string) (ActorRef, error)
 
+	// CreateRef 根据地址与路径构造 ActorRef，可用于本地或远程引用（如集群单例）。
+	// 与 FindActorRef 不同，不要求目标存在于本节点；用于向远程节点上的 Actor 发消息。
+	CreateRef(address string, path string) (ActorRef, error)
+
 	// ActorOf 该方法的效果与 ActorContext.ActorOf 相同，但是它是并发安全的。
 	ActorOf(actor Actor, options ...ActorOption) (ActorRef, error)
 }
@@ -594,3 +598,4 @@ func WithActorSystemRemotingClusterOption(opts ...ClusterOption) ActorSystemRemo
 		opts.ClusterOptions = clusterOptions
 	}
 }
+

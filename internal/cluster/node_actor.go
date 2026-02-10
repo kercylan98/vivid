@@ -12,7 +12,7 @@ import (
 
 var _ vivid.Actor = (*NodeActor)(nil)
 
-func NewNodeActor(address string, actorRefParser ActorRefParser, options vivid.ClusterOptions) *NodeActor {
+func NewNodeActor(address string, options vivid.ClusterOptions) *NodeActor {
 	state := newNodeState(options.NodeID, options.ClusterName, address)
 	if state.Labels == nil {
 		state.Labels = make(map[string]string)
@@ -38,7 +38,6 @@ func NewNodeActor(address string, actorRefParser ActorRefParser, options vivid.C
 	gossipLimiter := NewGossipRateLimiter(gossipRate, gossipBurst)
 	return &NodeActor{
 		options:                 options,
-		actorRefParser:          actorRefParser,
 		nodeState:               state,
 		clusterView:             cv,
 		seedsProvider:           seedsProvider,
@@ -58,7 +57,6 @@ func NewNodeActor(address string, actorRefParser ActorRefParser, options vivid.C
 // NodeActor 集群节点 Actor，通过组合各功能组件管理加入、Gossip、故障检测、退出与事件发布。
 type NodeActor struct {
 	options                 vivid.ClusterOptions
-	actorRefParser          ActorRefParser
 	nodeState               *NodeState
 	clusterView             *ClusterView
 	seedsProvider           *SeedsProvider
@@ -225,7 +223,7 @@ func (a *NodeActor) tryJoinSeeds(ctx vivid.ActorContext, seeds []string) error {
 	}
 	var lastErr error
 	for _, seed := range shuffled {
-		ref, err := a.actorRefParser(seed, "/@cluster")
+		ref, err := ctx.System().CreateRef(seed, "/@cluster")
 		if err != nil {
 			ctx.Logger().Warn("create seed ref failed", log.String("seed", seed), log.Any("error", err))
 			lastErr = err
@@ -285,7 +283,11 @@ func (a *NodeActor) handleGetView(ctx vivid.ActorContext) {
 		ctx.Reply(vivid.ErrorIllegalArgument)
 		return
 	}
-	ctx.Reply(&GetViewResponse{View: snap, InQuorum: a.quorumCalc.SatisfiesQuorum(a.clusterView)})
+	ctx.Reply(&GetViewResponse{
+		View:       snap,
+		InQuorum:   a.quorumCalc.SatisfiesQuorum(a.clusterView),
+		LeaderAddr: ComputeLeaderAddr(snap),
+	})
 }
 
 func (a *NodeActor) handleForceMemberDown(ctx vivid.ActorContext, m *ForceMemberDown) {
@@ -430,7 +432,7 @@ func (a *NodeActor) runGossipRoundWithTargets(ctx vivid.ActorContext, targets []
 		if !a.shouldSendGossipTo(snap.VersionVector, addr) {
 			continue
 		}
-		ref, err := a.actorRefParser(addr, "/@cluster")
+		ref, err := ctx.System().CreateRef(addr, "/@cluster")
 		if err != nil {
 			continue
 		}
@@ -516,7 +518,7 @@ func (a *NodeActor) tryQuorumRecovery(ctx vivid.ActorContext) {
 		n = len(seeds)
 	}
 	for i := 0; i < n; i++ {
-		ref, err := a.actorRefParser(seeds[i], "/@cluster")
+		ref, err := ctx.System().CreateRef(seeds[i], "/@cluster")
 		if err != nil {
 			continue
 		}
@@ -640,7 +642,7 @@ func (a *NodeActor) broadcastViewOnce(ctx vivid.ActorContext) {
 		if !a.shouldSendGossipTo(snap.VersionVector, addr) {
 			continue
 		}
-		ref, err := a.actorRefParser(addr, "/@cluster")
+		ref, err := ctx.System().CreateRef(addr, "/@cluster")
 		if err != nil {
 			continue
 		}

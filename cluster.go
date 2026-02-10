@@ -45,15 +45,22 @@ type ClusterMemberInfo struct {
 	Zone       string // 可用区标识，未配置时为空
 }
 
-// ClusterContext 供业务在运行时访问集群能力：成员列表、多数派状态、优雅退出等。
+type ClusterView struct {
+	LeaderAddr string // 领导者地址
+	InQuorum   bool   // 当前节点是否处于多数派
+}
+
+// ClusterContext 供业务在运行时访问集群能力：成员列表、多数派状态、优雅退出、集群单例引用等。
 // 未启用集群时 system.Cluster() 与 ctx.Cluster() 为 nil，调用前需做 nil 判断。
 type ClusterContext interface {
 	// GetMembers 返回当前视图中的成员列表；未启用集群时返回 ErrorClusterDisabled。
 	GetMembers() ([]ClusterMemberInfo, error)
-	// InQuorum 返回当前节点是否处于多数派；未启用集群时返回 ErrorClusterDisabled。
-	InQuorum() (bool, error)
 	// Leave 向集群发送优雅退出请求并等待广播离开视图后返回，幂等，仅执行一次。
 	Leave()
+	// SingletonRef 返回名为 name 的集群单例的 ActorRef（本地代理）；代理会随 Leader 变更自动转发到当前单例，单例迁移后无需重新获取 ref。未启用集群或未配置该 name 时返回错误。
+	SingletonRef(name string) (ActorRef, error)
+	// GetView 返回当前集群视图；未启用集群时返回 ErrorClusterDisabled。
+	GetView() (*ClusterView, error)
 }
 
 // ClusterOptions 封装集群节点（NodeActor）的启动期配置，所有字段均在创建时确定，设计为不可变、不在运行时修改。
@@ -139,6 +146,8 @@ type ClusterOptions struct {
 	JoinAskTimeout time.Duration
 	// GetViewAskTimeout Quorum 恢复等 GetView 请求的超时时长。未设置或 ≤0 时使用系统 DefaultAskTimeout；建议 1s–30s。
 	GetViewAskTimeout time.Duration
+	// SingletonTemplates 集群单例模板：key 为单例逻辑名，value 为创建实例的 ActorProvider。仅当非空时创建 ClusterSingletonManager。
+	SingletonTemplates map[string]ActorProvider
 }
 
 // ClusterOption 是用于配置 ClusterOptions 的函数类型，采用函数式 Option 模式，便于链式/组合配置并保持向后兼容。
@@ -411,6 +420,18 @@ func WithClusterJoinAskTimeout(d time.Duration) ClusterOption {
 func WithClusterGetViewAskTimeout(d time.Duration) ClusterOption {
 	return func(o *ClusterOptions) {
 		o.GetViewAskTimeout = d
+	}
+}
+
+// WithClusterSingleton 返回一个 ClusterOption，用于注册集群单例模板。
+// name 为单例逻辑名，用于路径与 SingletonRef(name) 查找；provider 用于在 Leader 节点上创建单例实例。
+// 仅当至少注册一个单例模板时，系统会创建 ClusterSingletonManager。同名多次调用会覆盖之前的 provider。
+func WithClusterSingleton(name string, provider ActorProvider) ClusterOption {
+	return func(o *ClusterOptions) {
+		if o.SingletonTemplates == nil {
+			o.SingletonTemplates = make(map[string]ActorProvider)
+		}
+		o.SingletonTemplates[name] = provider
 	}
 }
 
