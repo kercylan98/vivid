@@ -97,7 +97,7 @@ type Codec interface {
 
 未启用 Remoting 时，向远程 **ActorRef** 发送消息会得到“远程未启用”的告警，且该消息不会跨节点发送（由框架按当前实现处理，例如落入系统邮箱），业务侧应避免在未启用 Remoting 的节点上向远程 ref 发信。
 
-远程消息发送、编解码或处理失败时会返回 **ErrorRemotingMessageSendFailed**、**ErrorRemotingMessageEncodeFailed**、**ErrorRemotingMessageDecodeFailed**、**ErrorRemotingMessageHandleFailed** 等，详见 [错误](/docs/config/errors)。
+远程消息发送、编解码、握手或处理失败时会返回 **ErrorRemotingMessageSendFailed**、**ErrorRemotingMessageEncodeFailed**、**ErrorRemotingMessageDecodeFailed**、**ErrorRemotingMessageHandleFailed**、**ErrorRemotingHandshakeFailed** 等，详见 [错误](/docs/config/errors)。
 
 ## 与集群配合
 
