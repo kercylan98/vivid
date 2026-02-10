@@ -1,0 +1,65 @@
+---
+title: 集群单例
+description: 集群内唯一 Actor、WithClusterSingleton、SingletonRef
+---
+
+集群单例（Cluster Singleton）保证**全集群仅有一个实例**，且该实例运行在当前 **Leader** 节点上。Leader 或 Quorum 变化时，框架会在新 Leader 上创建单例、在旧节点上销毁，语义与 Akka Cluster Singleton 对齐。
+
+## 注册单例模板
+
+在配置集群时通过 **WithClusterSingleton**（集群可选项）注册单例模板（名称 + ActorProvider）：
+
+```go
+system, err := bootstrap.NewActorSystem(
+    vivid.WithActorSystemRemoting("0.0.0.0:8080", "node1:8080"),
+    vivid.WithActorSystemRemotingClusterOption(
+        vivid.WithClusterSeeds([]string{"seed:8080"}),
+        vivid.WithClusterSingleton("my-singleton", vivid.ActorProviderFN(func() vivid.Actor {
+            return &MySingletonActor{}
+        })),
+    ),
+)
+```
+
+| 参数 | 说明 |
+|------|------|
+| **name** | 单例逻辑名，用于 **SingletonRef(name)** 查找。 |
+| **provider** | 在 Leader 节点上创建单例实例的 **ActorProvider**；每次迁移到新 Leader 时都会创建新实例。 |
+
+仅当**启用集群**且至少注册一个单例模板时，框架会管理单例的创建与迁移。
+
+## 获取单例引用
+
+通过 **ClusterContext.SingletonRef(name)** 获取该单例的 **ActorRef**（本地代理）：
+
+- Leader 变更时自动更新转发目标，**单例迁移后无需重新获取 ref**。
+- 无可用单例时，消息会缓存在代理中，待单例就绪后转发。
+
+```go
+cluster := ctx.Cluster()
+if cluster == nil {
+    return
+}
+ref, err := cluster.SingletonRef("my-singleton")
+if err != nil {
+    // ErrorClusterDisabled、ErrorNotFound（未注册该 name）、ErrorIllegalArgument 等
+    return
+}
+ctx.Tell(ref, msg)  // 代理会转发到当前 Leader 上的单例
+```
+
+- 单例侧通过 **ctx.Sender()** 看到的是**原始调用方**。
+- 因使用本地代理，单例迁移后 ref 仍然有效，消息不会因 Leader 切换而丢失或发往旧节点。
+
+## 行为说明
+
+- **单例仅运行在当前 Leader 且 InQuorum 的节点上**；Leader 切换时自动在新 Leader 上创建、在旧节点上销毁。
+- **SingletonRef** 返回的为本地代理 ref，随 Leader 变更自动转发，无需在业务侧重新获取或订阅事件。
+
+## 错误码
+
+| 错误 | 说明 |
+|------|------|
+| **ErrorClusterDisabled** | 未启用集群或集群未就绪时调用。 |
+| **ErrorNotFound** | 未注册该 name 的模板。 |
+| **ErrorIllegalArgument** | name 为空。 |

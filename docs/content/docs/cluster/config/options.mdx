@@ -62,6 +62,12 @@ description: ClusterOptions 与 ClusterOption 完整配置说明
 | **WithClusterLeaveBroadcastDelay** | time.Duration | 200ms | 优雅退出前等待广播发出的时间；多 DC 建议 1–2s |
 | **WithClusterLeaveBroadcastRounds** | int | 1 | 广播轮数；>1 时多轮广播以提高多 DC 收敛 |
 
+## 集群单例
+
+| 选项 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| **WithClusterSingleton** | name string, provider ActorProvider | - | 注册集群单例模板；至少注册一个时创建 ClusterSingletonManager，详见 [集群单例](/docs/cluster/singleton) |
+
 ## 高级与防护
 
 | 选项 | 类型 | 默认 | 说明 |

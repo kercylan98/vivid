@@ -8,7 +8,7 @@ description: 集群相关预定义错误码
 | 变量 | 错误码 | 说明 |
 |------|--------|------|
 | **ErrorClusterNameMismatch** | 150000 | 集群名称不匹配 |
-| **ErrorClusterDisabled** | 150001 | 集群已禁用（未启用集群时调用 ClusterContext 方法） |
+| **ErrorClusterDisabled** | 150001 | 集群未启用或未就绪（调用 ClusterContext 方法或 SingletonRef 时） |
 | **ErrorClusterNodeStatusMismatch** | 150002 | 节点状态不匹配 |
 | **ErrorClusterNotInQuorum** | 150003 | 当前不在多数派，拒绝加入/决策 |
 | **ErrorClusterJoinAuthFailed** | 150004 | Join 认证失败（Token 无效或缺失） |
@@ -30,6 +30,8 @@ if errors.Is(err, vivid.ErrorClusterJoinNotAllowed) {
     // 地址或 DC 不在白名单
 }
 ```
+
+**SingletonRef** 还可能返回 **ErrorNotFound**（未注册该单例名）、**ErrorIllegalArgument**（name 为空），详见 [集群单例 - 错误码](/docs/cluster/singleton#错误码)。
 
 ## 更多错误
 

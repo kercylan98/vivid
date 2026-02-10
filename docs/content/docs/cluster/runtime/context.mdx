@@ -1,6 +1,6 @@
 ---
 title: ClusterContext
-description: 运行时 API：GetMembers、InQuorum、Leave
+description: 运行时 API：GetMembers、InQuorum、Leave、SingletonRef
 ---
 
 在 Actor 内通过 **ctx.Cluster()** 获取 ClusterContext；系统级通过 **system.Cluster()**。未启用集群时返回 **nil**，调用前需做 nil 判断。
@@ -12,6 +12,7 @@ description: 运行时 API：GetMembers、InQuorum、Leave
 | **GetMembers** | `() ([]ClusterMemberInfo, error)` | 返回当前视图中的成员列表；未启用时返回 ErrorClusterDisabled |
 | **InQuorum** | `() (bool, error)` | 当前节点是否处于多数派；false 时不应以 Leader 做关键决策 |
 | **Leave** | `()` | 本节点主动离开集群，优雅下线；幂等，仅执行一次 |
+| **SingletonRef** | `(name string) (ActorRef, error)` | 返回名为 name 的集群单例的 ActorRef（本地代理），随 Leader 变更自动转发；详见 [集群单例](/docs/cluster/singleton) |
 
 ## ClusterMemberInfo
 
@@ -72,10 +73,9 @@ if system.Cluster() != nil {
 system.Stop()
 ```
 
-Leave 会临时启动一个 **LeaveWatcher** Actor 订阅 **ClusterLeaveCompletedEvent**，同时向 NodeActor 发送 LeaveRequest；当本节点完成广播离开视图并进入 Exiting 后，NodeActor 会发布该事件，LeaveWatcher 收到后解除阻塞使 Leave() 返回。若在 LeaveGraceTimeout 内未收到事件则超时返回，不阻塞 Stop 流程。
+**行为说明**：Leave() 会阻塞直到本节点已离开集群视图（或超时），之后可安全 Stop。
 
 ## 注意事项
 
-- **GetMembers** 与 **InQuorum** 通过 Ask NodeActor 获取视图，有网络/超时成本，避免高频调用。
+- **GetMembers** 与 **InQuorum** 会访问集群状态，有网络/超时成本，避免高频调用。
 - **InQuorum** 为 false 时表示可能处于分区或少数派，不应以 Leader 做单例迁移、写仲裁等关键决策。
-- ClusterContext 提供 GetMembers、InQuorum、Leave 三个运行时 API；接口定义以当前版本为准。
