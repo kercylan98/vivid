@@ -37,11 +37,9 @@ func (rmc *MailboxCentral) Close() {
 
 	for _, mailbox := range rmc.mailboxes {
 		mailbox.connectionLock.Lock()
-		for _, connection := range mailbox.connections {
-			if connection != nil {
-				if err := connection.Close(); err != nil {
-					rmc.actorLiaison.Logger().Warn("close remote connection failed", log.String("advertise_addr", connection.advertiseAddr), log.Any("err", err))
-				}
+		if mailbox.connection != nil {
+			if err := mailbox.connection.Close(); err != nil {
+				rmc.actorLiaison.Logger().Warn("close remote connection failed", log.String("advertise_addr", mailbox.connection.advertiseAddr), log.Any("err", err))
 			}
 		}
 		mailbox.connectionLock.Unlock()

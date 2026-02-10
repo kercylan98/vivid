@@ -4,16 +4,16 @@ import (
 	"github.com/kercylan98/vivid"
 )
 
-// ClusterMetricsUpdater 负责更新集群相关指标（成员数、健康数、quorum、DC 等）。
-type ClusterMetricsUpdater struct{}
+// MetricsUpdater 负责更新集群相关指标（成员数、健康数、quorum、DC 等）。
+type MetricsUpdater struct{}
 
 // NewClusterMetricsUpdater 创建指标更新器。
-func NewClusterMetricsUpdater() *ClusterMetricsUpdater {
-	return &ClusterMetricsUpdater{}
+func NewClusterMetricsUpdater() *MetricsUpdater {
+	return &MetricsUpdater{}
 }
 
 // Update 根据当前视图更新 cluster.* 指标。
-func (u *ClusterMetricsUpdater) Update(ctx vivid.ActorContext, v *ClusterView) {
+func (u *MetricsUpdater) Update(ctx vivid.ActorContext, v *ClusterView) {
 	if ctx == nil || !ctx.MetricsEnabled() || v == nil {
 		return
 	}
@@ -49,7 +49,7 @@ func (u *ClusterMetricsUpdater) Update(ctx vivid.ActorContext, v *ClusterView) {
 }
 
 // UpdateViewDivergence 更新与另一视图的差异指标。
-func (u *ClusterMetricsUpdater) UpdateViewDivergence(ctx vivid.ActorContext, local, other *ClusterView) {
+func (u *MetricsUpdater) UpdateViewDivergence(ctx vivid.ActorContext, local, other *ClusterView) {
 	if ctx == nil || !ctx.MetricsEnabled() || local == nil || other == nil {
 		return
 	}

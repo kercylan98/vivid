@@ -17,19 +17,20 @@ import (
 	"github.com/kercylan98/vivid/pkg/ves"
 )
 
-func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, options ...tcpConnectionActorOption) *tcpConnectionActor {
+func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, options ...tcpConnectionActorOption) (*tcpConnectionActor, error) {
 	opts := &tcpConnectionActorOptions{}
 	for _, option := range options {
 		option(opts)
 	}
 
-	return &tcpConnectionActor{
+	c := &tcpConnectionActor{
 		client:         client,
 		conn:           conn,
 		advertiseAddr:  advertiseAddr,
 		envelopHandler: envelopHandler,
 		codec:          codec,
 	}
+	return c, c.handshake()
 }
 
 type tcpConnectionActorOption func(options *tcpConnectionActorOptions)
@@ -56,31 +57,6 @@ type tcpConnectionActor struct {
 	closed         bool
 }
 
-func (c *tcpConnectionActor) OnPrelaunch(ctx vivid.PrelaunchContext) (err error) {
-	handshakeProtocol := &Handshake{
-		AdvertiseAddr: c.advertiseAddr,
-	}
-
-	if c.client {
-		if err = handshakeProtocol.Send(c.conn); err != nil {
-			return err
-		}
-		if err = handshakeProtocol.Wait(c.conn); err != nil {
-			return err
-		}
-	} else {
-		if err = handshakeProtocol.Wait(c.conn); err != nil {
-			return err
-		}
-		if err = handshakeProtocol.Send(c.conn); err != nil {
-			return err
-		}
-	}
-
-	// 将 Reader 纳入 ServerActor 统一管理，Writer 作为单独同步属性维护
-	return nil
-}
-
 func (c *tcpConnectionActor) OnReceive(ctx vivid.ActorContext) {
 	switch ctx.Message().(type) {
 	case *vivid.OnLaunch:
@@ -97,12 +73,6 @@ func (c *tcpConnectionActor) OnReceive(ctx vivid.ActorContext) {
 			ctx.Logger().Warn("read connection failed",
 				log.Bool("fatal", fatal),
 				log.Any("err", err),
-				log.String("remote_addr", c.conn.RemoteAddr().String()),
-				log.String("local_addr", c.conn.LocalAddr().String()),
-				log.String("advertise_addr", c.advertiseAddr),
-				log.Bool("is_client", c.client))
-		} else {
-			ctx.Logger().Debug("connection closed",
 				log.String("remote_addr", c.conn.RemoteAddr().String()),
 				log.String("local_addr", c.conn.LocalAddr().String()),
 				log.String("advertise_addr", c.advertiseAddr),
@@ -183,7 +153,7 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 		})
 		// 消息解码不影响连接的正常使用，继续监听连接
 		ctx.TellSelf(c.conn)
-		ctx.Logger().Warn("failed to enqueue message decode failed",
+		ctx.Logger().Warn("decode remote message failed",
 			log.String("sender", ctx.Ref().String()),
 			log.String("receiver", ctx.Ref().GetPath()),
 			log.Any("err", err),
@@ -266,4 +236,34 @@ func (c *tcpConnectionActor) Closed() bool {
 	c.writeCloseLock.RLock()
 	defer c.writeCloseLock.RUnlock()
 	return c.closed
+}
+
+func (c *tcpConnectionActor) handshake() (err error) {
+	handshakeProtocol := &Handshake{
+		AdvertiseAddr: c.advertiseAddr,
+	}
+
+	defer func() {
+		if err != nil {
+			_ = c.conn.Close()
+		}
+	}()
+
+	if c.client {
+		if err = handshakeProtocol.Send(c.conn); err != nil {
+			return
+		}
+		if err = handshakeProtocol.Wait(c.conn); err != nil {
+			return
+		}
+	} else {
+		if err = handshakeProtocol.Wait(c.conn); err != nil {
+			return
+		}
+		if err = handshakeProtocol.Send(c.conn); err != nil {
+			return
+		}
+	}
+
+	return nil
 }

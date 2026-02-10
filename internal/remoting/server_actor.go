@@ -139,7 +139,6 @@ func (s *ServerActor) onLaunch(ctx vivid.ActorContext) {
 
 func (s *ServerActor) onConnection(ctx vivid.ActorContext, connection *tcpConnectionActor) {
 	// 关闭后因 Actor 生命周期，无法收到新的连接
-
 	prefix := "dial"
 	if !connection.client {
 		prefix = "accept" // 维护当前已建立并被服务器管理的连接集合
@@ -149,11 +148,14 @@ func (s *ServerActor) onConnection(ctx vivid.ActorContext, connection *tcpConnec
 	if connection.client {
 		name = name + "-" + connection.conn.LocalAddr().String()
 	}
+
+	startAt := time.Now()
 	ref, err := ctx.ActorOf(connection, vivid.WithActorName(fmt.Sprintf("%s-%s", prefix, name)))
 	if err != nil {
-		ctx.Logger().Error("server accept connect failed", log.Any("err", err))
+		ctx.Logger().Error("connection handshake failed", log.Any("err", err))
 		return
 	}
+	ctx.Logger().Debug("connection established", log.String("ref", ref.GetPath()), log.Duration("cost", time.Since(startAt)))
 
 	ctx.Reply(nil)
 

@@ -10,9 +10,13 @@ import (
 )
 
 const (
-	getViewTimeout   = 3 * time.Second
-	leaveWatcherName = "leave-watcher"
+	getViewTimeout = 3 * time.Second
 )
+
+// NewContext 根据已创建的 NodeActor 引用构造集群上下文。
+func NewContext(system vivid.ActorSystem, clusterRef vivid.ActorRef) *Context {
+	return &Context{system: system, clusterRef: clusterRef}
+}
 
 // Context 是集群上下文，供 Actor 系统在运行时访问集群能力（如优雅退出、成员视图、多数派状态等）。
 // 由 initializeCluster 链创建，未启用集群时为 nil。
@@ -21,11 +25,6 @@ type Context struct {
 	clusterRef vivid.ActorRef
 	leaveLock  sync.Mutex
 	leaveWait  chan struct{}
-}
-
-// NewClusterContext 根据已创建的 NodeActor 引用构造集群上下文。
-func NewClusterContext(system vivid.ActorSystem, _ vivid.ClusterOptions, _ ActorRefParser, clusterRef vivid.ActorRef) *Context {
-	return &Context{system: system, clusterRef: clusterRef}
 }
 
 // GetMembers 返回当前视图中的成员列表；未启用集群或 clusterRef 为空时返回 ErrorClusterDisabled。

@@ -82,7 +82,6 @@ func NewWriter(opts ...WriterOption) *Writer {
 // NewWriterFromPool 从池中获取一个写入器
 func NewWriterFromPool(opts ...WriterOption) *Writer {
 	w := writerPool.Get().(*Writer)
-	w.Reset()
 	if len(opts) > 0 {
 		opt := opts[0]
 		if opt.ByteOrder != nil {
@@ -94,6 +93,7 @@ func NewWriterFromPool(opts ...WriterOption) *Writer {
 
 // ReleaseWriterToPool 释放一个写入器到池中
 func ReleaseWriterToPool(w *Writer) {
+	w.Reset()
 	writerPool.Put(w)
 }
 
@@ -124,31 +124,48 @@ func (w *Writer) ensureCapacity(n int) {
 
 // writeByte 写入一个字节
 //
-// 返回 Writer 自身，支持链式调用
+// 返回 Writer 自身，支持链式调用。一旦 Writer 处于错误状态则不再写入。
 func (w *Writer) writeByte(v byte) *Writer {
+	if w.err != nil {
+		return w
+	}
 	w.ensureCapacity(1)
 	w.buf = append(w.buf, v)
 	return w
 }
 
+// WriteMessage 将消息序列化到缓冲区：先写入消息体（带 4 字节长度前缀），再写入消息名。
+// 若任一步骤失败，会回滚缓冲区到调用前长度，并保证 Bytes() 不包含部分写入的数据。
 func (w *Writer) WriteMessage(message any, codec Codec) (err error) {
-	var messageDesc = QueryMessageDesc(message)
+	startLen := len(w.buf)
+	messageDesc := QueryMessageDesc(message)
+
 	if messageDesc.IsOutside() {
-		// 外部消息序列化
-		data, err := codec.Encode(message)
-		if err != nil {
+		data, encErr := codec.Encode(message)
+		if encErr != nil {
+			return encErr
+		}
+		w.WriteBytesWithLength(data, LengthSize4)
+		if w.err != nil {
+			w.buf = w.buf[:startLen]
+			return w.err
+		}
+	} else {
+		if err = SerializeRemotingMessage(codec, w, messageDesc, message); err != nil {
+			w.buf = w.buf[:startLen]
 			return err
 		}
-		w.WriteBytesWithLength(data, 4)
-	} else {
-		// 内部消息序列化
-		err = SerializeRemotingMessage(codec, w, messageDesc, message)
-		if err != nil {
-			return err
+		if w.err != nil {
+			w.buf = w.buf[:startLen]
+			return w.err
 		}
 	}
 
-	return w.WriteFrom(messageDesc.MessageName())
+	if err = w.WriteFrom(messageDesc.MessageName()); err != nil {
+		w.buf = w.buf[:startLen]
+		return err
+	}
+	return nil
 }
 
 // WriteBytePtr 写入一个字节指针
@@ -178,8 +195,11 @@ func (w *Writer) WriteInt8Ptr(v *int8) *Writer {
 
 // WriteUint16 写入一个无符号 16 位整数（2 字节）
 //
-// 字节序由创建 Writer 时指定的 ByteOrder 决定
+// 字节序由创建 Writer 时指定的 ByteOrder 决定。错误状态下不再写入。
 func (w *Writer) WriteUint16(v uint16) *Writer {
+	if w.err != nil {
+		return w
+	}
 	w.ensureCapacity(2)
 	w.order.PutUint16(w.i16buf[:], v)
 	w.buf = append(w.buf, w.i16buf[:]...)
@@ -203,6 +223,9 @@ func (w *Writer) WriteInt16Ptr(v *int16) *Writer {
 
 // WriteUint32 写入一个无符号 32 位整数（4 字节）
 func (w *Writer) WriteUint32(v uint32) *Writer {
+	if w.err != nil {
+		return w
+	}
 	w.ensureCapacity(4)
 	w.order.PutUint32(w.i32buf[:], v)
 	w.buf = append(w.buf, w.i32buf[:]...)
@@ -226,6 +249,9 @@ func (w *Writer) WriteInt32Ptr(v *int32) *Writer {
 
 // WriteUint64 写入一个无符号 64 位整数（8 字节）
 func (w *Writer) WriteUint64(v uint64) *Writer {
+	if w.err != nil {
+		return w
+	}
 	w.ensureCapacity(8)
 	w.order.PutUint64(w.i64buf[:], v)
 	w.buf = append(w.buf, w.i64buf[:]...)
@@ -288,9 +314,11 @@ func (w *Writer) WriteFloat64Ptr(v *float64) *Writer {
 
 // WriteVarint 写入一个变长编码的有符号整数
 //
-// 使用 Google Protocol Buffers 的变长整数编码格式
-// 小数值占用更少的字节，大数值占用更多字节
+// 使用 Google Protocol Buffers 的变长整数编码格式。错误状态下不再写入。
 func (w *Writer) WriteVarint(v int64) *Writer {
+	if w.err != nil {
+		return w
+	}
 	var buf [binary.MaxVarintLen64]byte
 	n := binary.PutVarint(buf[:], v)
 	w.ensureCapacity(n)
@@ -300,8 +328,11 @@ func (w *Writer) WriteVarint(v int64) *Writer {
 
 // WriteUvarint 写入一个变长编码的无符号整数
 //
-// 使用 Google Protocol Buffers 的变长整数编码格式
+// 使用 Google Protocol Buffers 的变长整数编码格式。错误状态下不再写入。
 func (w *Writer) WriteUvarint(v uint64) *Writer {
+	if w.err != nil {
+		return w
+	}
 	var buf [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(buf[:], v)
 	w.ensureCapacity(n)
@@ -321,8 +352,11 @@ func (w *Writer) WriteUvarintPtr(v *uint64) *Writer {
 
 // WriteBytes 写入字节切片
 //
-// v 是要写入的字节切片，会完整写入所有数据
+// v 是要写入的字节切片，会完整写入所有数据。错误状态下不再写入。
 func (w *Writer) WriteBytes(v []byte) *Writer {
+	if w.err != nil {
+		return w
+	}
 	w.ensureCapacity(len(v))
 	w.buf = append(w.buf, v...)
 	return w
@@ -335,10 +369,11 @@ func (w *Writer) WriteBytesPtr(v *[]byte) *Writer {
 
 // WriteBytesWithLength 写入带长度前缀的字节切片
 //
-// v 是要写入的字节切片
-// lengthSize 指定长度字段的字节数，支持 1、2 或 4 字节
-// 格式：先写入 lengthSize 字节的长度值，然后写入数据
+// v 是要写入的字节切片；lengthSize 为长度字段字节数（1/2/4）。错误状态下不再写入。
 func (w *Writer) WriteBytesWithLength(v []byte, lengthSize int) *Writer {
+	if w.err != nil {
+		return w
+	}
 	switch lengthSize {
 	case 1:
 		if len(v) > 255 {
@@ -361,13 +396,9 @@ func (w *Writer) WriteBytesWithLength(v []byte, lengthSize int) *Writer {
 	return w.WriteBytes(v)
 }
 
-// WriteString 写入一个字符串
-//
-// 字符串格式：4 字节长度（uint32）+ UTF-8 编码的字符串数据
-// 使用 []byte() 进行安全转换，避免使用 unsafe 包
+// WriteString 写入一个字符串（4 字节长度前缀 + UTF-8 数据）
 func (w *Writer) WriteString(v string) *Writer {
-	// 使用 []byte() 进行安全转换，Go 编译器会优化此操作
-	w.WriteBytesWithLength([]byte(v), 4)
+	w.WriteBytesWithLength([]byte(v), LengthSize4)
 	return w
 }
 
@@ -376,12 +407,9 @@ func (w *Writer) WriteStringPtr(v *string) *Writer {
 	return w.WriteString(*v)
 }
 
-// WriteShortString 写入一个短字符串
-//
-// 字符串格式：1 字节长度（uint8）+ UTF-8 编码的字符串数据
-// 适用于长度不超过 255 的字符串
+// WriteShortString 写入短字符串（1 字节长度前缀，长度不超过 255）
 func (w *Writer) WriteShortString(v string) *Writer {
-	return w.WriteBytesWithLength([]byte(v), 1)
+	return w.WriteBytesWithLength([]byte(v), LengthSize1)
 }
 
 // WriteShortStringPtr 写入一个短字符串指针
@@ -456,13 +484,12 @@ func (w *Writer) Write(v interface{}) *Writer {
 		w.WriteString(val)
 	case *[]byte:
 		if val != nil {
-			w.WriteBytesWithLength(*val, 4)
+			w.WriteBytesWithLength(*val, LengthSize4)
 		} else {
-			// nil 指针表示为长度为 0 的字节切片
 			w.WriteUint32(0)
 		}
 	case []byte:
-		w.WriteBytesWithLength(val, 4)
+		w.WriteBytesWithLength(val, LengthSize4)
 	default:
 		w.err = w.writeReflect(v)
 	}

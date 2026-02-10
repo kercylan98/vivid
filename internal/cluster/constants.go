@@ -12,11 +12,10 @@ const (
 )
 
 const (
-	DefaultGossipInterval       = 1 * time.Second
-	DefaultMaxTargetsPerTick    = 20
-	InitialJoinRetryDelay       = 2 * time.Second
-	MaxJoinRetryDelay           = 30 * time.Second
-	MaxGetViewTargets           = 5
-	LeaveGraceTimeout           = 5 * time.Second
-	MaxJoinRateLimitEntries     = 10000
+	DefaultGossipInterval    = 1 * time.Second
+	DefaultMaxTargetsPerTick = 20
+	InitialJoinRetryDelay    = 2 * time.Second
+	MaxJoinRetryDelay        = 30 * time.Second
+	MaxGetViewTargets        = 5
+	MaxJoinRateLimitEntries  = 10000
 )

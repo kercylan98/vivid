@@ -18,10 +18,6 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-const (
-	poolSize = 10
-)
-
 // eventStreamContext 实现 EventStreamContext 接口，用于在 Mailbox 中发布事件
 type eventStreamContext struct {
 	ref    vivid.ActorRef
@@ -59,7 +55,7 @@ type Mailbox struct {
 	ctx               context.Context
 	options           vivid.ActorSystemRemotingOptions
 	advertiseAddress  string
-	connections       [poolSize]*tcpConnectionActor
+	connection        *tcpConnectionActor
 	connectionLock    sync.RWMutex
 	sf                *singleflight.Group
 	envelopHandler    NetworkEnvelopHandler
@@ -83,190 +79,142 @@ func (m *Mailbox) IsPaused() bool {
 }
 
 func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
-	sender := envelop.Sender()
-	slot := utils.Fnv32aHash(sender.GetPath()) % poolSize
+	m.connectionLock.Lock()
+	defer m.connectionLock.Unlock()
 
-	// 尝试获取有效连接，如果不存在或已关闭则创建新连接
-	var conn *tcpConnectionActor
-	_, err := m.backoff.Try(sugar.Max(m.options.ReconnectLimit, 0), func() (abort bool, err error) {
-		// 如果系统已停止，则不进行重试
+	limit := sugar.Max(m.options.ReconnectLimit, 0)
+	_, err := m.backoff.Try(limit, func() (abort bool, err error) {
 		if m.ctx.Err() != nil {
 			return true, vivid.ErrorActorSystemStopped.With(m.ctx.Err())
 		}
 
-		// 获取连接，如果没有则创建一个
-		m.connectionLock.RLock()
-		conn = m.connections[slot]
-		m.connectionLock.RUnlock()
-
-		// 如果连接已关闭，设置为 nil，后续会重新创建连接
-		if conn != nil && conn.Closed() {
-			// 清理已关闭的连接
-			m.connectionLock.Lock()
-			if m.connections[slot] == conn {
-				m.connections[slot] = nil
-			}
-			m.connectionLock.Unlock()
-			conn = nil
-		}
-
-		if conn == nil {
-			c, err, _ := m.sf.Do(fmt.Sprint(slot), func() (any, error) {
-				m.connectionLock.Lock()
-				defer m.connectionLock.Unlock()
-
-				// Double-check: 在获取锁后再次检查连接是否已存在且有效
-				if existingConn := m.connections[slot]; existingConn != nil && !existingConn.Closed() {
-					return existingConn, nil
-				}
-
-				conn, err := net.Dial("tcp", m.advertiseAddress)
-				if err != nil {
-					// 发布连接失败事件
-					publishRemotingConnectionFailedEvent(m, m.advertiseAddress, m.advertiseAddress, err, m.backoff.GetAttempt())
-					return nil, err
-				}
-
-				tcpConn := newTCPConnectionActor(true, conn, m.advertiseAddress, m.codec, m.envelopHandler,
-					withTCPConnectionActorReadFailedHandler(m.options.ConnectionReadFailedHandler),
-				)
-				// 若系统已在关闭，remotingServerRef 可能已停止，先检查避免 Ask 一直等到超时
-				if m.ctx.Err() != nil {
-					_ = tcpConn.Close()
-					return nil, vivid.ErrorActorSystemStopped.With(m.ctx.Err())
-				}
-				if err = m.actorLiaison.Ask(m.remotingServerRef, tcpConn).Wait(); err != nil {
-					closeErr := tcpConn.Close()
-					if closeErr != nil {
-						return nil, fmt.Errorf("%w, %s", err, closeErr)
-					}
-					// 发布连接失败事件
-					publishRemotingConnectionFailedEvent(m, m.advertiseAddress, m.advertiseAddress, err, m.backoff.GetAttempt())
-					return nil, err
-				}
-
-				// 尝试获取连接 Actor 的引用（通过 Ask 的回复）
-				// 注意：这里无法直接获取，因为 Ask 返回的是 nil
-				// 连接建立事件会在 server_actor.go 的 onConnection 中发布
-
-				m.connections[slot] = tcpConn
-				return tcpConn, nil
-			})
-			if err != nil {
-				// 创建连接失败，继续重试
-				return false, err
-			}
-			conn = c.(*tcpConnectionActor)
-		}
-
-		// 序列化消息，如果失败应当直接中断，重试毫无意义
-		data, err := serialize.EncodeEnvelopWithRemoting(m.codec, envelop)
+		conn, err := m.getOrCreateConnection()
 		if err != nil {
-			err = vivid.ErrorRemotingMessageEncodeFailed.With(err)
+			return false, err
+		}
+		m.connection = conn
 
-			// 发布消息发送失败事件（序列化失败）
-			if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
-				eventCtx := &eventStreamContext{
-					ref:    m.remotingServerRef,
-					logger: ctx.Logger(),
-				}
-				messageType := "unknown"
-				if envelop.Message() != nil {
-					messageType = reflect.TypeOf(envelop.Message()).String()
-				}
-				m.eventStream.Publish(eventCtx, ves.RemotingMessageSendFailedEvent{
-					ConnectionRef: nil,
-					RemoteAddr:    m.advertiseAddress,
-					MessageType:   messageType,
-					Error:         err,
-				})
-			}
-			m.actorLiaison.Logger().Warn("failed to enqueue message encode failed",
-				log.String("advertise_address", m.advertiseAddress),
-				log.String("sender", sender.GetPath()),
-				log.String("receiver", envelop.Receiver().GetPath()),
-				log.String("message_type", fmt.Sprintf("%T", envelop.Message())),
-				log.String("message", fmt.Sprintf("%+v", envelop.Message())),
-				log.Any("err", err),
-			)
+		data, err := m.encodeEnvelopWithLength(envelop)
+		if err != nil {
+			m.onEncodeFailed(envelop, err)
 			return true, err
 		}
-		// 写入消息长度
-		lengthBuf := make([]byte, 4)
-		binary.BigEndian.PutUint32(lengthBuf, uint32(len(data)))
-		data = append(lengthBuf, data...)
 
-		// 在使用连接前再次检查连接是否有效
-		if conn.Closed() {
-			// 连接在使用前被关闭，清理并重试
-			m.connectionLock.Lock()
-			if m.connections[slot] == conn {
-				m.connections[slot] = nil
-			}
-			m.connectionLock.Unlock()
-			conn = nil
+		if m.connection.Closed() {
+			m.connection = nil
 			return false, fmt.Errorf("connection closed before write")
 		}
 
-		// 发送消息
-		_, err = conn.Write(data)
-		if err != nil {
-			err = vivid.ErrorRemotingMessageSendFailed.With(err)
-
-			// 发布消息发送失败事件
-			if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
-				eventCtx := &eventStreamContext{
-					ref:    m.remotingServerRef,
-					logger: ctx.Logger(),
-				}
-				messageType := "unknown"
-				if envelop.Message() != nil {
-					messageType = reflect.TypeOf(envelop.Message()).String()
-				}
-				m.eventStream.Publish(eventCtx, ves.RemotingMessageSendFailedEvent{
-					ConnectionRef: nil, // 连接已失效，无法获取引用
-					RemoteAddr:    m.advertiseAddress,
-					MessageType:   messageType,
-					Error:         err,
-				})
-			}
-			// 写入失败，可能是连接已关闭，清理连接并重试
-			m.connectionLock.Lock()
-			if m.connections[slot] == conn {
-				m.connections[slot] = nil
-			}
-			m.connectionLock.Unlock()
-			conn = nil
+		if _, err = m.connection.Write(data); err != nil {
+			m.connection = nil
+			m.publishMessageSendFailed(envelop, vivid.ErrorRemotingMessageSendFailed.With(err))
 			return false, err
 		}
 
-		// 发布消息发送成功事件
-		if ctx, ok := m.actorLiaison.(vivid.ActorContext); ok {
-			eventCtx := &eventStreamContext{
-				ref:    m.remotingServerRef,
-				logger: ctx.Logger(),
-			}
-			messageType := "unknown"
-			if envelop.Message() != nil {
-				messageType = reflect.TypeOf(envelop.Message()).String()
-			}
-			// 注意：这里无法直接获取 ConnectionRef，因为 conn 是 *tcpConnectionActor，不是 ActorRef
-			// 但我们可以尝试从连接中获取，或者使用 nil
-			m.eventStream.Publish(eventCtx, ves.RemotingMessageSentEvent{
-				ConnectionRef: nil, // Mailbox 中无法直接获取 ConnectionRef
-				RemoteAddr:    m.advertiseAddress,
-				MessageType:   messageType,
-				MessageSize:   len(data),
-			})
-		}
-
+		m.publishMessageSent(envelop, len(data))
 		return true, nil
 	})
 
-	// 连接持续失败，消息应该投递到死信队列
 	if err != nil {
 		m.envelopHandler.HandleFailedRemotingEnvelop(envelop)
 	}
+}
+
+// getOrCreateConnection 在 singleflight 内获取或创建 TCP 连接，调用方需已持 connectionLock。
+func (m *Mailbox) getOrCreateConnection() (*tcpConnectionActor, error) {
+	v, err, _ := m.sf.Do("init", func() (any, error) {
+		if m.connection != nil {
+			return m.connection, nil
+		}
+		conn, err := net.Dial("tcp", m.advertiseAddress)
+		if err != nil {
+			publishRemotingConnectionFailedEvent(m, m.advertiseAddress, m.advertiseAddress, err, m.backoff.GetAttempt())
+			return nil, err
+		}
+		tcpConn, err := newTCPConnectionActor(true, conn, m.advertiseAddress, m.codec, m.envelopHandler, withTCPConnectionActorReadFailedHandler(m.options.ConnectionReadFailedHandler))
+		if err != nil {
+			m.actorLiaison.Logger().Warn("handshake failed", log.String("advertise_address", m.advertiseAddress), log.Any("err", err))
+			return nil, vivid.ErrorRemotingHandshakeFailed.With(err)
+		}
+		m.actorLiaison.Logger().Debug("handshake success", log.String("advertise_address", m.advertiseAddress))
+
+		if m.ctx.Err() != nil {
+			_ = tcpConn.Close()
+			return nil, vivid.ErrorActorSystemStopped.With(m.ctx.Err())
+		}
+		if err = m.actorLiaison.Ask(m.remotingServerRef, tcpConn).Wait(); err != nil {
+			if closeErr := tcpConn.Close(); closeErr != nil {
+				return nil, fmt.Errorf("%w, %s", err, closeErr)
+			}
+			publishRemotingConnectionFailedEvent(m, m.advertiseAddress, m.advertiseAddress, err, m.backoff.GetAttempt())
+			return nil, err
+		}
+		return tcpConn, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*tcpConnectionActor), nil
+}
+
+func (m *Mailbox) encodeEnvelopWithLength(envelop vivid.Envelop) ([]byte, error) {
+	data, err := serialize.EncodeEnvelopWithRemoting(m.codec, envelop)
+	if err != nil {
+		return nil, err
+	}
+	lengthBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(lengthBuf, uint32(len(data)))
+	return append(lengthBuf, data...), nil
+}
+
+func envelopMessageType(envelop vivid.Envelop) string {
+	if envelop.Message() == nil {
+		return "unknown"
+	}
+	return reflect.TypeOf(envelop.Message()).String()
+}
+
+func (m *Mailbox) eventContext() (*eventStreamContext, bool) {
+	ctx, ok := m.actorLiaison.(vivid.ActorContext)
+	if !ok {
+		return nil, false
+	}
+	return &eventStreamContext{ref: m.remotingServerRef, logger: ctx.Logger()}, true
+}
+
+func (m *Mailbox) publishMessageSendFailed(envelop vivid.Envelop, err error) {
+	if eventCtx, ok := m.eventContext(); ok {
+		m.eventStream.Publish(eventCtx, ves.RemotingMessageSendFailedEvent{
+			ConnectionRef: nil,
+			RemoteAddr:    m.advertiseAddress,
+			MessageType:   envelopMessageType(envelop),
+			Error:         err,
+		})
+	}
+}
+
+func (m *Mailbox) publishMessageSent(envelop vivid.Envelop, dataLen int) {
+	if eventCtx, ok := m.eventContext(); ok {
+		m.eventStream.Publish(eventCtx, ves.RemotingMessageSentEvent{
+			ConnectionRef: nil,
+			RemoteAddr:    m.advertiseAddress,
+			MessageType:   envelopMessageType(envelop),
+			MessageSize:   dataLen,
+		})
+	}
+}
+
+func (m *Mailbox) onEncodeFailed(envelop vivid.Envelop, err error) {
+	err = vivid.ErrorRemotingMessageEncodeFailed.With(err)
+	m.publishMessageSendFailed(envelop, err)
+	m.actorLiaison.Logger().Warn("failed to enqueue message encode failed",
+		log.String("advertise_address", m.advertiseAddress),
+		log.String("sender", envelop.Sender().GetPath()),
+		log.String("receiver", envelop.Receiver().GetPath()),
+		log.String("message_type", fmt.Sprintf("%T", envelop.Message())),
+		log.String("message", fmt.Sprintf("%+v", envelop.Message())),
+		log.Any("err", err),
+	)
 }
 
 func publishRemotingConnectionFailedEvent(mailbox *Mailbox, remoteAddr string, advertiseAddr string, error error, retryCount int) {

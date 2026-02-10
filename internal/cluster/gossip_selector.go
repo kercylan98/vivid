@@ -8,11 +8,11 @@ import (
 )
 
 // GetAllSeedsWithDCFunc 返回所有种子地址及地址到 DC 的映射。
-type GetAllSeedsWithDCFunc func() (addrs []string, dcByAddr map[string]string)
+type GetAllSeedsWithDCFunc func() (Addresses []string, dcByAddr map[string]string)
 
 // GossipTargetSelector 负责选择每轮 Gossip 的目标节点（同 DC/同 Region 优先）。
 type GossipTargetSelector struct {
-	options    vivid.ClusterOptions
+	options        vivid.ClusterOptions
 	getSeedsWithDC GetAllSeedsWithDCFunc
 }
 
@@ -29,18 +29,18 @@ func (g *GossipTargetSelector) SelectTargets(v *ClusterView, nodeState *NodeStat
 	if v == nil {
 		return nil
 	}
-	max := g.options.MaxDiscoveryTargetsPerTick
-	if max <= 0 {
-		max = DefaultMaxTargetsPerTick
+	tick := g.options.MaxDiscoveryTargetsPerTick
+	if tick <= 0 {
+		tick = DefaultMaxTargetsPerTick
 	}
 	self, _ := utils.NormalizeAddress(nodeState.Address)
 	selfDC := nodeState.Datacenter()
 	selfRegion := nodeState.Region()
 	seen := make(map[string]bool)
-	seedAddrs, seedDC := g.getSeedsWithDC()
+	seedAddresses, seedDC := g.getSeedsWithDC()
 	if selfRegion == "" {
 		var sameDC, otherDC []string
-		for _, s := range seedAddrs {
+		for _, s := range seedAddresses {
 			if s == self || seen[s] {
 				continue
 			}
@@ -66,13 +66,13 @@ func (g *GossipTargetSelector) SelectTargets(v *ClusterView, nodeState *NodeStat
 		rand.Shuffle(len(sameDC), func(i, j int) { sameDC[i], sameDC[j] = sameDC[j], sameDC[i] })
 		rand.Shuffle(len(otherDC), func(i, j int) { otherDC[i], otherDC[j] = otherDC[j], otherDC[i] })
 		candidates := append(sameDC, otherDC...)
-		if len(candidates) <= max {
+		if len(candidates) <= tick {
 			return candidates
 		}
-		return candidates[:max]
+		return candidates[:tick]
 	}
 	var sameRegSameDC, sameRegOtherDC, otherRegSameDC, otherRegOtherDC []string
-	for _, s := range seedAddrs {
+	for _, s := range seedAddresses {
 		if s == self || seen[s] {
 			continue
 		}
@@ -93,9 +93,9 @@ func (g *GossipTargetSelector) SelectTargets(v *ClusterView, nodeState *NodeStat
 		sameDC := selfDC == "" || m.Datacenter() == selfDC
 		if sameReg && sameDC {
 			sameRegSameDC = append(sameRegSameDC, addr)
-		} else if sameReg && !sameDC {
+		} else if sameReg {
 			sameRegOtherDC = append(sameRegOtherDC, addr)
-		} else if !sameReg && sameDC {
+		} else if sameDC {
 			otherRegSameDC = append(otherRegSameDC, addr)
 		} else {
 			otherRegOtherDC = append(otherRegOtherDC, addr)
@@ -106,10 +106,10 @@ func (g *GossipTargetSelector) SelectTargets(v *ClusterView, nodeState *NodeStat
 	rand.Shuffle(len(otherRegSameDC), func(i, j int) { otherRegSameDC[i], otherRegSameDC[j] = otherRegSameDC[j], otherRegSameDC[i] })
 	rand.Shuffle(len(otherRegOtherDC), func(i, j int) { otherRegOtherDC[i], otherRegOtherDC[j] = otherRegOtherDC[j], otherRegOtherDC[i] })
 	candidates := append(append(append(sameRegSameDC, sameRegOtherDC...), otherRegSameDC...), otherRegOtherDC...)
-	if len(candidates) <= max {
+	if len(candidates) <= tick {
 		return candidates
 	}
-	return candidates[:max]
+	return candidates[:tick]
 }
 
 // SelectTargetsCrossDC 仅返回跨 DC 目标，用于 CrossDCDiscoveryInterval 的单独轮次。
@@ -117,12 +117,12 @@ func (g *GossipTargetSelector) SelectTargetsCrossDC(v *ClusterView, nodeState *N
 	if v == nil {
 		return nil
 	}
-	max := g.options.MaxDiscoveryTargetsPerTickCrossDC
-	if max <= 0 {
-		max = g.options.MaxDiscoveryTargetsPerTick
+	dc := g.options.MaxDiscoveryTargetsPerTickCrossDC
+	if dc <= 0 {
+		dc = g.options.MaxDiscoveryTargetsPerTick
 	}
-	if max <= 0 {
-		max = DefaultMaxTargetsPerTick
+	if dc <= 0 {
+		dc = DefaultMaxTargetsPerTick
 	}
 	self, _ := utils.NormalizeAddress(nodeState.Address)
 	selfDC := nodeState.Datacenter()
@@ -130,8 +130,8 @@ func (g *GossipTargetSelector) SelectTargetsCrossDC(v *ClusterView, nodeState *N
 		return nil
 	}
 	var otherDC []string
-	seedAddrs, seedDC := g.getSeedsWithDC()
-	for _, s := range seedAddrs {
+	seedAddresses, seedDC := g.getSeedsWithDC()
+	for _, s := range seedAddresses {
 		if s == self {
 			continue
 		}
@@ -153,9 +153,9 @@ func (g *GossipTargetSelector) SelectTargetsCrossDC(v *ClusterView, nodeState *N
 			otherDC = append(otherDC, addr)
 		}
 	}
-	if len(otherDC) <= max {
+	if len(otherDC) <= dc {
 		return otherDC
 	}
 	rand.Shuffle(len(otherDC), func(i, j int) { otherDC[i], otherDC[j] = otherDC[j], otherDC[i] })
-	return otherDC[:max]
+	return otherDC[:dc]
 }

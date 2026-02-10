@@ -4,46 +4,44 @@
 package cluster
 
 import (
+	"fmt"
+	"sort"
 	"time"
 
 	"github.com/kercylan98/vivid/internal/messages"
 )
 
 func init() {
-	registerClusterInternalMessages()
-}
-
-func registerClusterInternalMessages() {
 	messages.RegisterInternalMessage[*JoinRequest](
-		"ClusterInternalMessageForJoinRequest", clusterJoinRequestReader, clusterJoinRequestWriter)
+		"clusterJoinRequest", clusterJoinRequestReader, clusterJoinRequestWriter)
 	messages.RegisterInternalMessage[*JoinResponse](
-		"ClusterInternalMessageForJoinResponse", clusterJoinResponseReader, clusterJoinResponseWriter)
+		"clusterJoinResponse", clusterJoinResponseReader, clusterJoinResponseWriter)
 	messages.RegisterInternalMessage[*GossipMessage](
-		"ClusterInternalMessageForGossip", clusterGossipReader, clusterGossipWriter)
+		"clusterGossip", clusterGossipReader, clusterGossipWriter)
 	messages.RegisterInternalMessage[*GossipTick](
-		"ClusterInternalMessageForGossipTick", clusterNoopReader, clusterNoopWriter)
+		"clusterGossipTick", clusterNoopReader, clusterNoopWriter)
 	messages.RegisterInternalMessage[*GossipCrossDCTick](
-		"ClusterInternalMessageForGossipCrossDCTick", clusterNoopReader, clusterNoopWriter)
+		"clusterGossipCrossDCTick", clusterNoopReader, clusterNoopWriter)
 	messages.RegisterInternalMessage[*FailureDetectionTick](
-		"ClusterInternalMessageForFailureDetectionTick", clusterNoopReader, clusterNoopWriter)
+		"clusterFailureDetectionTick", clusterNoopReader, clusterNoopWriter)
 	messages.RegisterInternalMessage[*GetViewRequest](
-		"ClusterInternalMessageForGetViewRequest", clusterNoopReader, clusterNoopWriter)
+		"clusterGetViewRequest", clusterNoopReader, clusterNoopWriter)
 	messages.RegisterInternalMessage[*GetViewResponse](
-		"ClusterInternalMessageForGetViewResponse", clusterGetViewResponseReader, clusterGetViewResponseWriter)
+		"clusterGetViewResponse", clusterGetViewResponseReader, clusterGetViewResponseWriter)
 	messages.RegisterInternalMessage[*LeaveRequest](
-		"ClusterInternalMessageForLeaveRequest", clusterNoopReader, clusterNoopWriter)
+		"clusterLeaveRequest", clusterNoopReader, clusterNoopWriter)
 	messages.RegisterInternalMessage[*LeaveAck](
-		"ClusterInternalMessageForLeaveAck", clusterNoopReader, clusterNoopWriter)
+		"clusterLeaveAck", clusterNoopReader, clusterNoopWriter)
 	messages.RegisterInternalMessage[*ExitingReady](
-		"ClusterInternalMessageForExitingReady", clusterNoopReader, clusterNoopWriter)
+		"clusterExitingReady", clusterNoopReader, clusterNoopWriter)
 	messages.RegisterInternalMessage[*LeaveBroadcastRound](
-		"ClusterInternalMessageForLeaveBroadcastRound", clusterLeaveBroadcastRoundReader, clusterLeaveBroadcastRoundWriter)
+		"clusterLeaveBroadcastRound", clusterLeaveBroadcastRoundReader, clusterLeaveBroadcastRoundWriter)
 	messages.RegisterInternalMessage[*JoinRetryTick](
-		"ClusterInternalMessageForJoinRetryTick", clusterJoinRetryTickReader, clusterJoinRetryTickWriter)
+		"clusterJoinRetryTick", clusterJoinRetryTickReader, clusterJoinRetryTickWriter)
 	messages.RegisterInternalMessage[*ForceMemberDown](
-		"ClusterInternalMessageForForceMemberDown", clusterForceMemberDownReader, clusterForceMemberDownWriter)
+		"clusterForceMemberDown", clusterForceMemberDownReader, clusterForceMemberDownWriter)
 	messages.RegisterInternalMessage[*TriggerViewBroadcast](
-		"ClusterInternalMessageForTriggerViewBroadcast", clusterTriggerViewBroadcastReader, clusterTriggerViewBroadcastWriter)
+		"clusterTriggerViewBroadcast", clusterTriggerViewBroadcastReader, clusterTriggerViewBroadcastWriter)
 }
 
 func clusterNoopReader(message any, reader *messages.Reader, codec messages.Codec) error { return nil }
@@ -55,35 +53,54 @@ func writeNodeState(w *messages.Writer, n *NodeState) error {
 		w.WriteUint32(0)
 		return w.Err()
 	}
-	// 用长度 1 标记“有内容”，避免与“空但非 nil”的 NodeState 歧义
 	w.WriteUint32(1)
-	writerWriteNodeStateBody(w, n)
-	return w.Err()
+	return writerWriteNodeStateBody(w, n)
 }
 
-func writerWriteNodeStateBody(w *messages.Writer, n *NodeState) {
-	w.WriteString(n.ID).WriteString(n.ClusterName).WriteString(n.Address)
-	w.WriteInt32(int32(n.Generation)).WriteInt64(n.Timestamp).WriteUint64(n.SeqNo)
-	w.WriteInt32(int32(n.Status)).WriteBool(n.Unreachable).WriteInt64(n.LastSeen).WriteUint64(n.LogicalClock)
-	writeMapStringString(w, n.Metadata)
-	writeMapStringString(w, n.Labels)
-	w.WriteUint32(n.Checksum)
+func writerWriteNodeStateBody(w *messages.Writer, n *NodeState) error {
+	if err := w.WriteFrom(n.ID, n.ClusterName, n.Address, int32(n.Generation), n.Timestamp, n.SeqNo, int32(n.Status), n.Unreachable, n.LastSeen, n.LogicalClock); err != nil {
+		return err
+	}
+	if err := writeMapStringString(w, n.Metadata); err != nil {
+		return err
+	}
+	if err := writeMapStringString(w, n.Labels); err != nil {
+		return err
+	}
+	return w.WriteFrom(n.Checksum)
 }
 
-func writeMapStringString(w *messages.Writer, m map[string]string) {
+// maxMapEntries 反序列化时单 map 最大条目数，防止损坏数据导致异常分配或死循环
+const maxMapEntries = 65536
+
+// writeMapStringString 按 key 排序写入，保证同一 map 序列化结果一致（便于校验和与比对）。
+// 任一步写入失败会立即返回，避免写出“长度正确但内容不完整”的 map 导致解码错位。
+func writeMapStringString(w *messages.Writer, m map[string]string) error {
 	if m == nil {
 		w.WriteUint32(0)
-		return
+		return w.Err()
 	}
-	w.WriteUint32(uint32(len(m)))
-	for k, v := range m {
-		w.WriteString(k).WriteString(v)
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+	w.WriteUint32(uint32(len(keys)))
+	if w.Err() != nil {
+		return w.Err()
+	}
+	for _, k := range keys {
+		w.WriteString(k).WriteString(m[k])
+		if w.Err() != nil {
+			return w.Err()
+		}
+	}
+	return nil
 }
 
 func readNodeState(r *messages.Reader) (*NodeState, error) {
-	n, err := r.ReadUint32()
-	if err != nil {
+	var n uint32
+	if err := r.ReadInto(&n); err != nil {
 		return nil, err
 	}
 	if n == 0 {
@@ -93,21 +110,26 @@ func readNodeState(r *messages.Reader) (*NodeState, error) {
 }
 
 func readerReadNodeStateBody(r *messages.Reader) (*NodeState, error) {
-	id, _ := r.ReadString()
-	clusterName, _ := r.ReadString()
-	address, _ := r.ReadString()
-	gen, _ := r.ReadInt32()
-	timestamp, _ := r.ReadInt64()
-	seqNo, _ := r.ReadUint64()
-	status, _ := r.ReadInt32()
-	unreachable, _ := r.ReadBool()
-	lastSeen, _ := r.ReadInt64()
-	logicalClock, _ := r.ReadUint64()
-	metadata := readMapStringString(r)
-	labels := readMapStringString(r)
-	checksum, _ := r.ReadUint32()
-	if r.Error() != nil {
-		return nil, r.Error()
+	var id, clusterName, address string
+	var gen int32
+	var timestamp, lastSeen int64
+	var seqNo, logicalClock uint64
+	var status int32
+	var unreachable bool
+	var checksum uint32
+	if err := r.ReadInto(&id, &clusterName, &address, &gen, &timestamp, &seqNo, &status, &unreachable, &lastSeen, &logicalClock); err != nil {
+		return nil, err
+	}
+	metadata, err := readMapStringString(r)
+	if err != nil {
+		return nil, err
+	}
+	labels, err := readMapStringString(r)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.ReadInto(&checksum); err != nil {
+		return nil, err
 	}
 	return &NodeState{
 		ID: id, ClusterName: clusterName, Address: address,
@@ -117,18 +139,30 @@ func readerReadNodeStateBody(r *messages.Reader) (*NodeState, error) {
 	}, nil
 }
 
-func readMapStringString(r *messages.Reader) map[string]string {
+func readMapStringString(r *messages.Reader) (map[string]string, error) {
 	n, err := r.ReadUint32()
-	if err != nil || n == 0 {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	if n > maxMapEntries {
+		return nil, fmt.Errorf("map length %d exceeds max %d", n, maxMapEntries)
 	}
 	m := make(map[string]string, n)
 	for i := uint32(0); i < n; i++ {
-		k, _ := r.ReadString()
-		v, _ := r.ReadString()
+		k, err := r.ReadString()
+		if err != nil {
+			return nil, err
+		}
+		v, err := r.ReadString()
+		if err != nil {
+			return nil, err
+		}
 		m[k] = v
 	}
-	return m
+	return m, nil
 }
 
 // writeClusterView 将 ClusterView 按二进制格式写入，nil 写长度 0。
@@ -138,52 +172,77 @@ func writeClusterView(w *messages.Writer, v *ClusterView) error {
 		return w.Err()
 	}
 	w.WriteUint32(1)
-	w.WriteString(v.ViewID).WriteInt64(v.Epoch).WriteInt64(v.Timestamp)
-	w.WriteUint32(uint32(len(v.Members)))
-	for id, state := range v.Members {
+	if err := w.WriteFrom(v.ViewID, v.Epoch, v.Timestamp); err != nil {
+		return err
+	}
+	memberIDs := make([]string, 0, len(v.Members))
+	for id := range v.Members {
+		memberIDs = append(memberIDs, id)
+	}
+	sort.Strings(memberIDs)
+	w.WriteUint32(uint32(len(memberIDs)))
+	for _, id := range memberIDs {
+		state := v.Members[id]
 		w.WriteString(id)
 		if state != nil {
 			w.WriteUint8(1)
-			writerWriteNodeStateBody(w, state)
+			if err := writerWriteNodeStateBody(w, state); err != nil {
+				return err
+			}
 		} else {
 			w.WriteUint8(0)
 		}
 	}
-	w.WriteInt32(int32(v.HealthyCount)).WriteInt32(int32(v.UnhealthyCount)).WriteInt32(int32(v.QuorumSize))
-	_ = WriteVersionVector(w, v.VersionVector)
-	w.WriteUint16(v.ProtocolVersion).WriteInt32(int32(v.MaxVersionVectorEntries))
-	return w.Err()
+	if err := w.WriteFrom(int32(v.HealthyCount), int32(v.UnhealthyCount), int32(v.QuorumSize)); err != nil {
+		return err
+	}
+	if err := WriteVersionVector(w, v.VersionVector); err != nil {
+		return err
+	}
+	return w.WriteFrom(v.ProtocolVersion, int32(v.MaxVersionVectorEntries))
 }
 
 func readClusterView(r *messages.Reader) (*ClusterView, error) {
-	n, err := r.ReadUint32()
-	if err != nil {
+	var n uint32
+	if err := r.ReadInto(&n); err != nil {
 		return nil, err
 	}
 	if n == 0 {
 		return nil, nil
 	}
-	viewID, _ := r.ReadString()
-	epoch, _ := r.ReadInt64()
-	timestamp, _ := r.ReadInt64()
-	memLen, _ := r.ReadUint32()
+	var viewID string
+	var epoch, timestamp int64
+	var memLen uint32
+	if err := r.ReadInto(&viewID, &epoch, &timestamp, &memLen); err != nil {
+		return nil, err
+	}
 	members := make(map[string]*NodeState, memLen)
 	for i := uint32(0); i < memLen; i++ {
-		id, _ := r.ReadString()
-		has, _ := r.ReadUint8()
+		var id string
+		var has uint8
+		if err := r.ReadInto(&id, &has); err != nil {
+			return nil, err
+		}
 		if has != 0 {
-			state, _ := readerReadNodeStateBody(r)
+			state, err := readerReadNodeStateBody(r)
+			if err != nil {
+				return nil, err
+			}
 			members[id] = state
 		}
 	}
-	healthy, _ := r.ReadInt32()
-	unhealthy, _ := r.ReadInt32()
-	quorum, _ := r.ReadInt32()
-	vv, _ := ReadVersionVector(r)
-	protoVer, _ := r.ReadUint16()
-	maxVV, _ := r.ReadInt32()
-	if r.Error() != nil {
-		return nil, r.Error()
+	var healthy, unhealthy, quorum int32
+	if err := r.ReadInto(&healthy, &unhealthy, &quorum); err != nil {
+		return nil, err
+	}
+	vv, err := ReadVersionVector(r)
+	if err != nil {
+		return nil, err
+	}
+	var protoVer uint16
+	var maxVV int32
+	if err := r.ReadInto(&protoVer, &maxVV); err != nil {
+		return nil, err
 	}
 	return &ClusterView{
 		ViewID: viewID, Epoch: epoch, Timestamp: timestamp, Members: members,
@@ -199,12 +258,7 @@ func clusterJoinRequestReader(message any, reader *messages.Reader, codec messag
 		return err
 	}
 	m.NodeState = ns
-	s, err := reader.ReadString()
-	if err != nil {
-		return err
-	}
-	m.AuthToken = s
-	return nil
+	return reader.ReadInto(&m.AuthToken)
 }
 
 func clusterJoinRequestWriter(message any, writer *messages.Writer, codec messages.Codec) error {
@@ -212,8 +266,7 @@ func clusterJoinRequestWriter(message any, writer *messages.Writer, codec messag
 	if err := writeNodeState(writer, m.NodeState); err != nil {
 		return err
 	}
-	writer.WriteString(m.AuthToken)
-	return writer.Err()
+	return writer.WriteFrom(m.AuthToken)
 }
 
 func clusterJoinResponseReader(message any, reader *messages.Reader, codec messages.Codec) error {
@@ -253,12 +306,7 @@ func clusterGetViewResponseReader(message any, reader *messages.Reader, codec me
 		return err
 	}
 	m.View = v
-	b, err := reader.ReadBool()
-	if err != nil {
-		return err
-	}
-	m.InQuorum = b
-	return nil
+	return reader.ReadInto(&m.InQuorum)
 }
 
 func clusterGetViewResponseWriter(message any, writer *messages.Writer, codec messages.Codec) error {
@@ -266,30 +314,28 @@ func clusterGetViewResponseWriter(message any, writer *messages.Writer, codec me
 	if err := writeClusterView(writer, m.View); err != nil {
 		return err
 	}
-	writer.WriteBool(m.InQuorum)
-	return writer.Err()
+	return writer.WriteFrom(m.InQuorum)
 }
 
 func clusterLeaveBroadcastRoundReader(message any, reader *messages.Reader, codec messages.Codec) error {
 	m := message.(*LeaveBroadcastRound)
-	v, err := reader.ReadInt32()
-	if err != nil {
+	var round int32
+	if err := reader.ReadInto(&round); err != nil {
 		return err
 	}
-	m.Round = int(v)
+	m.Round = int(round)
 	return nil
 }
 
 func clusterLeaveBroadcastRoundWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	m := message.(*LeaveBroadcastRound)
-	writer.WriteInt32(int32(m.Round))
-	return writer.Err()
+	return writer.WriteFrom(int32(m.Round))
 }
 
 func clusterJoinRetryTickReader(message any, reader *messages.Reader, codec messages.Codec) error {
 	m := message.(*JoinRetryTick)
-	nano, err := reader.ReadInt64()
-	if err != nil {
+	var nano int64
+	if err := reader.ReadInto(&nano); err != nil {
 		return err
 	}
 	m.NextDelay = time.Duration(nano)
@@ -298,43 +344,25 @@ func clusterJoinRetryTickReader(message any, reader *messages.Reader, codec mess
 
 func clusterJoinRetryTickWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	m := message.(*JoinRetryTick)
-	writer.WriteInt64(int64(m.NextDelay))
-	return writer.Err()
+	return writer.WriteFrom(int64(m.NextDelay))
 }
 
 func clusterForceMemberDownReader(message any, reader *messages.Reader, codec messages.Codec) error {
 	m := message.(*ForceMemberDown)
-	id, err := reader.ReadString()
-	if err != nil {
-		return err
-	}
-	tok, err := reader.ReadString()
-	if err != nil {
-		return err
-	}
-	m.NodeID = id
-	m.AdminToken = tok
-	return nil
+	return reader.ReadInto(&m.NodeID, &m.AdminToken)
 }
 
 func clusterForceMemberDownWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	m := message.(*ForceMemberDown)
-	writer.WriteString(m.NodeID).WriteString(m.AdminToken)
-	return writer.Err()
+	return writer.WriteFrom(m.NodeID, m.AdminToken)
 }
 
 func clusterTriggerViewBroadcastReader(message any, reader *messages.Reader, codec messages.Codec) error {
 	m := message.(*TriggerViewBroadcast)
-	tok, err := reader.ReadString()
-	if err != nil {
-		return err
-	}
-	m.AdminToken = tok
-	return nil
+	return reader.ReadInto(&m.AdminToken)
 }
 
 func clusterTriggerViewBroadcastWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	m := message.(*TriggerViewBroadcast)
-	writer.WriteString(m.AdminToken)
-	return writer.Err()
+	return writer.WriteFrom(m.AdminToken)
 }

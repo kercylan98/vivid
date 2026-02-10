@@ -101,8 +101,7 @@ func SerializeRemotingMessage(codec Codec, writer *Writer, desc *MessageDesc, me
 	if err := desc.writer(message, dw, codec); err != nil {
 		return err
 	}
-	// 写入包含长度的数据
-	writer.WriteBytesWithLength(dw.Bytes(), 4)
+	writer.WriteBytesWithLength(dw.Bytes(), LengthSize4)
 	return nil
 }
 

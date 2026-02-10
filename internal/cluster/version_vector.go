@@ -2,8 +2,6 @@
 package cluster
 
 import (
-	"bytes"
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"sort"
@@ -483,13 +481,13 @@ func (v VersionVector) ContainsNode(node string) bool {
 // MaxCounter 返回向量中所有计数器的最大值
 // 用于监控和诊断
 func (v VersionVector) MaxCounter() uint64 {
-	var max uint64
+	var m uint64
 	for _, count := range v.m {
-		if count > max {
-			max = count
+		if count > m {
+			m = count
 		}
 	}
-	return max
+	return m
 }
 
 // TotalCount 返回所有计数器之和
@@ -617,32 +615,6 @@ func validateNodeAddress(addr string) error {
 	// 可选：添加更多验证规则
 	// 例如：检查地址格式、禁止特殊字符等
 
-	return nil
-}
-
-// GobEncode 实现 encoding.GobEncoder，供 gob 序列化使用（如集成测试的 Codec）。
-func (v VersionVector) GobEncode() ([]byte, error) {
-	entries := v.SortedEntries()
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(entries); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-// GobDecode 实现 encoding.GobDecoder，供 gob 反序列化使用。
-func (v *VersionVector) GobDecode(data []byte) error {
-	var entries []NodeCount
-	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&entries); err != nil {
-		return err
-	}
-	v.m = make(map[string]uint64, len(entries))
-	for _, e := range entries {
-		v.m[e.Node] = e.Count
-	}
-	v.entries = entries
-	v.dirty = false
-	v.sizeHint = len(v.m)
 	return nil
 }
 

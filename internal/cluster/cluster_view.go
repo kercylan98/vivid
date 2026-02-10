@@ -6,18 +6,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// ClusterProtocolVersion 集群协议版本号，随 ClusterView 序列化，用于跨版本滚动升级与兼容性校验。
-const ClusterProtocolVersion uint16 = 1
+// ProtocolVersion 集群协议版本号，随 ClusterView 序列化，用于跨版本滚动升级与兼容性校验。
+const ProtocolVersion uint16 = 1
 
 func newClusterView() *ClusterView {
 	return &ClusterView{
-		ViewID:         uuid.New().String(),
-		Epoch:          0,
-		Timestamp:      time.Now().UnixNano(),
-		Members:        make(map[string]*NodeState),
-		HealthyCount:   0,
-		UnhealthyCount: 0,
-		ProtocolVersion: ClusterProtocolVersion,
+		ViewID:          uuid.New().String(),
+		Epoch:           0,
+		Timestamp:       time.Now().UnixNano(),
+		Members:         make(map[string]*NodeState),
+		HealthyCount:    0,
+		UnhealthyCount:  0,
+		ProtocolVersion: ProtocolVersion,
 	}
 }
 
@@ -25,16 +25,16 @@ func newClusterView() *ClusterView {
 // Epoch 与 VersionVector 用于合并时的一致性判断与脑裂防护。
 // ProtocolVersion 用于序列化/反序列化与跨版本兼容，小版本只增字段不删以保证向后兼容。
 type ClusterView struct {
-	ViewID                   string
-	Epoch                    int64
-	Timestamp                int64
-	Members                  map[string]*NodeState
-	HealthyCount             int
-	UnhealthyCount           int
-	QuorumSize               int
-	VersionVector            VersionVector
-	ProtocolVersion          uint16
-	MaxVersionVectorEntries  int // 0 表示使用默认 65535
+	ViewID                  string
+	Epoch                   int64
+	Timestamp               int64
+	Members                 map[string]*NodeState
+	HealthyCount            int
+	UnhealthyCount          int
+	QuorumSize              int
+	VersionVector           VersionVector
+	ProtocolVersion         uint16
+	MaxVersionVectorEntries int // 0 表示使用默认 65535
 }
 
 // AddMember 将成员加入视图；若已存在则仅在入参为更新分代/时间戳时覆盖（避免脑裂采纳旧实例）。

@@ -113,15 +113,15 @@ func ComputeLeaderAddr(v *ClusterView) string {
 	if v == nil || len(v.Members) == 0 {
 		return ""
 	}
-	var addrs []string
+	var addresses []string
 	for _, m := range v.Members {
 		if m != nil && m.Status == MemberStatusUp && m.Address != "" {
-			addrs = append(addrs, m.Address)
+			addresses = append(addresses, m.Address)
 		}
 	}
-	if len(addrs) == 0 {
+	if len(addresses) == 0 {
 		return ""
 	}
-	sort.Strings(addrs)
-	return addrs[0]
+	sort.Strings(addresses)
+	return addresses[0]
 }

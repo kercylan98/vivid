@@ -63,20 +63,20 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 func (c *_systemChains) initializeCluster(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
 		if system.options.RemotingOptions != nil && system.options.RemotingOptions.ClusterOptions != nil {
-			actorRefParsor := func(address, path string) (vivid.ActorRef, error) {
+			actorRefParser := func(address, path string) (vivid.ActorRef, error) {
 				return NewRef(address, path)
 			}
 
 			nodeActor := cluster.NewNodeActor(
 				system.options.RemotingAdvertiseAddress,
-				actorRefParsor,
+				actorRefParser,
 				*system.options.RemotingOptions.ClusterOptions)
 
 			clusterRef, err := system.ActorOf(nodeActor, vivid.WithActorName("@cluster"))
 			if err != nil {
 				return err
 			}
-			system.clusterContext = cluster.NewClusterContext(system, *system.options.RemotingOptions.ClusterOptions, actorRefParsor, clusterRef)
+			system.clusterContext = cluster.NewContext(system, clusterRef)
 			return err
 		}
 		return nil

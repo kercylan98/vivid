@@ -52,23 +52,22 @@ func (a *serverAcceptActor) onAccept(ctx vivid.ActorContext) {
 		return
 	}
 
-	// 进入下一次循环监听
-	defer func(listener net.Listener) {
-		ctx.TellSelf(listener)
-	}(a.listener)
-
-	// 由 ServerActor 负责管理连接
-	connActor := newTCPConnectionActor(false, conn, a.advertiseAddr, a.codec, a.envelopHandler,
-		withTCPConnectionActorReadFailedHandler(a.options.ConnectionReadFailedHandler),
-	)
-
-	// 此处存在 GOLAND 误报，必须使用 defer 或匿名函数处理，否则将提示：Potential resource leak: ensure the resource is closed on all execution paths
-	func(connActor *tcpConnectionActor) {
+	go func() {
+		// 异步握手
+		connActor, err := newTCPConnectionActor(false, conn, a.advertiseAddr, a.codec, a.envelopHandler, withTCPConnectionActorReadFailedHandler(a.options.ConnectionReadFailedHandler))
+		if err != nil {
+			ctx.Logger().Warn("handshake failed", log.String("advertise_addr", a.advertiseAddr), log.Any("err", err))
+			return
+		}
+		ctx.Logger().Debug("handshake success", log.String("advertise_address", a.advertiseAddr))
 		if err = ctx.Ask(ctx.Parent(), connActor).Wait(); err != nil {
 			// 连接失败，关闭连接
 			if closeErr := connActor.Close(); closeErr != nil {
 				ctx.Logger().Warn("close accept connection failed", log.String("advertise_addr", a.advertiseAddr), log.Any("err", fmt.Errorf("%w: %s", err, closeErr)))
 			}
 		}
-	}(connActor)
+	}()
+
+	// 进入下一次循环监听
+	ctx.TellSelf(a.listener)
 }

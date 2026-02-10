@@ -48,7 +48,7 @@ func NewNodeActor(address string, actorRefParser ActorRefParser, options vivid.C
 		gossipSelector:          NewGossipTargetSelector(options, seedsProvider.GetAllSeedsWithDC),
 		failureDetector:         NewFailureDetector(options),
 		events:                  NewClusterEventPublisher(),
-		leaveCoord:              NewLeaveCoordinator(),
+		leaveCoordinator:        NewLeaveCoordinator(),
 		metricsUpdater:          NewClusterMetricsUpdater(),
 		joinBackoff:             utils.NewExponentialBackoffWithDefault(InitialJoinRetryDelay, MaxJoinRetryDelay),
 		lastVersionVectorByAddr: make(map[string]VersionVector),
@@ -67,9 +67,9 @@ type NodeActor struct {
 	gossipRateLimiter       *GossipRateLimiter
 	gossipSelector          *GossipTargetSelector
 	failureDetector         *FailureDetector
-	events                  *ClusterEventPublisher
-	leaveCoord              *LeaveCoordinator
-	metricsUpdater          *ClusterMetricsUpdater
+	events                  *EventPublisher
+	leaveCoordinator        *LeaveCoordinator
+	metricsUpdater          *MetricsUpdater
 	joinBackoff             *utils.ExponentialBackoff
 	lastVersionVectorByAddr map[string]VersionVector // 各地址上次发来的视图版本，用于发送前跳过“目标合并后不会变更”的同步
 }
@@ -107,7 +107,7 @@ func (a *NodeActor) OnReceive(ctx vivid.ActorContext) {
 			a.nodeState.Status = MemberStatusExiting
 			ctx.Logger().Debug("cluster node exiting", log.String("nodeId", a.nodeState.ID))
 		}
-		if ref := a.leaveCoord.GetAndClearReplyTo(); ref != nil {
+		if ref := a.leaveCoordinator.GetAndClearReplyTo(); ref != nil {
 			ctx.Tell(ref, &LeaveAck{})
 		}
 		a.publishLeaveCompleted(ctx)
@@ -413,33 +413,8 @@ func (a *NodeActor) handleGossip(ctx vivid.ActorContext, m *GossipMessage) {
 	}
 }
 
-// runGossipRound 执行一轮 Gossip，由调度器周期触发。
-func (a *NodeActor) runGossipRound(ctx vivid.ActorContext) {
-	a.pruneLastVersionVectors()
-	targets := a.gossipSelector.SelectTargets(a.clusterView, a.nodeState)
-	snap := a.clusterView.Snapshot()
-	if snap == nil {
-		return
-	}
-	msg := &GossipMessage{View: snap}
-	for _, addr := range targets {
-		if !a.gossipRateLimiter.Allow() {
-			break
-		}
-		if !a.shouldSendGossipTo(snap.VersionVector, addr) {
-			continue
-		}
-		ref, err := a.actorRefParser(addr, "/@cluster")
-		if err != nil {
-			continue
-		}
-		ctx.Tell(ref, msg)
-	}
-}
-
-func (a *NodeActor) runGossipRoundCrossDC(ctx vivid.ActorContext) {
-	a.pruneLastVersionVectors()
-	targets := a.gossipSelector.SelectTargetsCrossDC(a.clusterView, a.nodeState)
+// runGossipRoundWithTargets
+func (a *NodeActor) runGossipRoundWithTargets(ctx vivid.ActorContext, targets []string) {
 	if len(targets) == 0 {
 		return
 	}
@@ -461,6 +436,19 @@ func (a *NodeActor) runGossipRoundCrossDC(ctx vivid.ActorContext) {
 		}
 		ctx.Tell(ref, msg)
 	}
+}
+
+// runGossipRound 执行一轮 Gossip，由调度器周期触发。
+func (a *NodeActor) runGossipRound(ctx vivid.ActorContext) {
+	a.pruneLastVersionVectors()
+	targets := a.gossipSelector.SelectTargets(a.clusterView, a.nodeState)
+	a.runGossipRoundWithTargets(ctx, targets)
+}
+
+func (a *NodeActor) runGossipRoundCrossDC(ctx vivid.ActorContext) {
+	a.pruneLastVersionVectors()
+	targets := a.gossipSelector.SelectTargetsCrossDC(a.clusterView, a.nodeState)
+	a.runGossipRoundWithTargets(ctx, targets)
 }
 
 func (a *NodeActor) startGossipLoop(ctx vivid.ActorContext) {
@@ -493,18 +481,18 @@ func (a *NodeActor) runFailureDetection(ctx vivid.ActorContext) {
 		a.events.PublishViewChanged(ctx, a.clusterView, 0, nil)
 		a.broadcastViewOnce(ctx)
 	}
-	removedAddrs := make([]string, 0, len(toRemove))
+	removedAddresses := make([]string, 0, len(toRemove))
 	for _, id := range toRemove {
 		if m := a.clusterView.Members[id]; m != nil {
-			removedAddrs = append(removedAddrs, m.Address)
+			removedAddresses = append(removedAddresses, m.Address)
 			ctx.Logger().Debug("member unreachable, removing", log.String("nodeId", id), log.String("address", m.Address))
 		}
 		a.clusterView.RemoveMember(id)
 		a.incrementLocalVersion()
 	}
-	if len(removedAddrs) > 0 {
-		a.events.PublishMembersChanged(ctx, a.memberAddresses(), 0, removedAddrs)
-		a.events.PublishViewChanged(ctx, a.clusterView, 0, removedAddrs)
+	if len(removedAddresses) > 0 {
+		a.events.PublishMembersChanged(ctx, a.memberAddresses(), 0, removedAddresses)
+		a.events.PublishViewChanged(ctx, a.clusterView, 0, removedAddresses)
 		a.broadcastViewOnce(ctx)
 	}
 	inQuorum := a.quorumCalc.SatisfiesQuorum(a.clusterView)
@@ -575,13 +563,13 @@ func (a *NodeActor) handleLeaveRequest(ctx vivid.ActorContext) {
 		}
 		return
 	}
-	a.leaveCoord.SetReplyTo(sender)
+	a.leaveCoordinator.SetReplyTo(sender)
 	a.cancelAllSchedulers(ctx)
 	a.nodeState.Status = MemberStatusLeaving
 	a.broadcastViewOnce(ctx)
 	a.nodeState.Status = MemberStatusExiting
 	ctx.Logger().Debug("cluster node exiting", log.String("nodeId", a.nodeState.ID))
-	if ref := a.leaveCoord.GetAndClearReplyTo(); ref != nil {
+	if ref := a.leaveCoordinator.GetAndClearReplyTo(); ref != nil {
 		ctx.Reply(&LeaveAck{})
 	}
 	a.publishLeaveCompleted(ctx)
@@ -625,8 +613,8 @@ func (a *NodeActor) pruneLastVersionVectors() {
 			}
 		}
 	}
-	addrs, _ := a.seedsProvider.GetAllSeedsWithDC()
-	for _, addr := range addrs {
+	addresses, _ := a.seedsProvider.GetAllSeedsWithDC()
+	for _, addr := range addresses {
 		if n, ok := utils.NormalizeAddress(addr); ok {
 			allowed[n] = true
 		}

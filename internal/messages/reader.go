@@ -11,6 +11,14 @@ import (
 )
 
 var ErrOverflow = errors.New("overflow")
+
+// 长度前缀字节数（用于 ReadBytesWithLength / WriteBytesWithLength）
+const (
+	LengthSize1 = 1 // 最大 255
+	LengthSize2 = 2 // 最大 65535
+	LengthSize4 = 4
+)
+
 var readerPool = sync.Pool{
 	New: func() interface{} {
 		return NewReader(nil)
@@ -48,7 +56,7 @@ type Reader struct {
 // NewReaderFromPool 从池中获取一个读取器
 func NewReaderFromPool(data []byte, opts ...ReaderOption) *Reader {
 	r := readerPool.Get().(*Reader)
-	r.Reset(data)
+	r.buf = data
 	if len(opts) > 0 {
 		opt := opts[0]
 		if opt.ByteOrder != nil {
@@ -64,6 +72,7 @@ func NewReaderFromPool(data []byte, opts ...ReaderOption) *Reader {
 
 // ReleaseReaderToPool 释放一个读取器到池中
 func ReleaseReaderToPool(r *Reader) {
+	r.Reset(nil)
 	readerPool.Put(r)
 }
 
@@ -295,11 +304,10 @@ func (r *Reader) ReadBytesWithLength(lengthSize int) ([]byte, error) {
 // 字符串格式：4 字节长度（uint32）+ UTF-8 编码的字符串数据
 // 使用 string() 进行安全转换，避免使用 unsafe 包
 func (r *Reader) ReadString() (string, error) {
-	data, err := r.ReadBytesWithLength(4)
+	data, err := r.ReadBytesWithLength(LengthSize4)
 	if err != nil {
 		return "", err
 	}
-	// 使用 string() 进行安全转换，Go 编译器会优化此操作
 	return string(data), nil
 }
 
@@ -308,7 +316,7 @@ func (r *Reader) ReadString() (string, error) {
 // 字符串格式：1 字节长度（uint8）+ UTF-8 编码的字符串数据
 // 适用于长度不超过 255 的字符串
 func (r *Reader) ReadShortString() (string, error) {
-	data, err := r.ReadBytesWithLength(1)
+	data, err := r.ReadBytesWithLength(LengthSize1)
 	if err != nil {
 		return "", err
 	}
@@ -405,7 +413,7 @@ func (r *Reader) Read(v interface{}) error {
 		}
 		*ptr = val
 	case *[]byte:
-		val, err := r.ReadBytesWithLength(4)
+		val, err := r.ReadBytesWithLength(LengthSize4)
 		if err != nil {
 			return err
 		}
@@ -458,10 +466,9 @@ func (r *Reader) readReflect(v interface{}) error {
 		return nil
 
 	case reflect.Array:
-		// 读取数组元素
-		// 注意：为了与 Writer 保持一致，写入时会写入长度，所以这里也需要读取长度
-		// 但数组长度是固定的，读取的长度必须与数组长度匹配
-		expectedLength := rv.Len()
+		// 先读入临时数组，成功后再赋给目标，避免解码中途失败时污染调用者
+		tmp := reflect.New(rv.Type()).Elem()
+		expectedLength := tmp.Len()
 		readLength, err := r.ReadUint32()
 		if err != nil {
 			return err
@@ -470,33 +477,34 @@ func (r *Reader) readReflect(v interface{}) error {
 			return fmt.Errorf("array length mismatch: expected %d, got %d", expectedLength, readLength)
 		}
 		for i := 0; i < expectedLength; i++ {
-			elem := rv.Index(i)
+			elem := tmp.Index(i)
 			if elem.CanAddr() {
 				if err := r.Read(elem.Addr().Interface()); err != nil {
 					return err
 				}
 			} else {
-				// 对于不可寻址的元素，创建临时变量
-				elemPtr := reflect.New(rv.Type().Elem())
+				elemPtr := reflect.New(tmp.Type().Elem())
 				if err := r.Read(elemPtr.Interface()); err != nil {
 					return err
 				}
 				elem.Set(elemPtr.Elem())
 			}
 		}
+		rv.Set(tmp)
 		return nil
 
 	case reflect.Struct:
-		// 按字段顺序读取所有可导出字段
-		for i := 0; i < rv.NumField(); i++ {
-			field := rv.Field(i)
-			// 只处理可导出的字段（PkgPath 为空表示可导出）
+		// 先读入临时结构体，成功后再赋给目标，避免解码中途失败时污染调用者
+		tmp := reflect.New(rv.Type()).Elem()
+		for i := 0; i < tmp.NumField(); i++ {
+			field := tmp.Field(i)
 			if field.CanAddr() && field.Addr().CanInterface() {
 				if err := r.Read(field.Addr().Interface()); err != nil {
 					return err
 				}
 			}
 		}
+		rv.Set(tmp)
 		return nil
 
 	default:
@@ -517,11 +525,12 @@ func (r *Reader) ReadInto(vals ...interface{}) error {
 	return nil
 }
 
+// ReadMessage 从当前位置读取一条消息。
+// 线格式：| 4 字节 body 长度 | body | 4 字节消息名长度 | 消息名 |。
+// 解码失败时返回 (nil, err)，且不会修改调用者已传入的其它变量；内部会先读完 body/name 再解码，故流位置会正确前移。
 func (r *Reader) ReadMessage(codec Codec) (messageInstance any, err error) {
-	var messageName string
 	var messageData []byte
-
-	// | data | messageName
+	var messageName string
 	if err = r.ReadInto(&messageData, &messageName); err != nil {
 		return nil, err
 	}

@@ -5,22 +5,22 @@ import (
 	"github.com/kercylan98/vivid/pkg/ves"
 )
 
-// ClusterEventPublisher 管理集群事件发布状态（上次 quorum/leader/DC 健康），并发布视图与成员变更事件。
-type ClusterEventPublisher struct {
+// EventPublisher 管理集群事件发布状态（上次 quorum/leader/DC 健康），并发布视图与成员变更事件。
+type EventPublisher struct {
 	lastInQuorum   bool
 	lastLeaderAddr string
 	lastDCHealth   map[string]bool
 }
 
 // NewClusterEventPublisher 创建集群事件发布器。
-func NewClusterEventPublisher() *ClusterEventPublisher {
-	return &ClusterEventPublisher{
+func NewClusterEventPublisher() *EventPublisher {
+	return &EventPublisher{
 		lastDCHealth: make(map[string]bool),
 	}
 }
 
 // PublishMembersChanged 发布成员变更事件。
-func (p *ClusterEventPublisher) PublishMembersChanged(ctx vivid.ActorContext, members []string, addedNum int, removed []string) {
+func (p *EventPublisher) PublishMembersChanged(ctx vivid.ActorContext, members []string, addedNum int, removed []string) {
 	if ctx == nil {
 		return
 	}
@@ -39,7 +39,7 @@ func (p *ClusterEventPublisher) PublishMembersChanged(ctx vivid.ActorContext, me
 }
 
 // PublishViewChanged 发布视图变更事件。
-func (p *ClusterEventPublisher) PublishViewChanged(ctx vivid.ActorContext, v *ClusterView, addedNum int, removed []string) {
+func (p *EventPublisher) PublishViewChanged(ctx vivid.ActorContext, v *ClusterView, addedNum int, removed []string) {
 	if ctx == nil || v == nil {
 		return
 	}
@@ -60,7 +60,7 @@ func (p *ClusterEventPublisher) PublishViewChanged(ctx vivid.ActorContext, v *Cl
 }
 
 // PublishDCHealthChangedIfNeeded 在 DC 健康状态变化时发布事件。
-func (p *ClusterEventPublisher) PublishDCHealthChangedIfNeeded(ctx vivid.ActorContext, v *ClusterView) {
+func (p *EventPublisher) PublishDCHealthChangedIfNeeded(ctx vivid.ActorContext, v *ClusterView) {
 	if ctx == nil || v == nil {
 		return
 	}
@@ -105,7 +105,7 @@ func (p *ClusterEventPublisher) PublishDCHealthChangedIfNeeded(ctx vivid.ActorCo
 }
 
 // PublishLeaderIfChanged 在 quorum 或确定性 Leader 变化时发布 QuorumLost/QuorumReached 与 ClusterLeaderChangedEvent。
-func (p *ClusterEventPublisher) PublishLeaderIfChanged(ctx vivid.ActorContext, v *ClusterView, selfAddr string, inQuorum bool) {
+func (p *EventPublisher) PublishLeaderIfChanged(ctx vivid.ActorContext, v *ClusterView, selfAddr string, inQuorum bool) {
 	if ctx == nil || v == nil {
 		return
 	}
