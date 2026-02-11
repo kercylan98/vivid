@@ -1096,6 +1096,38 @@ func TestContext_Tell(t *testing.T) {
 
 		system.Tell(nil, 0)
 	})
+
+	t.Run("10,000,000 tell", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var counter int
+		var wait = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case int:
+				counter++
+			case *vivid.OnKilled:
+				close(wait)
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		for i := 0; i < 10000000; i++ {
+			system.Tell(ref, 1)
+		}
+		system.Kill(ref, true)
+
+		select {
+		case <-wait:
+			assert.Equal(t, 10000000, counter)
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
 }
 
 func BenchmarkContext_Tell(b *testing.B) {

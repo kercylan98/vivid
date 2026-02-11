@@ -209,7 +209,7 @@ func TestCluster_DataCenter(t *testing.T) {
 				return
 			}
 			if len(members) == 4 {
-				asiaChina1.Logger().Info("cluster members", log.Any("members", members))
+				asiaChina1.Logger().Debug("cluster members", log.Any("members", members))
 				return
 			}
 		case <-wait:
@@ -241,9 +241,9 @@ func TestCluster_Singleton(t *testing.T) {
 						return vivid.ActorFN(func(ctx vivid.ActorContext) {
 							switch m := ctx.Message().(type) {
 							case *vivid.OnLaunch:
-								ctx.Logger().Info("my-singleton-actor launched")
+								ctx.Logger().Debug("my-singleton-actor launched")
 							case *TestRemoteMessage:
-								ctx.Logger().Info("received test remote message", log.String("sender", ctx.Sender().String()), log.String("text", m.Text))
+								ctx.Logger().Debug("received test remote message", log.String("sender", ctx.Sender().String()), log.String("text", m.Text))
 								ctx.Reply(m)
 							}
 						})
