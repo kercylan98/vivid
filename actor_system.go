@@ -51,18 +51,16 @@ type ActorSystem interface {
 	//   - 停止操作一经触发，不可逆转，系统不可再用于消息接收、Actor 创建等操作。
 	Stop(timeout ...time.Duration) error
 
-	// FindActorRef 根据字符串解析生成 ActorRef 实例。
-	// 参数：
-	//   - actorRef: actor 引用字符串（如 "example.com:8080/user/a"）。
-	// 返回值：
-	//   - vivid.ActorRef: 解析得到的 actor 引用对象，若解析失败则为 nil。
-	//   - error: 字符串格式、地址或路径非法时返回对应错误。
-	//
-	// 用于把存储、传输的字符串形式 actor ref 转为可用的 ActorRef 对象。
-	FindActorRef(actorRef string) (ActorRef, error)
+	// FindActor 根据引用字符串查找本节点上已存在的 Actor 并返回其引用。
+	// 仅支持本机地址：若字符串指向远程节点，或本机不存在该路径的 Actor，则返回错误。
+	// 用于“确认本机有该 Actor 并拿到其引用”的场景。
+	FindActor(actorRef string) (ActorRef, error)
 
-	// CreateRef 根据地址与路径构造 ActorRef，可用于本地或远程引用（如集群单例）。
-	// 与 FindActorRef 不同，不要求目标存在于本节点；用于向远程节点上的 Actor 发消息。
+	// ParseRef 将引用字符串解析为 ActorRef，不要求目标存在于本节点或远程。
+	// 仅做格式解析，用于配置、服务发现中拿到的字符串需要发消息时（本地或远程均可）。
+	ParseRef(actorRef string) (ActorRef, error)
+
+	// CreateRef 根据地址与路径构造 ActorRef，不要求目标存在；用于本地或远程引用（如集群单例、远程节点）。
 	CreateRef(address string, path string) (ActorRef, error)
 
 	// ActorOf 该方法的效果与 ActorContext.ActorOf 相同，但是它是并发安全的。

@@ -262,7 +262,9 @@ func (s *System) removeActorContext(ctx *Context) {
 	s.actorContexts.Delete(ctx.Ref().GetPath())
 }
 
-func (s *System) FindActorRef(actorRef string) (vivid.ActorRef, error) {
+// FindActor 根据引用字符串查找本节点上已存在的 Actor 并返回其引用。
+// 仅支持本机地址：若字符串指向远程节点，或本机不存在该路径的 Actor，返回错误。
+func (s *System) FindActor(actorRef string) (vivid.ActorRef, error) {
 	ref, err := ParseRef(actorRef)
 	if err != nil {
 		return nil, err
@@ -277,6 +279,11 @@ func (s *System) FindActorRef(actorRef string) (vivid.ActorRef, error) {
 	}
 
 	return nil, vivid.ErrorNotFound
+}
+
+// ParseRef 将引用字符串解析为 ActorRef，不要求目标存在于本节点或远程。
+func (s *System) ParseRef(actorRef string) (vivid.ActorRef, error) {
+	return ParseRef(actorRef)
 }
 
 func (s *System) CreateRef(address string, path string) (vivid.ActorRef, error) {
