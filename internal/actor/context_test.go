@@ -1611,6 +1611,53 @@ func TestContext_Entrust(t *testing.T) {
 		assert.Nil(t, result)
 		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpectedError))
 	})
+
+	t.Run("async task forward to onReceive", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+
+		var waitString = make(chan struct{})
+		var waitInt = make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch m := ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				system.Entrust(-1, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+					return "test result", nil
+				})).PipeTo(ctx.Ref().ToActorRefs())
+				system.Entrust(-1, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+					return 1, nil
+				})).PipeTo(ctx.Ref().ToActorRefs())
+			case *vivid.PipeResult:
+				assert.NoError(t, m.Error)
+				switch v := m.Message.(type) {
+				case string:
+					if assert.Equal(t, "test result", v) {
+						close(waitString)
+					}
+				case int:
+					if assert.Equal(t, 1, v) {
+						close(waitInt)
+					}
+				}
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		select {
+		case <-waitString:
+		case <-time.After(3 * time.Second):
+			assert.Fail(t, "timeout")
+		}
+
+		select {
+		case <-waitInt:
+		case <-time.After(3 * time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
 }
 
 func TestContext_PipeTo(t *testing.T) {
