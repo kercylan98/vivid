@@ -47,8 +47,6 @@ func (m *singletonProxyManager) onGetOrCreateProxyRequest(ctx vivid.ActorContext
 		return
 	}
 	m.children[name] = ref
-
 	ctx.Reply(&GetOrCreateProxyResponse{Ref: ref})
-
-	ctx.Logger().Debug("singleton proxy generated", log.String("name", name), log.Any("ref", ref.String()))
+	ctx.Logger().Debug("cluster singleton proxy manager: proxy created", log.String("singleton", name), log.String("proxy", ref.GetPath()))
 }

@@ -53,12 +53,12 @@ func (p *singletonProxy) onLaunch(ctx vivid.ActorContext) {
 	ctx.EventStream().Subscribe(ctx, ves.ClusterLeaderChangedEvent{})
 	view, err := ctx.Cluster().GetView()
 	if err != nil {
-		ctx.Logger().Error("failed to get cluster view", log.Any("error", err))
+		ctx.Logger().Error("cluster singleton proxy: cluster view unavailable", log.String("singleton", p.name), log.Any("error", err))
 		return
 	}
 	ref, err := ctx.System().CreateRef(view.LeaderAddr, ClusterSingletonsPathPrefix+"/"+p.name)
 	if err != nil {
-		ctx.Logger().Error("failed to create singleton ref", log.Any("error", err))
+		ctx.Logger().Error("cluster singleton proxy: leader ref unresolved", log.String("singleton", p.name), log.String("leader_addr", view.LeaderAddr), log.Any("error", err))
 		return
 	}
 	p.updateCachedRef(ctx, ref)
@@ -68,46 +68,41 @@ func (p *singletonProxy) onLeaderChanged(ctx vivid.ActorContext, e ves.ClusterLe
 	ref, err := ctx.System().CreateRef(e.LeaderAddr, ClusterSingletonsPathPrefix+"/"+p.name)
 	if err != nil {
 		p.cachedRef = nil
-		ctx.Logger().Debug("singleton leader changed", log.String("name", p.name), log.Any("error", err))
+		ctx.Logger().Warn("cluster singleton proxy: leader ref unavailable", log.String("singleton", p.name), log.String("leader_addr", e.LeaderAddr), log.Any("error", err))
 		return
 	}
 	oldRef := p.cachedRef
 	p.updateCachedRef(ctx, ref)
-
 	if ref != nil && ref != oldRef {
-		ctx.Logger().Debug("singleton leader changed", log.String("name", p.name), log.Any("oldRef", oldRef.String()), log.Any("newRef", ref.String()))
+		ctx.Logger().Debug("cluster singleton proxy: leader ref updated", log.String("singleton", p.name), log.String("target", ref.GetPath()))
 	}
 }
 
 func (p *singletonProxy) updateCachedRef(ctx vivid.ActorContext, ref vivid.ActorRef) {
 	p.cachedRef = ref
-	// 若有新 ref 并且有缓冲消息，flush
-	if ref != nil && len(p.buffer) > 0 {
-		bufferedMessages := p.buffer
-		p.buffer = make([]*singletonForwardedMessage, 0, 16)
-		// 转发缓冲的消息
-		for _, message := range bufferedMessages {
-			p.forward(ctx, message)
-		}
+	if ref == nil || len(p.buffer) == 0 {
+		return
 	}
+	buffered := p.buffer
+	p.buffer = make([]*singletonForwardedMessage, 0, 16)
+	for _, fm := range buffered {
+		p.forward(ctx, fm)
+	}
+	ctx.Logger().Debug("cluster singleton proxy: buffer flushed", log.String("singleton", p.name), log.Int("buffered", len(buffered)))
 }
 
 func (p *singletonProxy) forwardOrBuffer(ctx vivid.ActorContext, msg vivid.Message) {
-	message := &singletonForwardedMessage{
-		sender:  ctx.Sender(),
-		message: msg,
-	}
-
+	fm := &singletonForwardedMessage{sender: ctx.Sender(), message: msg}
 	if p.cachedRef == nil {
-		p.buffer = append(p.buffer, message)
-		ctx.Logger().Debug("singleton proxy standby", log.String("name", p.name), log.Any("sender", ctx.Sender().String()), log.Any("message", msg))
+		p.buffer = append(p.buffer, fm)
+		if len(p.buffer) == 1 {
+			ctx.Logger().Debug("cluster singleton proxy: buffering messages, leader ref unavailable", log.String("singleton", p.name))
+		}
 		return
 	}
-
-	p.forward(ctx, message)
+	p.forward(ctx, fm)
 }
 
-func (p *singletonProxy) forward(ctx vivid.ActorContext, message *singletonForwardedMessage) {
-	ctx.Tell(p.cachedRef, message)
-	ctx.Logger().Debug("singleton proxy", log.String("name", p.name), log.Any("sender", message.sender.String()), log.Any("message", message.message))
+func (p *singletonProxy) forward(ctx vivid.ActorContext, fm *singletonForwardedMessage) {
+	ctx.Tell(p.cachedRef, fm)
 }
