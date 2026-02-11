@@ -50,5 +50,5 @@ func (m *singletonProxyManager) onGetOrCreateProxyRequest(ctx vivid.ActorContext
 
 	ctx.Reply(&GetOrCreateProxyResponse{Ref: ref})
 
-	ctx.Logger().Info("singleton proxy generated", log.String("name", name), log.Any("ref", ref.String()))
+	ctx.Logger().Debug("singleton proxy generated", log.String("name", name), log.Any("ref", ref.String()))
 }

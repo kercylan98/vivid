@@ -68,14 +68,14 @@ func (p *singletonProxy) onLeaderChanged(ctx vivid.ActorContext, e ves.ClusterLe
 	ref, err := ctx.System().CreateRef(e.LeaderAddr, ClusterSingletonsPathPrefix+"/"+p.name)
 	if err != nil {
 		p.cachedRef = nil
-		ctx.Logger().Info("singleton leader changed", log.String("name", p.name), log.Any("error", err))
+		ctx.Logger().Debug("singleton leader changed", log.String("name", p.name), log.Any("error", err))
 		return
 	}
 	oldRef := p.cachedRef
 	p.updateCachedRef(ctx, ref)
 
 	if ref != nil && ref != oldRef {
-		ctx.Logger().Info("singleton leader changed", log.String("name", p.name), log.Any("oldRef", oldRef.String()), log.Any("newRef", ref.String()))
+		ctx.Logger().Debug("singleton leader changed", log.String("name", p.name), log.Any("oldRef", oldRef.String()), log.Any("newRef", ref.String()))
 	}
 }
 
@@ -100,7 +100,7 @@ func (p *singletonProxy) forwardOrBuffer(ctx vivid.ActorContext, msg vivid.Messa
 
 	if p.cachedRef == nil {
 		p.buffer = append(p.buffer, message)
-		ctx.Logger().Info("singleton proxy standby", log.String("name", p.name), log.Any("sender", ctx.Sender().String()), log.Any("message", msg))
+		ctx.Logger().Debug("singleton proxy standby", log.String("name", p.name), log.Any("sender", ctx.Sender().String()), log.Any("message", msg))
 		return
 	}
 
@@ -109,5 +109,5 @@ func (p *singletonProxy) forwardOrBuffer(ctx vivid.ActorContext, msg vivid.Messa
 
 func (p *singletonProxy) forward(ctx vivid.ActorContext, message *singletonForwardedMessage) {
 	ctx.Tell(p.cachedRef, message)
-	ctx.Logger().Info("singleton proxy", log.String("name", p.name), log.Any("sender", message.sender.String()), log.Any("message", message.message))
+	ctx.Logger().Debug("singleton proxy", log.String("name", p.name), log.Any("sender", message.sender.String()), log.Any("message", message.message))
 }
