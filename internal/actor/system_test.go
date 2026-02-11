@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSystem_FindActorRef(t *testing.T) {
+func TestSystem_FindActor(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
 
@@ -21,7 +21,7 @@ func TestSystem_FindActorRef(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, tempRef)
 
-		ref, err := system.FindActorRef(tempRef.String())
+		ref, err := system.FindActor(tempRef.String())
 		assert.NoError(t, err)
 		assert.NotNil(t, ref)
 		assert.Equal(t, tempRef.String(), ref.String())
@@ -29,32 +29,48 @@ func TestSystem_FindActorRef(t *testing.T) {
 
 	t.Run("root must not found", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
-		ref, err := system.FindActorRef(system.Ref().String())
+		ref, err := system.FindActor(system.Ref().String())
 		assert.ErrorIs(t, err, vivid.ErrorNotFound)
 		assert.Nil(t, ref)
 	})
 
 	t.Run("parse failed", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
-		ref, err := system.FindActorRef("xxx")
+		ref, err := system.FindActor("xxx")
 		assert.ErrorIs(t, err, vivid.ErrorRefFormat)
 		assert.Nil(t, ref)
 	})
 
 	t.Run("not is local", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
-		ref, err := system.FindActorRef("128.0.0.1:1111/test")
+		ref, err := system.FindActor("128.0.0.1:1111/test")
 		assert.ErrorIs(t, err, vivid.ErrorNotFound)
 		assert.Nil(t, ref)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
-		ref, err := system.FindActorRef(actor.LocalAddress + "/test")
+		ref, err := system.FindActor(actor.LocalAddress + "/test")
 		assert.ErrorIs(t, err, vivid.ErrorNotFound)
 		assert.Nil(t, ref)
 	})
+}
 
+func TestSystem_ParseRef(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		ref, err := system.ParseRef("example.com:8080/user/worker-1")
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		assert.Equal(t, "example.com:8080", ref.GetAddress())
+		assert.Equal(t, "/user/worker-1", ref.GetPath())
+	})
+	t.Run("parse failed", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		ref, err := system.ParseRef("xxx")
+		assert.ErrorIs(t, err, vivid.ErrorRefFormat)
+		assert.Nil(t, ref)
+	})
 }
 
 func TestSystem_New(t *testing.T) {
