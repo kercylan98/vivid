@@ -76,19 +76,19 @@ func (f *Future[T]) Close(err error) {
 	f.close(err)
 }
 
-func (f *Future[T]) PipeTo(forwarders vivid.ActorRefs) error {
+func (f *Future[T]) PipeTo(forwarders vivid.ActorRefs) {
 	if len(forwarders) == 0 {
-		return nil
+		return
 	}
 	f.mu.Lock()
 	if f.closed.Load() {
 		f.mu.Unlock()
 		f.tellForwarders(forwarders, f.message, f.err)
-		return nil
+		return
 	}
 	f.forwarders = append(f.forwarders, forwarders...).Unique()
 	f.mu.Unlock()
-	return nil
+	return
 }
 
 // tellForwarders 向指定 refs 投递结果（*vivid.PipeResult），仅包含消息与错误，可跨网络序列化；liaison 为 nil 时跳过。

@@ -1,6 +1,6 @@
 package vivid
 
-// Future[T] 为 Actor 模式下异步请求-响应的结果占位对象（泛型）。
+// Future 为 Actor 模式下异步请求-响应的结果占位对象（泛型）。
 // 用于异步消息通信（如 Ask）场景，支持并发安全、等待应答、超时控制与消息管道等能力。
 // T 为业务自定义的期望响应消息类型，提高类型安全与易用性。
 type Future[T any] interface {
@@ -26,5 +26,5 @@ type Future[T any] interface {
 	// PipeTo 在 Future 得到结果时，将结果以 *PipeResult（Message + Error）形式转发给指定的 ActorRef，可跨网络序列化。
 	// 参数:
 	//   - forwarders: 结果需要进一步转发给的其他 ActorRef 列表
-	PipeTo(forwarders ActorRefs) error
+	PipeTo(forwarders ActorRefs)
 }
