@@ -1,7 +1,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/kercylan98/vivid.svg)](https://pkg.go.dev/github.com/kercylan98/vivid)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/badge/Go-1.25.1+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kercylan98/vivid)](https://goreportcard.com/report/github.com/kercylan98/vivid)
 [![GitHub release](https://img.shields.io/github/release/kercylan98/vivid.svg)](https://github.com/kercylan98/vivid/releases)
 [![GitHub stars](https://img.shields.io/github/stars/kercylan98/vivid.svg?style=social&label=Stars)](https://github.com/kercylan98/vivid)
@@ -34,7 +34,7 @@
 
 ## 系统要求与安装
 
-- **Go**：1.25.1+
+- **Go**：1.26+
 - **安装**：
 
 ```bash
