@@ -18,10 +18,10 @@ func NewEnvelop(system bool, sender, receiver vivid.ActorRef, message vivid.Mess
 }
 
 type Envelop struct {
-	system   bool           // 是否为系统消息
 	sender   vivid.ActorRef // 消息的发送者 ActorRef
-	message  vivid.Message  // 消息
 	receiver vivid.ActorRef // 接收人（仅限远程）
+	message  vivid.Message  // 消息
+	system   bool           // 是否为系统消息
 }
 
 func (e *Envelop) Sender() vivid.ActorRef {
