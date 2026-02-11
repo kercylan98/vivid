@@ -244,8 +244,6 @@ func TestSystem_HandleRemotingEnvelop_InvalidAgentRef(t *testing.T) {
 	// 获取系统根引用的合法地址和路径
 	rootRef := system.Ref()
 
-	agentAddr := rootRef.GetAddress()
-	agentPath := rootRef.GetPath()
 	senderAddr := rootRef.GetAddress()
 	senderPath := rootRef.GetPath()
 	receiverAddr := rootRef.GetAddress()
@@ -254,11 +252,9 @@ func TestSystem_HandleRemotingEnvelop_InvalidAgentRef(t *testing.T) {
 	// 构造非法的 agent 地址：不带端口的裸 IP，会被 NormalizeAddress 拒绝
 	invalidAddr := "127.0.0.1"
 
-	err := system.HandleRemotingEnvelop(false, invalidAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath, "test message")
+	err := system.HandleRemotingEnvelop(false, invalidAddr, senderPath, receiverAddr, receiverPath, "test message")
 	assert.NotNil(t, err)
-	err = system.HandleRemotingEnvelop(false, agentAddr, agentPath, invalidAddr, senderPath, receiverAddr, receiverPath, "test message")
-	assert.NotNil(t, err)
-	err = system.HandleRemotingEnvelop(false, agentAddr, agentPath, senderAddr, senderPath, invalidAddr, receiverPath, "test message")
+	err = system.HandleRemotingEnvelop(false, senderAddr, senderPath, invalidAddr, receiverPath, "test message")
 	assert.NotNil(t, err)
 }
 

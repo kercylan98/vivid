@@ -9,16 +9,14 @@ var _ vivid.Actor = (*singletonProxyManager)(nil)
 
 // NewSingletonProxyManager 创建集群单例代理管理器，按 name 按需创建代理子 Actor。
 // 由系统在启用集群时挂载到根下（名称 SingletonProxyActorName）。
-func NewSingletonProxyManager(rawSenderGetter func(ctx vivid.ActorContext) vivid.ActorRef) vivid.Actor {
+func NewSingletonProxyManager() vivid.Actor {
 	return &singletonProxyManager{
-		children:        make(map[string]vivid.ActorRef),
-		rawSenderGetter: rawSenderGetter,
+		children: make(map[string]vivid.ActorRef),
 	}
 }
 
 type singletonProxyManager struct {
-	children        map[string]vivid.ActorRef
-	rawSenderGetter func(ctx vivid.ActorContext) vivid.ActorRef
+	children map[string]vivid.ActorRef
 }
 
 func (m *singletonProxyManager) OnReceive(ctx vivid.ActorContext) {
@@ -42,7 +40,7 @@ func (m *singletonProxyManager) onGetOrCreateProxyRequest(ctx vivid.ActorContext
 		return
 	}
 
-	proxy := NewSingletonProxy(name, m.rawSenderGetter)
+	proxy := NewSingletonProxy(name)
 	ref, err := ctx.ActorOf(proxy, vivid.WithActorName(name))
 	if err != nil {
 		ctx.Reply(&GetOrCreateProxyResponse{Err: err})

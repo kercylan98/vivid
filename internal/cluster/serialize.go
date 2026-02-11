@@ -42,6 +42,8 @@ func init() {
 		"clusterForceMemberDown", clusterForceMemberDownReader, clusterForceMemberDownWriter)
 	messages.RegisterInternalMessage[*TriggerViewBroadcast](
 		"clusterTriggerViewBroadcast", clusterTriggerViewBroadcastReader, clusterTriggerViewBroadcastWriter)
+	messages.RegisterInternalMessage[*singletonForwardedMessage](
+		"clusterSingletonForwardedMessage", clusterSingletonForwardedMessageReader, clusterSingletonForwardedMessageWriter)
 }
 
 func clusterNoopReader(message any, reader *messages.Reader, codec messages.Codec) error { return nil }
@@ -371,4 +373,29 @@ func clusterTriggerViewBroadcastReader(message any, reader *messages.Reader, cod
 func clusterTriggerViewBroadcastWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	m := message.(*TriggerViewBroadcast)
 	return writer.WriteFrom(m.AdminToken)
+}
+
+func clusterSingletonForwardedMessageReader(message any, reader *messages.Reader, codec messages.Codec) error {
+	m := message.(*singletonForwardedMessage)
+	if err := reader.ReadInto(&m.senderAddr, &m.senderPath); err != nil {
+		return err
+	}
+	msg, err := reader.ReadMessage(codec)
+	if err != nil {
+		return err
+	}
+	m.message = msg
+	return nil
+}
+
+func clusterSingletonForwardedMessageWriter(message any, writer *messages.Writer, codec messages.Codec) error {
+	m := message.(*singletonForwardedMessage)
+	senderAddr, senderPath := m.senderAddr, m.senderPath
+	if m.sender != nil {
+		senderAddr, senderPath = m.sender.GetAddress(), m.sender.GetPath()
+	}
+	if err := writer.WriteFrom(senderAddr, senderPath); err != nil {
+		return err
+	}
+	return writer.WriteMessage(m.message, codec)
 }

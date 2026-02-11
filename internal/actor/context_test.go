@@ -1186,37 +1186,103 @@ func BenchmarkContext_Ask(b *testing.B) {
 }
 
 func TestContext_Sender(t *testing.T) {
-	system := actor.NewTestSystem(t)
-	defer func() {
-		assert.NoError(t, system.Stop())
-	}()
+	t.Run("tell has sender", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
 
-	var refAHeldRefB vivid.ActorRef
-	var wg sync.WaitGroup
-	wg.Add(1)
+		wait := make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case string:
+				if assert.NotNil(t, ctx.Sender()) {
+					close(wait)
+				}
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		system.Tell(ref, "test message")
 
-	refA, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-		switch m := ctx.Message().(type) {
-		case vivid.ActorRef:
-			refAHeldRefB = m
-		case string:
-			assert.Equal(t, refAHeldRefB.GetAddress()+refAHeldRefB.GetPath(), ctx.Sender().GetAddress()+ctx.Sender().GetPath(), "sender ref mismatch")
-			wg.Done()
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
 		}
-	}))
-	assert.NoError(t, err)
+	})
 
-	refB, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-		switch ctx.Message().(type) {
-		case string:
-			ctx.Ask(refA, "ask-ref-b")
+	t.Run("ask has sender", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+		wait := make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case string:
+				if assert.NotNil(t, ctx.Sender()) {
+					close(wait)
+				}
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		system.Ask(ref, "test message")
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
 		}
-	}))
-	assert.NoError(t, err)
+	})
 
-	system.Tell(refA, refB)
-	system.Tell(refB, "start-ask")
-	wg.Wait()
+	t.Run("tell sender is original ref", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+		wait := make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case string:
+				if assert.Equal(t, ctx.Parent(), ctx.Sender()) {
+					close(wait)
+				}
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		system.Tell(ref, "test message")
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
+
+	t.Run("ask sender is future ref", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+		wait := make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case string:
+				if assert.NotEqual(t, ctx.Parent(), ctx.Sender()) {
+					close(wait)
+				}
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		system.Ask(ref, "test message")
+		select {
+		case <-wait:
+		case <-time.After(time.Second):
+			assert.Fail(t, "timeout")
+		}
+	})
 }
 
 func TestContext_Kill(t *testing.T) {

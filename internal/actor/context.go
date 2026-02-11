@@ -195,6 +195,10 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivi
 	return childCtx.Ref(), nil
 }
 
+func (c *Context) Sender() vivid.ActorRef {
+	return c.envelop.Sender()
+}
+
 func (c *Context) Reply(message vivid.Message) {
 	c.Tell(c.envelop.Sender(), message)
 }
@@ -232,10 +236,6 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 	c.system.appendFuture(agentRef, futureIns)
 
 	envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
-	// 如果 envelop 已经是 AgentMessage，则不需要再设置 Agent
-	if agentRef.agent != nil && envelop.Agent() == nil {
-		envelop.WithAgent(agentRef.agent)
-	}
 	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
 	receiverMailbox.Enqueue(envelop)
 
@@ -303,10 +303,6 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	currentState := atomic.LoadInt32(&c.state)
 	killingOrKilled := (currentState == killed) || (!envelop.System() && currentState != running) // 是否处于停止中或死亡状态
 	if killingOrKilled && !c.zombie {                                                             // 是否处于僵尸状态
-		// Future 自动拒绝
-		if envelop.Agent() != nil {
-			c.Tell(envelop.Sender(), vivid.ErrorActorDeaded)
-		}
 		c.system.TellSelf(ves.DeathLetterEvent{
 			Envelope: envelop,
 			Time:     time.Now(),
@@ -321,10 +317,6 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	behavior := c.behaviorStack.Peek()
 	if c.zombie {
 		behavior = emptyBehavior
-		// Future 自动拒绝
-		if envelop.Agent() != nil {
-			c.Tell(envelop.Sender(), vivid.ErrorActorDeaded)
-		}
 	}
 
 	switch message := c.envelop.Message().(type) {
@@ -598,13 +590,6 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 
 func (c *Context) Message() vivid.Message {
 	return c.envelop.Message()
-}
-
-func (c *Context) Sender() vivid.ActorRef {
-	if agent := c.envelop.Agent(); agent != nil {
-		return agent
-	}
-	return c.envelop.Sender()
 }
 
 func generateBehaviorOptions(options ...vivid.BehaviorOption) *vivid.BehaviorOptions {

@@ -138,7 +138,6 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 	}
 
 	if system,
-		agentAddr, agentPath,
 		senderAddr, senderPath,
 		receiverAddr, receiverPath,
 		messageInstance,
@@ -173,7 +172,7 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 			ReceiverPath:  receiverPath,
 		})
 		// 即便是远程消息处理失败，也继续监听连接
-		err = c.envelopHandler.HandleRemotingEnvelop(system, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath, messageInstance)
+		err = c.envelopHandler.HandleRemotingEnvelop(system, senderAddr, senderPath, receiverAddr, receiverPath, messageInstance)
 		ctx.TellSelf(c.conn)
 		if err != nil {
 			err = vivid.ErrorRemotingMessageHandleFailed.With(err)

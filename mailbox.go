@@ -24,8 +24,6 @@ type Mailbox interface {
 type Envelop interface {
 	// System 返回该消息是否为系统消息。
 	System() bool
-	// Agent 返回该消息关联的代理 ActorRef，通常在 ask/future 等场景下使用。
-	Agent() ActorRef
 	// Sender 返回消息的发送者 ActorRef。
 	Sender() ActorRef
 	// Message 返回消息体。

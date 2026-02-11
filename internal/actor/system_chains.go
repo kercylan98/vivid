@@ -80,9 +80,7 @@ func (c *_systemChains) initializeCluster(system *System) chain.Chain {
 			}
 			system.clusterContext = cluster.NewContext(system, clusterRef, singletonNames)
 
-			proxyManager := cluster.NewSingletonProxyManager(func(ctx vivid.ActorContext) vivid.ActorRef {
-				return ctx.(*Context).envelop.Sender()
-			})
+			proxyManager := cluster.NewSingletonProxyManager()
 			proxyManagerRef, err := system.ActorOf(proxyManager, vivid.WithActorName(cluster.SingletonProxyActorName))
 			if err != nil {
 				return err

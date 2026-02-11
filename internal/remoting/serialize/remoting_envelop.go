@@ -9,7 +9,7 @@ import (
 //
 //	[4B payloadLen][payload]
 //	[4B nameLen][messageName] [1B system]
-//	[agentAddr 串] [agentPath 串] [senderAddr 串] [senderPath 串] [receiverAddr 串] [receiverPath 串]
+//	[senderAddr 串] [senderPath 串] [receiverAddr 串] [receiverPath 串]
 //
 // 每串为 4 字节长度 + UTF-8；Ref 为 nil 时写空串。
 func EncodeEnvelopWithRemoting(codec vivid.Codec, envelop vivid.Envelop) (data []byte, err error) {
@@ -17,7 +17,6 @@ func EncodeEnvelopWithRemoting(codec vivid.Codec, envelop vivid.Envelop) (data [
 	var writer = messages.NewWriterFromPool()
 	defer messages.ReleaseWriterToPool(writer)
 	if messageDesc.IsOutside() {
-		// 外部消息序列化
 		data, err = codec.Encode(envelop.Message())
 		if err != nil {
 			return nil, err
@@ -31,10 +30,6 @@ func EncodeEnvelopWithRemoting(codec vivid.Codec, envelop vivid.Envelop) (data [
 		}
 	}
 
-	var agentAddr, agentPath string
-	if agent := envelop.Agent(); agent != nil {
-		agentAddr, agentPath = agent.GetAddress(), agent.GetPath()
-	}
 	var senderAddr, senderPath string
 	if s := envelop.Sender(); s != nil {
 		senderAddr, senderPath = s.GetAddress(), s.GetPath()
@@ -47,7 +42,6 @@ func EncodeEnvelopWithRemoting(codec vivid.Codec, envelop vivid.Envelop) (data [
 	if err = writer.WriteFrom(
 		messageDesc.MessageName(),
 		envelop.System(),
-		agentAddr, agentPath,
 		senderAddr, senderPath,
 		receiverAddr, receiverPath,
 	); err != nil {
@@ -60,10 +54,9 @@ func EncodeEnvelopWithRemoting(codec vivid.Codec, envelop vivid.Envelop) (data [
 }
 
 // DecodeEnvelopWithRemoting 解码的字段顺序必须与 EncodeEnvelopWithRemoting 线格式一致：
-// messageData, messageName, system, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath。
+// messageData, messageName, system, senderAddr, senderPath, receiverAddr, receiverPath。
 func DecodeEnvelopWithRemoting(codec vivid.Codec, data []byte) (
 	system bool,
-	agentAddr, agentPath string,
 	senderAddr, senderPath string,
 	receiverAddr, receiverPath string,
 	messageInstance any,
@@ -74,7 +67,7 @@ func DecodeEnvelopWithRemoting(codec vivid.Codec, data []byte) (
 
 	var messageData []byte
 	var messageName string
-	if err = reader.ReadInto(&messageData, &messageName, &system, &agentAddr, &agentPath, &senderAddr, &senderPath, &receiverAddr, &receiverPath); err != nil {
+	if err = reader.ReadInto(&messageData, &messageName, &system, &senderAddr, &senderPath, &receiverAddr, &receiverPath); err != nil {
 		return
 	}
 

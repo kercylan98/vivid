@@ -2,10 +2,12 @@ package cluster
 
 import (
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/ves"
 )
+
+// SingletonProxyActorName 集群单例代理 Manager 在根下的 Actor 名称。
+const SingletonProxyActorName = "@cluster-singleton-proxies"
 
 var _ vivid.Actor = (*singletonProxy)(nil)
 
@@ -20,27 +22,20 @@ type GetOrCreateProxyResponse struct {
 	Err error
 }
 
-// SingletonProxyActorName 集群单例代理 Manager 在根下的 Actor 名称。
-const SingletonProxyActorName = "@cluster-singleton-proxies"
-
 // NewSingletonProxy 创建集群单例代理 Actor，用于将消息转发到当前 Leader 上的单例。
 // 代理会订阅 ClusterLeaderChangedEvent，在 Leader 变更时更新缓存的单例 ref；无可用 ref 时缓冲消息，待 ref 恢复后转发。
 // 业务通过 ClusterContext.SingletonRef(name) 获取代理 ref，再向代理 Tell 消息即可，代理会转发到当前单例（单例侧看到的 sender 为代理）。
-func NewSingletonProxy(name string, rawSenderGetter func(ctx vivid.ActorContext) vivid.ActorRef) vivid.Actor {
+func NewSingletonProxy(name string) vivid.Actor {
 	return &singletonProxy{
-		name:            name,
-		rawSenderGetter: rawSenderGetter,
-		bufferMessages:  make([]vivid.Message, 0, 16),
-		bufferSenders:   make([]vivid.ActorRef, 0, 16),
+		name:   name,
+		buffer: make([]*singletonForwardedMessage, 0, 16),
 	}
 }
 
 type singletonProxy struct {
-	name            string
-	rawSenderGetter func(ctx vivid.ActorContext) vivid.ActorRef
-	cachedRef       vivid.ActorRef
-	bufferSenders   []vivid.ActorRef
-	bufferMessages  []vivid.Message
+	name      string
+	cachedRef vivid.ActorRef
+	buffer    []*singletonForwardedMessage
 }
 
 func (p *singletonProxy) OnReceive(ctx vivid.ActorContext) {
@@ -87,33 +82,32 @@ func (p *singletonProxy) onLeaderChanged(ctx vivid.ActorContext, e ves.ClusterLe
 func (p *singletonProxy) updateCachedRef(ctx vivid.ActorContext, ref vivid.ActorRef) {
 	p.cachedRef = ref
 	// 若有新 ref 并且有缓冲消息，flush
-	if ref != nil && len(p.bufferMessages) > 0 {
-		bufferedMessages := p.bufferMessages
-		bufferedSenders := p.bufferSenders
-
-		// 重置缓冲区
-		p.bufferMessages = make([]vivid.Message, 0, 16)
-		p.bufferSenders = make([]vivid.ActorRef, 0, 16)
-
+	if ref != nil && len(p.buffer) > 0 {
+		bufferedMessages := p.buffer
+		p.buffer = make([]*singletonForwardedMessage, 0, 16)
 		// 转发缓冲的消息
-		for i := range bufferedMessages {
-			p.forward(ctx, ref, bufferedSenders[i], bufferedMessages[i])
+		for _, message := range bufferedMessages {
+			p.forward(ctx, message)
 		}
 	}
 }
 
 func (p *singletonProxy) forwardOrBuffer(ctx vivid.ActorContext, msg vivid.Message) {
-	ref := p.cachedRef
-	if ref == nil {
-		p.bufferMessages = append(p.bufferMessages, msg)
-		p.bufferSenders = append(p.bufferSenders, ctx.Sender())
+	message := &singletonForwardedMessage{
+		sender:  ctx.Sender(),
+		message: msg,
+	}
+
+	if p.cachedRef == nil {
+		p.buffer = append(p.buffer, message)
 		ctx.Logger().Info("singleton proxy standby", log.String("name", p.name), log.Any("sender", ctx.Sender().String()), log.Any("message", msg))
 		return
 	}
-	p.forward(ctx, ref, ctx.Sender(), msg)
+
+	p.forward(ctx, message)
 }
 
-func (p *singletonProxy) forward(ctx vivid.ActorContext, cachedRef vivid.ActorRef, sender vivid.ActorRef, msg vivid.Message) {
-	ctx.Tell(cachedRef, mailbox.NewEnvelop(false, p.rawSenderGetter(ctx), nil, msg).WithAgent(sender))
-	ctx.Logger().Info("singleton proxy", log.String("name", p.name), log.Any("sender", sender.String()), log.Any("message", msg))
+func (p *singletonProxy) forward(ctx vivid.ActorContext, message *singletonForwardedMessage) {
+	ctx.Tell(p.cachedRef, message)
+	ctx.Logger().Info("singleton proxy", log.String("name", p.name), log.Any("sender", message.sender.String()), log.Any("message", message.message))
 }

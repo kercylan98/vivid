@@ -43,7 +43,6 @@ func (a *Actor) onDeathLetter(ctx vivid.ActorContext, msg ves.DeathLetterEvent) 
 		log.Bool("system", msg.Envelope.System()),
 		log.Any("sender", msg.Envelope.Sender()),
 		log.Any("receiver", msg.Envelope.Receiver()),
-		log.Any("agent", msg.Envelope.Agent()),
 		log.String("message_type", fmt.Sprintf("%T", msg.Envelope.Message())),
 		log.Any("message", msg.Envelope.Message()),
 	)

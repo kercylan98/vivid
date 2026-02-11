@@ -16,7 +16,6 @@ func TestReplacedEnvelop(t *testing.T) {
 	envelop := mailbox.NewEnvelop(true, ref, ref, 1)
 	replace := actor.ExportNewReplaceEnvelop(envelop, 1)
 	assert.NotNil(t, replace)
-	assert.Nil(t, replace.Agent())
 	assert.Equal(t, true, replace.Sender().Equals(ref))
 	assert.Equal(t, true, replace.Receiver().Equals(ref))
 	assert.Equal(t, true, replace.System())

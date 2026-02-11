@@ -21,11 +21,6 @@ type replacedEnvelop struct {
 func (e *replacedEnvelop) System() bool {
 	return e.envelop.System()
 }
-
-func (e *replacedEnvelop) Agent() vivid.ActorRef {
-	return e.envelop.Agent()
-}
-
 func (e *replacedEnvelop) Sender() vivid.ActorRef {
 	return e.envelop.Sender()
 }

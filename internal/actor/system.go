@@ -70,17 +70,8 @@ func (s *System) Cluster() vivid.ClusterContext {
 	return s.clusterContext
 }
 
-func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, senderAddr, senderPath, receiverAddr, receiverPath string, messageInstance any) error {
-	var agent, sender, receiver *Ref
-	if agentAddr != "" {
-		// Addr 不为空就一定存在 Path
-		var err error
-		agent, err = NewRef(agentAddr, agentPath)
-		if err != nil {
-			s.Logger().Warn("invalid agent ref", log.String("address", agentAddr), log.String("path", agentPath), log.Any("err", err))
-			return fmt.Errorf("%w: invalid agent ref, %s/%s", err, agentAddr, agentPath)
-		}
-	}
+func (s *System) HandleRemotingEnvelop(system bool, senderAddr, senderPath, receiverAddr, receiverPath string, messageInstance any) error {
+	var sender, receiver *Ref
 	var err error
 	sender, err = NewRef(senderAddr, senderPath)
 	if err != nil {
@@ -94,9 +85,6 @@ func (s *System) HandleRemotingEnvelop(system bool, agentAddr, agentPath, sender
 	}
 	receiverMailbox := s.findMailbox(receiver)
 	envelop := mailbox.NewEnvelop(system, sender, receiver, messageInstance)
-	if agent != nil && envelop.Agent() == nil {
-		envelop.WithAgent(agent)
-	}
 	receiverMailbox.Enqueue(envelop)
 	return nil
 }

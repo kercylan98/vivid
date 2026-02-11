@@ -136,10 +136,7 @@ type ActorContext interface {
 	//   - ActorRef：当前 Actor 的引用实例，保证非 nil。
 	Ref() ActorRef
 
-	// Sender 返回本条消息的发送者（ActorRef）。如果消息来源于系统（如 OnLaunch），则可能返回 nil。
-	//
-	// 使用案例：
-	//   - 可用于回复请求方、追溯消息链路、权限校验等场景。
+	// Sender 返回本条消息的发送者（ActorRef）。
 	Sender() ActorRef
 
 	// Reply 向当前消息的发送者（即 Sender）发送回复消息（通常用于请求-响应模式）。

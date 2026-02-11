@@ -60,7 +60,7 @@ func (m *singletonManager) createSingletons(ctx vivid.ActorContext, isLeader boo
 			if m.children[name] != nil {
 				continue
 			}
-			child, err := ctx.ActorOf(provider.Provide(), vivid.WithActorName(name))
+			child, err := ctx.ActorOf(m.singletonActor(provider), vivid.WithActorName(name))
 			if err != nil {
 				ctx.Logger().Warn("cluster singleton spawn failed",
 					log.String("name", name),
@@ -78,4 +78,12 @@ func (m *singletonManager) createSingletons(ctx vivid.ActorContext, isLeader boo
 		}
 		delete(m.children, name)
 	}
+}
+
+func (m *singletonManager) singletonActor(provider vivid.ActorProvider) vivid.Actor {
+	actor := provider.Provide()
+	return vivid.ActorFN(func(ctx vivid.ActorContext) {
+		ctx = newSingletonActorContext(ctx)
+		actor.OnReceive(ctx)
+	})
 }
