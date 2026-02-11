@@ -1,23 +1,38 @@
 ---
 title: 错误处理
-description: vivid 错误体系、预定义错误码、errors.Is/As 与错误链
+description: vivid 错误体系、错误码与错误链、errors.Is/As 判定与预定义错误码一览
 ---
 
-Vivid 使用 **`*vivid.Error`** 表示可序列化、支持错误码与错误链的异常，可与标准库 **errors.Is** / **errors.As** 配合判定。本文说明错误类型用法与预定义错误码分类；监督与故障上报见 [监督策略](/docs/config/supervision)、[创建与生命周期 - Failed](/docs/basics/lifecycle#主动上报故障failed)。
+Vivid 使用 **`*vivid.Error`** 表示框架内可序列化、带错误码与错误链的异常。可与 Go 标准库 **errors.Is**、**errors.As** 配合做精确判定或统一兜底。本文说明错误类型的设计、判定方式、错误链与 cause 的含义，以及预定义错误码分类。监督与故障上报见 [监督策略](/docs/config/supervision)、[创建与生命周期 - Failed](/docs/basics/lifecycle#主动上报故障failed)。
 
-## Error 类型与用法
+## 概述
 
-**`*vivid.Error`** 可在分布式环境中序列化传播，支持错误链与 **errors.Is** / **errors.As** 递归判定：
+| 特性 | 说明 |
+|------|------|
+| **错误码（code）** | 每个错误对应唯一 `int32`，用于日志、监控与跨进程/节点一致识别；可序列化传播。 |
+| **可读描述（message）** | 人类可读说明，出现在 `Error()` 字符串中；序列化时一并传输。 |
+| **错误链** | 支持通过 **With(err)** 包装底层错误，实现 **Unwrap**，便于 **errors.Is** / **errors.As** 递归匹配。 |
+| **与标准库一致** | 实现 `error` 接口及 **Is** / **As** / **Unwrap**，与 `errors` 包行为一致。 |
+
+因此你可以：按**错误码**做细粒度处理或监控；用 **errors.Is(err, vivid.ErrorXxx)** 做语义判定；用 **errors.Is(err, vivid.ErrorNotFound)** 等做统一兜底。
+
+## 核心类型：*vivid.Error
+
+**`*vivid.Error`** 是框架内错误的统一表示，可在分布式环境中序列化传播（仅 **code** 与 **msg** 参与序列化；包装的底层错误不参与，反序列化时通过 **QueryError(code)** 还原为注册的 `*Error` 实例）。
+
+### 常用方法与行为
 
 | 方法 / 行为 | 说明 |
 |-------------|------|
-| **GetCode() int32** | 错误码，用于日志、监控或跨节点一致判定 |
-| **GetMessage() string** | 可读描述（不含前缀与错误码） |
-| **With(err error) \*Error** | 包装底层错误，**Unwrap** 返回 err，便于错误链判定 |
-| **WithMessage(msg string) \*Error** | 在描述后追加说明，不改变错误码 |
-| **Error() string** | 实现 `error` 接口，格式为 `[vivid: <code>] <msg>` |
+| **GetCode() int32** | 返回错误码，用于日志、监控或跨节点一致判定。 |
+| **GetMessage() string** | 返回可读描述（不含 `[vivid: code]` 前缀）。 |
+| **Error() string** | 实现 `error` 接口，格式为 `[vivid: <code>] <msg>`。 |
+| **With(err error) \*Error** | 包装底层错误 **err**，生成新 `*Error`；**Unwrap()** 返回 **err**，**errors.Is** / **errors.As** 会沿链递归。 |
+| **WithMessage(msg string) \*Error** | 在原有描述后追加说明，不改变错误码；**Unwrap()** 返回接收者自身。 |
 
-判定示例：
+### 判定方式：errors.Is 与 errors.As
+
+使用标准库 **errors.Is** 判断“是否等同于某预定义错误”；使用 **errors.As** 将错误断言为 **\*vivid.Error** 后读取 **code** 或 **message**：
 
 ```go
 if errors.Is(err, vivid.ErrorActorAlreadyExists) {
@@ -29,100 +44,141 @@ if errors.Is(err, vivid.ErrorFutureTimeout) {
 var vividErr *vivid.Error
 if errors.As(err, &vividErr) {
     code := vividErr.GetCode()
+    msg := vividErr.GetMessage()
 }
 ```
 
-## 预定义错误码
+## 错误链与 cause（统一兜底）
 
-预定义错误按**功能领域**分组，错误码区间与代码中 `RegisterError` 的划分一致，便于查找与扩展。
+部分预定义错误在**注册时**就挂载了底层 **cause**，形成一条短链。这样做的目的是：**保持该错误的 code 与 message 不变**，同时让 **errors.Is** 能同时命中**具体错误**和**父类错误**，便于统一兜底。
 
-### 运行时错误
+例如：**ErrorRefNilAgent**（AgentRef 为 nil）在语义上属于“资源不存在”，因此注册时挂载 **ErrorNotFound** 为 cause。返回给调用方的仍是 **code=130005**、**message=agent ref is nil**，但 **errors.Is(err, vivid.ErrorRefNilAgent)** 与 **errors.Is(err, vivid.ErrorNotFound)** **均为 true**。
 
-ActorSystem 生命周期、重复启停及通用资源不存在等。
+概念关系如下：
 
-| 变量 | 说明 |
-|------|------|
-| **ErrorException** | 未分类内部异常 |
-| **ErrorNotFound** | 资源不存在（如调度器 **Cancel** 时指定 reference 不存在） |
-| **ErrorActorSystemAlreadyStarted** | 重复调用 Start |
-| **ErrorActorSystemAlreadyStopped** | 重复调用 Stop |
-| **ErrorActorSystemStartFailed** | 系统启动失败 |
-| **ErrorActorSystemStopFailed** | 系统停止失败 |
-| **ErrorActorSystemNotStarted** | 未启动时调用 Stop |
+<Mermaid diagram={`flowchart LR
+  subgraph 调用方拿到的 err
+    E["*Error<br/>code=130005<br/>msg=agent ref is nil"]
+  end
+  E -->|Unwrap| N["ErrorNotFound<br/>code=100000"]
+  E --> M1["errors.Is(err, ErrorRefNilAgent) ✓"]
+  E --> M2["errors.Is(err, ErrorNotFound) ✓"]
+`} title="ErrorRefNilAgent 的错误链：同一 err 可同时命中具体错误与父类" />
+
+### 两类父类错误
+
+| 父类 | 含义 | 会同时命中该父类的具体错误（示例） |
+|------|------|----------------------------------------|
+| **ErrorNotFound** | 资源不存在 | **ErrorRefEmpty**、**ErrorRefNilAgent** |
+| **ErrorIllegalArgument** | 参数无效或格式不合法 | **ErrorRefFormat**、**ErrorRefInvalidAddress**、**ErrorRefInvalidPath**、**ErrorFutureInvalid**、**ErrorInvalidMessageLength**、**ErrorCronParse** |
+
+因此可以按需编写：**细粒度**逻辑（如针对 **ErrorRefNilAgent** 单独提示）或**粗粒度**兜底（如对所有 **ErrorNotFound** 统一返回 404、对所有 **ErrorIllegalArgument** 统一返回 400）。
+
+### 判定流程示意
+
+**errors.Is(err, target)** 会沿 **Unwrap** 链递归：先看当前节点是否与 **target** 匹配（对 **\*Error** 比较 **code**），若不匹配且存在 **Unwrap()**，则对底层错误继续 **Is**。因此“带 cause 的预定义错误”会同时匹配自身与 cause。
+
+<Mermaid diagram={`flowchart TB
+  A["errors.Is(err, target)"] --> B{"当前错误与 target 匹配?"}
+  B -->|*Error: code 相同| Y["返回 true"]
+  B -->|否| C{"存在 Unwrap?"}
+  C -->|是| R["对 Unwrap 结果递归 Is"]
+  R --> B
+  C -->|否| N["返回 false"]
+`} title="errors.Is 沿错误链递归匹配" />
+
+## 预定义错误码一览
+
+预定义错误按**功能领域**分组，错误码按区间划分，与代码中 **RegisterError** 一致，便于查找与扩展。完整列表与错误码见 [pkg.go.dev - vivid](https://pkg.go.dev/github.com/kercylan98/vivid#pkg-variables)。
+
+### 系统与运行时
+
+ActorSystem 生命周期、重复启停及通用“资源不存在”。
+
+| 代码 | 变量名 | 说明 | 父类 |
+|------|--------|------|------|
+| -1 | **ErrorException** | 未分类内部异常 | — |
+| 100000 | **ErrorNotFound** | 资源不存在（如调度器 Cancel 时指定 reference 不存在） | — |
+| 100001 | **ErrorActorSystemAlreadyStarted** | 重复调用 Start | — |
+| 100002 | **ErrorActorSystemAlreadyStopped** | 重复调用 Stop | — |
+| 100003 | **ErrorActorSystemStartFailed** | 系统启动失败 | — |
+| 100004 | **ErrorActorSystemStopFailed** | 系统停止失败 | — |
+| 100005 | **ErrorActorSystemNotStarted** | 未启动时调用 Stop | — |
+| 100006 | **ErrorActorSystemStopped** | 系统已停止 | — |
 
 ### Actor 与生命周期
 
-Actor 创建、预启动及存活状态相关。
+Actor 创建、预启动及存活状态。
 
-| 变量 | 说明 |
-|------|------|
-| **ErrorActorDeaded** | Actor 已死亡（如在已死亡父级上创建） |
-| **ErrorActorAlreadyExists** | 同父下名称重复 |
-| **ErrorActorSpawnFailed** | Actor 创建失败 |
-| **ErrorActorPrelaunchFailed** | 预启动（Prelaunch）失败 |
+| 代码 | 变量名 | 说明 | 父类 |
+|------|--------|------|------|
+| 100100 | **ErrorActorDeaded** | Actor 已死亡（如在已死亡父级上创建） | — |
+| 100101 | **ErrorActorAlreadyExists** | 同父下名称重复 | — |
+| 100102 | **ErrorActorSpawnFailed** | Actor 创建失败 | — |
+| 100103 | **ErrorActorPrelaunchFailed** | 预启动（Prelaunch）失败 | — |
 
-### Future 与消息传输
+### Future 与消息
 
 Ask/Result、Future 生命周期及消息长度与缓冲读取。
 
-| 变量 | 说明 |
-|------|------|
-| **ErrorFutureTimeout** | Result/Wait 超时未收到应答 |
-| **ErrorFutureMessageTypeMismatch** | 应答类型与泛型声明不一致 |
-| **ErrorFutureUnexpectedError** | 收到非预期错误 |
-| **ErrorFutureInvalid** | 创建 Future 时参数非法（如 timeout） |
-| **ErrorInvalidMessageLength** | 消息长度非法（如 Remoting 协议层） |
-| **ErrorReadMessageBufferFailed** | 读消息缓冲失败 |
+| 代码 | 变量名 | 说明 | 父类 |
+|------|--------|------|------|
+| 110000 | **ErrorFutureTimeout** | Result/Wait 超时未收到应答 | — |
+| 110001 | **ErrorFutureMessageTypeMismatch** | 应答类型与泛型声明不一致 | — |
+| 110002 | **ErrorFutureUnexpectedError** | 收到非预期错误 | — |
+| 110003 | **ErrorFutureInvalid** | 创建 Future 时参数非法（如 timeout） | ErrorIllegalArgument |
+| 110004 | **ErrorInvalidMessageLength** | 消息长度非法（如 Remoting 协议层） | ErrorIllegalArgument |
+| 110005 | **ErrorReadMessageBufferFailed** | 读消息缓冲失败 | — |
 
 ### 参数与调度
 
 调用参数不合法及调度器（如 Cron）解析失败。
 
-| 变量 | 说明 |
-|------|------|
-| **ErrorIllegalArgument** | 参数无效或缺失 |
-| **ErrorCronParse** | Cron 表达式解析失败 |
+| 代码 | 变量名 | 说明 | 父类 |
+|------|--------|------|------|
+| 120000 | **ErrorIllegalArgument** | 参数无效或缺失 | — |
+| 120001 | **ErrorCronParse** | Cron 表达式解析失败 | ErrorIllegalArgument |
 
 ### ActorRef
 
 ActorRef 解析、格式及 Agent 引用。
 
-| 变量 | 说明 |
-|------|------|
-| **ErrorRefEmpty** | ActorRef 为空 |
-| **ErrorRefFormat** | ActorRef 格式错误（须包含 address 与 path） |
-| **ErrorRefInvalidAddress** | 地址非法 |
-| **ErrorRefInvalidPath** | 路径非法 |
-| **ErrorRefNilAgent** | AgentRef 为 nil |
+| 代码 | 变量名 | 说明 | 父类 |
+|------|--------|------|------|
+| 130001 | **ErrorRefEmpty** | ActorRef 为空 | ErrorNotFound |
+| 130002 | **ErrorRefFormat** | ActorRef 格式错误（须包含 address 与 path） | ErrorIllegalArgument |
+| 130003 | **ErrorRefInvalidAddress** | 地址非法 | ErrorIllegalArgument |
+| 130004 | **ErrorRefInvalidPath** | 路径非法 | ErrorIllegalArgument |
+| 130005 | **ErrorRefNilAgent** | AgentRef 为 nil | ErrorNotFound |
 
 ### 远程通信
 
 跨节点消息发送、编解码、握手与处理。
 
-| 变量 | 说明 |
-|------|------|
-| **ErrorRemotingMessageSendFailed** | 远程消息发送失败 |
-| **ErrorRemotingMessageEncodeFailed** | 远程消息编码失败 |
-| **ErrorRemotingMessageDecodeFailed** | 远程消息解码失败 |
-| **ErrorRemotingMessageHandleFailed** | 远程消息处理失败 |
-| **ErrorRemotingHandshakeFailed** | 远程握手失败 |
+| 代码 | 变量名 | 说明 | 父类 |
+|------|--------|------|------|
+| 140000 | **ErrorRemotingMessageSendFailed** | 远程消息发送失败 | — |
+| 140001 | **ErrorRemotingMessageEncodeFailed** | 远程消息编码失败 | — |
+| 140002 | **ErrorRemotingMessageDecodeFailed** | 远程消息解码失败 | — |
+| 140003 | **ErrorRemotingMessageHandleFailed** | 远程消息处理失败 | — |
+| 140004 | **ErrorRemotingHandshakeFailed** | 远程握手失败 | — |
 
 ### 集群
 
-集群名称校验、加入控制及未启用时的调用。完整说明见 [集群错误](/docs/cluster/errors)。
+集群名称校验、加入控制及未启用时的调用。详细说明见 [集群错误](/docs/cluster/errors)。
 
-| 变量 | 说明 |
-|------|------|
-| **ErrorClusterNameMismatch** | 集群名称不匹配 |
-| **ErrorClusterDisabled** | 集群已禁用（未启用集群时调用 ClusterContext 方法会返回此错误） |
-| **ErrorClusterNodeStatusMismatch** | 节点状态不匹配 |
-| **ErrorClusterNotInQuorum** | 当前不在多数派 |
-| **ErrorClusterJoinAuthFailed** | Join 认证失败 |
-| **ErrorClusterJoinRateLimited** | Join 请求被限流 |
-| **ErrorClusterProtocolVersionMismatch** | 集群协议版本不兼容 |
-| **ErrorClusterJoinNotAllowed** | 地址或 DC 不在白名单 |
-| **ErrorClusterAdminAuthFailed** | 管理操作 Token 无效 |
+| 代码 | 变量名 | 说明 | 父类 |
+|------|--------|------|------|
+| 150000 | **ErrorClusterNameMismatch** | 集群名称不匹配 | — |
+| 150001 | **ErrorClusterDisabled** | 集群已禁用（未启用集群时调用 ClusterContext 方法会返回此错误） | — |
+| 150002 | **ErrorClusterNodeStatusMismatch** | 节点状态不匹配 | — |
+| 150003 | **ErrorClusterNotInQuorum** | 当前不在多数派 | — |
+| 150004 | **ErrorClusterJoinAuthFailed** | Join 认证失败 | — |
+| 150005 | **ErrorClusterJoinRateLimited** | Join 请求被限流 | — |
+| 150006 | **ErrorClusterProtocolVersionMismatch** | 集群协议版本不兼容 | — |
+| 150007 | **ErrorClusterJoinNotAllowed** | 地址或 DC 不在白名单 | — |
+| 150008 | **ErrorClusterAdminAuthFailed** | 管理操作 Token 无效 | — |
 
 ---
 
-完整列表与错误码见 [pkg.go.dev - vivid](https://pkg.go.dev/github.com/kercylan98/vivid#pkg-variables)。**RegisterError** 用于在包 init 或启动阶段注册自定义错误码，供跨节点一致识别。
+**RegisterError** 用于在包 init 或启动阶段注册自定义错误码，供跨节点一致识别；可选 **optionalCauses** 在注册时挂载父类错误，不改变 code 与 message，仅便于 **errors.Is** / **errors.As** 命中。
