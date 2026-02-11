@@ -44,6 +44,16 @@ pipeID := ctx.PipeTo(recipientRef, requestMessage, forwarderRefs, 5*time.Second)
 
 若 Ask 超时或失败，不会向 forwarders 发送成功结果，但会投递包含 **Error** 的 **PipeResult**。若 forwarder 包含当前 Actor 自身，会通过 **TellSelf** 收到 PipeResult。
 
+## Future.PipeTo
+
+对 **Future**（如来自 Ask、Entrust）可调用 **`future.PipeTo(forwarderRefs)`**，在 Future 完成时将**结果**以 **`*vivid.PipeResult`** 投递给指定 Actor，与上述 Context.PipeTo 的接收形态一致。仅投递结果（Message + Error），不投递 Future 本身，因此**可序列化、支持跨网络**（Remoting/Cluster）。
+
+```go
+ctx.Entrust(3*time.Second, task).PipeTo(ctx.Ref().ToActorRefs())
+```
+
+接收方同样在 OnReceive 中通过 **`*vivid.PipeResult`** 的 **Message** / **Error**、**IsSuccess()** 等处理。
+
 ## 典型场景
 
 将“问 A 拿结果并交给 B”的流程交给框架：不必在 Actor 内手动 Ask 再 Tell，避免阻塞与错误处理的重复代码，适合链式调用或结果汇聚。

@@ -34,4 +34,4 @@ result, err := future.Result()
 
 ## 适用场景
 
-在 Actor 内执行数据库查询、HTTP 调用、重计算等阻塞或耗时操作时，用 Entrust 避免阻塞邮箱；需要结果时用 **Result()** 或配合 [PipeTo](/docs/basics/pipe-to) 将结果转给其他 Actor。
+在 Actor 内执行数据库查询、HTTP 调用、重计算等阻塞或耗时操作时，用 Entrust 避免阻塞邮箱；需要结果时用 **Result()** 或 **future.PipeTo(forwarderRefs)** 将结果以 **`*vivid.PipeResult`** 转给其他 Actor（与 [PipeTo](/docs/basics/pipe-to) 一致，可跨网络序列化）。
