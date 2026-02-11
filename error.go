@@ -30,15 +30,15 @@ var (
 	ErrorFutureTimeout             = RegisterError(110000, "future timeout")               // Result/Wait 超时未收到应答
 	ErrorFutureMessageTypeMismatch = RegisterError(110001, "future message type mismatch") // 应答类型与泛型声明不一致
 	ErrorFutureUnexpectedError     = RegisterError(110002, "future unexpected error")      // 收到非预期错误
-	ErrorFutureInvalid             = RegisterError(110003, "future invalid")               // 创建时 timeout 非法
-	ErrorInvalidMessageLength      = RegisterError(110004, "invalid message length")       // 消息长度非法
+	ErrorFutureInvalid             = RegisterError(110003, "future invalid", ErrorIllegalArgument)               // 创建时 timeout 非法
+	ErrorInvalidMessageLength      = RegisterError(110004, "invalid message length", ErrorIllegalArgument)       // 消息长度非法
 	ErrorReadMessageBufferFailed   = RegisterError(110005, "read message buffer failed")   // 读消息缓冲失败
 )
 
 // 参数、调度与状态相关错误。
 var (
-	ErrorIllegalArgument = RegisterError(120000, "illegal argument")      // 参数无效或缺失
-	ErrorCronParse       = RegisterError(120001, "parse cron expression") // Cron 表达式解析失败
+	ErrorIllegalArgument = RegisterError(120000, "illegal argument")       // 参数无效或缺失
+	ErrorCronParse       = RegisterError(120001, "parse cron expression", ErrorIllegalArgument) // Cron 表达式解析失败
 	//ErrorTriggerExpired          = RegisterError(120002, "trigger has expired")        // 触发器已过期
 	//ErrorIllegalState            = RegisterError(120003, "illegal state")              // 违反当前状态或上下文
 	//ErrorQueueEmpty              = RegisterError(120004, "queue is empty")             // 队列空无法出队
@@ -50,11 +50,11 @@ var (
 
 // ActorRef 相关错误。
 var (
-	ErrorRefEmpty          = RegisterError(130001, "actor ref is empty")                      // ActorRef 为空
-	ErrorRefFormat         = RegisterError(130002, "actor ref must contain address and path") // 缺少 address 或 path
-	ErrorRefInvalidAddress = RegisterError(130003, "actor ref address is invalid")            // 地址非法
-	ErrorRefInvalidPath    = RegisterError(130004, "actor ref path is invalid")               // 路径非法
-	ErrorRefNilAgent       = RegisterError(130005, "agent ref is nil")                        // AgentRef 为 nil
+	ErrorRefEmpty          = RegisterError(130001, "actor ref is empty", ErrorNotFound)                      // ActorRef 为空
+	ErrorRefFormat         = RegisterError(130002, "actor ref must contain address and path", ErrorIllegalArgument) // 缺少 address 或 path
+	ErrorRefInvalidAddress = RegisterError(130003, "actor ref address is invalid", ErrorIllegalArgument)            // 地址非法
+	ErrorRefInvalidPath    = RegisterError(130004, "actor ref path is invalid", ErrorIllegalArgument)               // 路径非法
+	ErrorRefNilAgent       = RegisterError(130005, "agent ref is nil", ErrorNotFound)                               // AgentRef 为 nil
 )
 
 // Remoting 相关错误。
@@ -91,8 +91,8 @@ func init() {
 //
 // code 为唯一错误码，用于跨进程/节点识别；msg 为人类可读描述，会出现在 Error() 中。
 // 若 code 已被注册则 panic。返回的 *Error 可安全复用于 errors.Is/As 判定及序列化传播。
-// 通常仅在包 init 或启动阶段调用。
-func RegisterError(code int32, msg string) *Error {
+// optionalCauses 允许为该错误实例预设置额外的底层 cause 错误（如包装链），这仅用于初始化阶段“链式”挂载已知错误，常规使用应优先通过 .With() 单独包装。
+func RegisterError(code int32, msg string, optionalCauses ...error) *Error {
 	codeOfErrorMu.Lock()
 	defer codeOfErrorMu.Unlock()
 
@@ -103,6 +103,10 @@ func RegisterError(code int32, msg string) *Error {
 	e := &Error{
 		code: code,
 		msg:  msg,
+	}
+	// optionalCauses 用于注册时可选附加错误链（如“同属 NotFound”），不改变当前错误的 code 与 message，仅便于 errors.Is/As 命中。
+	for _, cause := range optionalCauses {
+		e = e.With(cause, WithErrorNotUpdateMessage)
 	}
 	codeOfError[code] = e
 	return e
@@ -155,30 +159,44 @@ func (e *Error) GetMessage() string {
 	return e.msg
 }
 
+type ErrorWithOption func(prev, next *Error)
+
+func WithErrorNotUpdateMessage(prev, next *Error) {
+	next.msg = prev.msg
+}
+
 // With 包装底层错误 err，生成新的 *Error：msg 变为 "原 msg: err.Error()"，Unwrap 返回 err。
 // 若 err 为 nil 则返回接收者本身。用于构建错误链并保留 errors.Is/As 的递归判定。
-func (e *Error) With(err error) *Error {
+func (e *Error) With(err error, options ...ErrorWithOption) *Error {
 	if err == nil {
 		return e
 	}
-	return &Error{
+	newError := &Error{
 		code: e.code,
 		msg:  fmt.Sprintf("%s: %s", e.msg, err.Error()),
 		err:  err,
 	}
+	for _, option := range options {
+		option(e, newError)
+	}
+	return newError
 }
 
 // WithMessage 在原有描述后追加一段说明 msg，生成新的 *Error，Unwrap 返回接收者。
 // 若 msg 为空则返回接收者本身。不改变错误码，仅丰富可读信息。
-func (e *Error) WithMessage(msg string) *Error {
+func (e *Error) WithMessage(msg string, options ...ErrorWithOption) *Error {
 	if msg == "" {
 		return e
 	}
-	return &Error{
+	newError := &Error{
 		code: e.code,
 		msg:  fmt.Sprintf("%s: %s", e.msg, msg),
 		err:  e,
 	}
+	for _, option := range options {
+		option(e, newError)
+	}
+	return newError
 }
 
 // Unwrap 返回通过 With 包装的底层错误，供 errors.Unwrap 及 errors.Is/As 使用；未包装时返回 nil。
