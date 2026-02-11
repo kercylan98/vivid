@@ -4,7 +4,7 @@
         "---入门---",
         "index",
         "introduction/what-is-vivid",
-        "---Actor 基础---",
+        "---基础---",
         "basics/actor-ref",
         "basics/implementing-actor",
         "basics/lifecycle",

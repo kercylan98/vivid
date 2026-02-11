@@ -68,7 +68,7 @@ const featureCards: Array<{
 
 const docLinks: Array<{ title: string; href: string; brief: string }> = [
   { title: '什么是 Vivid', href: '/docs/introduction/what-is-vivid', brief: '定位、核心特性与架构概览' },
-  { title: '快速入门', href: '/docs', brief: '安装到第一个 Actor 的完整步骤' },
+  { title: '快速开始', href: '/docs', brief: '安装到第一个 Actor 的完整步骤' },
   { title: 'Actor 引用（ActorRef）', href: '/docs/basics/actor-ref', brief: '寻址与能力句柄、位置透明' },
   { title: '消息投递', href: '/docs/basics/message-delivery', brief: 'Tell、Ask、Reply、Future' },
 ];
@@ -161,7 +161,7 @@ export default function HomePage() {
                       href="/docs"
                       className="font-medium text-[var(--vivid-gold-soft)] underline underline-offset-2 hover:text-[var(--vivid-gold)]"
                     >
-                      快速入门
+                      快速开始
                     </Link>
                     。
                   </p>
@@ -296,7 +296,7 @@ export default function HomePage() {
             variants={{ hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0 } }}
             transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
           >
-            从文档与快速入门开始，或到 GitHub 查看源码与参与贡献
+            从文档与快速开始章节开始，或到 GitHub 查看源码与参与贡献
           </motion.p>
           <motion.div
             className="mt-10 flex flex-wrap justify-center gap-4 md:mt-12 md:gap-5"

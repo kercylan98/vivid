@@ -1,43 +1,59 @@
 ---
-title: 引用句柄
+title: ActorRef
 description: ActorRef 是 Actor 模型的寻址与能力句柄，将身份与位置解耦并实现位置透明，是向 Actor 投递消息的唯一入口。
 ---
 
-在 Actor 模型中，**Actor 不暴露内部状态、不共享内存**，与外界交互的唯一方式是**消息**。因此必然要回答一个问题：**消息发给谁？** —— 需要一个稳定、可传递的“收件人”标识，且不依赖目标在本地还是远程、是否重启。**ActorRef** 就是这一抽象：它既是 Actor 的**唯一身份标识**，又是**向该 Actor 投递消息的能力句柄**；持有引用即可 Tell/Ask，框架根据引用内的地址与路径完成本地或跨节点路由，业务代码无需关心目标所在位置。理解 ActorRef，是理解“为何 Actor 能自然扩展到分布式”的关键。
+在 Actor 模型中，**Actor 不暴露内部状态、不共享内存**，与外界交互的唯一方式是**消息**。因此必然要回答：**消息发给谁？** 需要一个稳定、可传递的“收件人”标识——不依赖目标在本机还是远程、是否重启。**ActorRef**（Actor 引用）就是这一抽象：它既是 Actor 的**身份标识**，又是**向该 Actor 发消息的句柄**；你只管“发给谁”，框架根据引用里的地址与路径完成本地或跨节点投递。理解引用，是理解“为何 Actor 能自然扩展到分布式”的关键。
 
-## 为什么需要 ActorRef
+## 为什么需要引用
 
-- **封装与边界**：Actor 的边界由邮箱与行为定义；外部不能直接调用其方法或访问其状态，只能通过**发消息**与之通信。因此必须有一种“指向某个 Actor”的句柄，用来作为 Tell/Ask 的目标。
-- **身份与位置解耦**：在单机多协程或分布式环境中，Actor 可能在本进程、本机另一进程或远程节点。若调用方依赖“进程 ID”“内存地址”等，就会与具体部署强绑定。**ActorRef 把“谁”（身份）和“在哪”（位置）分开**：引用内包含地址与路径，框架负责按地址选择本地投递或网络发送，业务只关心“发给这个引用”。
-- **可传递、可持久化**：引用需要能在不同 Actor 之间传递、写入配置或服务发现、在重启后仍指向“逻辑上同一个” Actor（由路径与系统拓扑决定）。ActorRef 的 **String()** 与 **FindActorRef** 支持以字符串形式存储与恢复，便于配置、集群发现和跨节点传递。
+- **封装与边界**：Actor 的边界由邮箱与行为定义，外部不能直接调用其方法或访问其状态，只能通过**发消息**与之通信。因此必须有一种“指向某个 Actor”的句柄，作为发消息的目标。
+- **身份与位置解耦**：Actor 可能在本进程、本机另一进程或远程节点。若依赖“进程 ID”“内存地址”等，就会与具体部署强绑定。**引用把“谁”（身份）和“在哪”（位置）分开**：引用里包含地址与路径，框架按地址选择本地投递或网络发送，业务只关心“发给这个引用”。
+- **可传递、可持久化**：引用可以在不同 Actor 之间传递、写入配置或服务发现；重启后仍能指向“逻辑上同一个” Actor（由路径与系统拓扑决定）。
 
-因此，**ActorRef 不是可选的“便利类型”，而是 Actor 模型里寻址与通信的基石**：没有引用，就没有统一的、位置透明的消息投递入口。
+因此，**引用不是可选的便利类型，而是寻址与通信的基石**：没有引用，就没有统一的、位置透明的消息入口。
 
-## ActorRef 的含义与性质
+## 引用的含义与性质
 
-- **唯一标识与能力句柄**：每个 Actor 实例对应一个在系统内可区分的 ActorRef；**Equals** 用于判断两个引用是否指向同一 Actor。引用同时表示“向该 Actor 投递消息的能力”——谁持有引用，谁就可以向它发消息（在权限与拓扑允许的前提下）。
-- **地址与路径**：**GetAddress()** 表示节点/系统地址（如 host:port），**GetPath()** 表示在该节点内的层级路径。二者共同决定消息应发往何处；框架用它们做本地路由或 Remoting 序列化与网络发送。
-- **位置透明**：本地 Actor 与远程 Actor 的引用在 API 上一致（Tell/Ask 用法相同）；只有地址不同。配置好 [远程通讯](/docs/config/remoting) 与编解码后，业务无需根据“是否本机”分支，从而实现**位置透明**。
-- **线程安全与可复用**：ActorRef 实现为线程安全，可在多协程间传递与缓存；**Clone** 提供独立副本，便于安全存储或传递而不受后续变更影响。
+- **身份与能力**：每个 Actor 对应一个在系统内可区分的引用；可判断两个引用是否指向同一 Actor。谁持有引用，谁就可以向它发消息（在权限与拓扑允许的前提下）。
+- **地址与路径**：引用内包含**节点地址**（如 host:port）和**在该节点内的层级路径**。二者共同决定消息发往何处；框架据此做本地路由或跨网络发送。
+- **位置透明**：本地与远程的引用在用法上一致，只是地址不同。配置好 [远程通讯](/docs/config/remoting) 与编解码后，业务无需根据“是否本机”写分支，从而实现**位置透明**。
+- **可安全传递**：引用线程安全，可在多协程间传递与缓存；可复制出独立副本，便于存储或传递。
 
 <Callout type="info" title="设计启示">
-ActorRef 将“身份”与“位置”解耦，使同一套消息 API 既能用于单机也能用于分布式。这是 Actor 模型能自然扩展到分布式系统的核心原因之一：**你只关心“发给谁”，不关心“谁在哪”**。
+引用将“身份”与“位置”解耦，使同一套发消息方式既能用于单机也能用于分布式。**你只关心“发给谁”，不关心“谁在哪”**。
 </Callout>
 
-## 获取 ActorRef
+## 如何获取引用
 
-- **创建时返回**：`system.ActorOf()`、`ctx.ActorOf()` 创建 Actor 后返回其 **ActorRef**，用于后续 Tell/Ask 或传给其他 Actor。详见 [创建与生命周期](/docs/basics/lifecycle)。
-- **当前自身**：在 Actor 的 `OnReceive` 内通过 **`ctx.Ref()`** 获取当前 Actor 的引用，常用于 TellSelf、Watch、Scheduler 等。
-- **从字符串解析**：当引用以字符串形式存储或从配置/服务发现获取时，使用 **`system.FindActorRef(actorRef string)`** 解析为 ActorRef，见下节。
+- **创建时返回**：通过系统或上下文创建 Actor 时，会返回该 Actor 的引用，用于后续发消息或传给其他 Actor。详见 [创建与生命周期](/docs/basics/lifecycle)。
+- **当前自身**：在 Actor 处理消息时，通过上下文获取“当前 Actor 的引用”，常用于给自己发消息、监听他人、配合调度器等。
+- **按地址与路径构造**：已知节点地址和路径时，用 **CreateRef(address, path)** 构造引用，不要求目标存在；常用于集群单例、远程节点等。见下节。
+- **从字符串解析**：引用以字符串形式存储或从配置、服务发现获取时，用 **ParseRef** 仅做解析，或用 **FindActor** 查找本机已存在的 Actor。见下节。
 
-## 通过字符串解析 ActorRef
+## CreateRef：按地址与路径构造
 
-当 **ActorRef** 以字符串形式存储或从配置/网络获取（例如 `"host:port/user/actor-name"`）时，可通过 **`system.FindActorRef(actorRef string)`** 解析为可用的 **ActorRef**，再用于 Tell/Ask。解析得到的引用与本地创建的引用用法一致，框架会根据地址与路径路由到本地或远程 Actor。
-
-### 用法
+当已知**节点地址**与**路径**时（例如集群单例、已知的远程节点），可用 **CreateRef(address, path)** 直接构造引用，不要求目标 Actor 已存在。构造出的引用与本地创建的引用用法一致，发消息时由框架按地址路由到本地或远程。
 
 ```go
-ref, err := system.FindActorRef("example.com:8080/user/worker-1")
+ref, err := system.CreateRef("example.com:8080", "/user/worker-1")
+if err != nil {
+    return
+}
+ctx.Tell(ref, msg)
+```
+
+## ParseRef 与 FindActor
+
+| 方法 | 含义 | 典型场景 |
+|------|------|----------|
+| **ParseRef(actorRef string)** | 仅将字符串解析为引用，不要求目标在本机或存在 | 配置、服务发现中的字符串要发消息（本地或远程均可） |
+| **FindActor(actorRef string)** | 根据字符串查找**本节点**上已存在的 Actor 并返回其引用；若目标在远程或本机不存在则返回错误 | 确认本机有该 Actor 并拿到引用 |
+
+### 示例：从字符串解析后发消息（ParseRef）
+
+```go
+ref, err := system.ParseRef("example.com:8080/user/worker-1")
 if err != nil {
     // 格式错误或地址/路径无效
     return
@@ -45,16 +61,27 @@ if err != nil {
 ctx.Tell(ref, msg)
 ```
 
-### 说明
+### 示例：查找本机 Actor（FindActor）
 
-- 字符串格式需包含**地址**与**路径**（如 `host:port/path/to/actor`），否则返回错误。详见 [pkg.go.dev - FindActorRef](https://pkg.go.dev/github.com/kercylan98/vivid#ActorSystem.FindActorRef)。
-- **远程**目标需已配置 [远程通讯](/docs/config/remoting) 与编解码（Codec 或 RegisterCustomMessage）。
-- 可能返回 **ErrorRefFormat**、**ErrorRefInvalidAddress**、**ErrorRefInvalidPath** 等，可用 **errors.Is** 判定。错误体系见 [错误](/docs/config/errors)。
+```go
+ref, err := system.FindActor(actorRefString)
+if err != nil {
+    // 非本机地址、或本机不存在该路径的 Actor
+    return
+}
+ctx.Tell(ref, msg)
+```
+
+### 注意
+
+- 字符串格式需包含**地址**与**路径**（如 `host:port/path/to/actor`），否则 ParseRef/FindActor 解析阶段会失败。详见 [pkg.go.dev](https://pkg.go.dev/github.com/kercylan98/vivid#ActorSystem.ParseRef)。
+- 向**远程**目标发消息需已配置 [远程通讯](/docs/config/remoting) 与编解码。
+- 解析或查找可能返回格式错误、地址/路径无效、或（FindActor）未找到等，可用标准库 `errors.Is` 判定，详见 [错误](/docs/config/errors)。
 
 ---
 
 ## 相关专题
 
-- **[消息投递](/docs/basics/message-delivery)**：Tell/Ask/Reply/Future 的用法。
-- **[远程通讯](/docs/config/remoting)**：跨节点时 ActorRef 的地址与 FindActorRef 配合。
-- **[错误](/docs/config/errors)**：ActorRef 相关错误码。
+- **[消息投递](/docs/basics/message-delivery)**：发消息与请求-响应的用法。
+- **[远程通讯](/docs/config/remoting)**：跨节点时地址与解析引用的配合。
+- **[错误](/docs/config/errors)**：引用解析等相关错误码。

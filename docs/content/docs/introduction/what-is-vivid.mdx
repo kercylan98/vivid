@@ -13,72 +13,89 @@ Vivid 是一个**高性能、类型安全**的 **Go 语言 Actor 模型实现库
 
 | 能力 | 说明 |
 |------|------|
-| **完整 Actor 模型** | Actor 系统（ActorSystem）、Actor 上下文（ActorContext）、Actor 引用（ActorRef）等核心抽象，树状层级与生命周期管理 |
-| **消息传递** | **Tell**（发后即忘）、**Ask**（请求-响应，返回 `Future[T]`）、**Reply**、**PipeTo**（将 Ask 结果转发给其他 Actor）、**Entrust**（托管异步任务） |
-| **网络透明（位置透明）** | 在配置好 Remoting 与 Codec 后，**本地与远程使用同一套 API**：Tell、Ask、Reply 等调用方式完全一致，无需根据目标是否在本机改写代码；框架按 ActorRef 的地址自动选择本地投递或跨网络发送 |
-| **远程通信（Remoting）** | 内置 Remoting，支持跨网络节点的 Actor 通信；配置绑定/广告地址与 Codec（或 RegisterCustomMessage）后即可实现透明的跨节点消息投递 |
-| **监督策略** | **OneForOne** / **OneForAll**，支持重启、优雅重启、停止、优雅停止、恢复、升级等决策，可配置退避与抖动 |
-| **调度（Scheduler）** | 内置调度器，支持 **Once**（延时一次）、**Loop**（固定间隔）、**Cron** 表达式；任务与 Actor 生命周期绑定 |
-| **行为栈（Behavior）** | `Become` / `UnBecome` 动态切换与恢复消息处理行为，便于实现状态机 |
-| **生命周期钩子** | **Prelaunch**（启动前）、**PreRestart**（重启前）、**Restarted**（重启后）；以及 **Watch** / **Unwatch** 监听其他 Actor 终止（OnKilled） |
-| **消息暂存（Stash）** | `Stash()` / `Unstash(num?)` 暂存当前消息并在条件满足时恢复，便于“条件未满足时缓冲” |
-| **事件流（EventStream）** | 系统级发布/订阅，事件按类型投递到订阅者邮箱，与普通消息一致 |
-| **指标（Metrics）** | 可选启用指标收集，监控 Actor 数量、失败数、重启数、死信等；支持指标更新通知到事件流 |
-| **Ping / 健康检查** | 系统级 **Ping** 向目标 ActorRef 发送探测并同步等待 **Pong**，用于可达性检测与 RTT（`Pong.Duration()`）；适合健康检查或就绪探测 |
-| **类型安全** | 充分利用 Go 类型系统，消息与 Future 泛型、错误链与标准 `error` 处理 |
-| **错误体系** | 预定义错误码（如 `ErrorActorAlreadyExists`、`ErrorFutureTimeout`），支持 `errors.Is`/`As` 判定、错误链与跨节点序列化 |
-
-## 系统要求
-
-- **Go**：1.26 及以上
-- **平台**：Go 支持的操作系统与 CPU 架构（如 Linux、macOS、Windows，amd64、arm64、386 等）
+| **完整 Actor 模型** | 系统、上下文、引用等核心抽象，树状层级与生命周期管理 |
+| **消息传递** | 发后即忘、请求-响应（返回 Future）、回复、结果转发、托管异步任务等 |
+| **网络透明** | 配置好远程与编解码后，本地与远程使用同一套调用方式，框架按地址自动选择本地投递或跨网络发送 |
+| **远程通信** | 内置跨节点通信，配置绑定/广告地址与编解码后即可实现透明的跨节点消息投递 |
+| **集群** | 在远程通信之上可选启用：多节点成员发现与视图同步、故障检测与选主、集群内唯一单例、多数据中心与法定人数。详见 [集群](/docs/cluster/index) |
+| **监督策略** | 一对一 / 一对多，支持重启、优雅重启、停止、优雅停止、恢复、升级等决策，可配置退避与抖动 |
+| **调度** | 内置调度器，支持延时一次、固定间隔、Cron 表达式；任务与 Actor 生命周期绑定 |
+| **行为栈** | 动态切换与恢复消息处理行为，便于实现状态机 |
+| **生命周期钩子** | 启动前、重启前、重启后；以及监听其他 Actor 终止 |
+| **消息暂存** | 暂存当前消息并在条件满足时恢复，便于“条件未满足时缓冲” |
+| **事件流** | 系统级发布/订阅，事件按类型投递到订阅者邮箱，与普通消息一致 |
+| **指标** | 可选启用指标收集，监控 Actor 数量、失败数、重启数、死信等；支持指标更新通知到事件流 |
+| **健康检查** | 向目标 Actor 发送探测并同步等待回应，用于可达性检测与往返时延 |
+| **类型安全** | 充分利用 Go 类型系统，消息与 Future 泛型、错误链与标准 error 处理 |
+| **错误体系** | 预定义错误码（如 Actor 已存在、Future 超时等），支持标准库 errors.Is/As 判定、错误链与跨节点序列化 |
 
 ## 架构概览
 
 ### Actor 系统层级
 
-系统由 **ActorSystem** 统一管理所有 Actor。Actor 之间呈树状父子关系：根 Actor 由系统创建，其余均为某 Actor 的**子 Actor**（通过 `ActorContext.ActorOf` 创建）。系统同时提供 **EventStream**、**Scheduler**，并可选启用 **Metrics** 与 **Remoting**。
+系统由 **ActorSystem** 统一管理所有 Actor。Actor 之间呈树状父子关系：根 Actor 由系统创建，其余均为某 Actor 的**子 Actor**（由上下文创建）。系统内置**事件流**与**调度器**，并可选启用**指标**、**远程通信**与**集群**（集群依赖远程通信）。
 
 <Mermaid diagram={`flowchart TB
-  subgraph System["ActorSystem"]
-    Root[根 Actor]
+  subgraph System["Actor 系统"]
+    subgraph Tree["Actor 树"]
+      Root[根 Actor]
+      Root --> C1[子 Actor]
+      Root --> C2[子 Actor]
+      C1 --> GC[子 Actor]
+    end
+    subgraph Builtin["系统能力"]
+      ES[事件流]
+      SCH[调度器]
+    end
+    subgraph Ext["可选扩展"]
+      M[指标]
+      R[远程通信]
+      CL[集群]
+    end
   end
-  Root --> Child1[子 Actor]
-  Root --> Child2[子 Actor]
-  Child1 --> GrandChild[子 Actor]
-  System ~~~ EventStream[EventStream]
-  System ~~~ Scheduler[Scheduler]
-  System ~~~ Remoting[Remoting]
-`} title="Actor 树状层级" />
+  R -->|跨节点投递| RN[远程节点]
+  CL -->|依赖| R
+`} title="系统层级与组成" />
 
-- **ActorSystem**：系统入口，提供 `Start` / `Stop`、`ActorOf`（根级）、`Tell` / `Ask`、`FindActorRef` 等。
-- **ActorContext**：每次处理消息时注入，提供当前 Actor 的 `Ref`、`Message`、`Sender`、`Children`、`ActorOf`、`Tell` / `Ask` / `Reply`、`Become` / `UnBecome`、`Stash` / `Unstash`、`Watch` / `Unwatch`、`EventStream`、`Scheduler`、`Logger`、`Metrics` 等。
-- **ActorRef**：Actor 的引用，具备 `GetAddress()`、`GetPath()`、`Equals`、`Clone`、`String()`；用于 Tell/Ask 时由框架根据地址与路径路由到本地或远程 Actor。
+- **Actor 树**：所有 Actor 呈父子树状结构，根由系统创建，子由上下文创建。
+- **系统能力**：事件流（发布/订阅）、调度器（延时与周期任务），Actor 通过上下文使用。
+- **可选扩展**：指标用于监控；远程通信负责跨节点消息投递；集群在远程通信之上提供成员发现、选主与集群单例等。
+
+- **ActorSystem**：系统入口，负责启动与停止、创建根 Actor、向任意 Actor 发送消息、按路径查找引用；启用集群时还可获取集群上下文。
+- **ActorContext**：处理每条消息时注入，提供当前 Actor 的引用与本次消息、发送方、子 Actor 管理、创建子 Actor、向其他 Actor 发消息或回复、行为切换、消息暂存、订阅与监听、事件流、调度器、日志与指标；启用集群时还可访问集群上下文。
+- **ActorRef**：Actor 的引用，带有地址与路径，发消息时由框架按地址自动路由到本地或远程。
+- **集群**：在远程通信之上可选开启。框架负责多节点成员发现、故障检测与选主；业务可查询成员与多数派状态、优雅退出、使用集群内唯一单例等，详见 [集群](/docs/cluster/index)。
 
 ### 消息传递流程
 
 <Mermaid diagram={`sequenceDiagram
   participant Sender as 发送方
   participant Framework as 框架
-  participant Mailbox as 邮箱
-  participant Target as 目标Actor
+  participant Mailbox as 本地邮箱
+  participant Remoting as 远程通信
+  participant Target as 目标 Actor
 
-  Sender->>Framework: Tell/Ask(ref, msg)
-  Framework->>Mailbox: 投递消息
-  Mailbox->>Target: 取信 -> Behavior(OnReceive)
-  alt Ask 请求
-    Target->>Framework: Reply(response)
-    Framework->>Sender: Future.Result()
+  Sender->>Framework: 发消息(ref, msg)
+  alt 目标在本机
+    Framework->>Mailbox: 投递
+    Mailbox->>Target: 取信并处理
+  else 目标在远程
+    Framework->>Remoting: 序列化并发送
+    Remoting->>Target: 跨节点投递
   end
-`} title="消息投递流程" />
+  opt 请求-响应
+    Target->>Framework: 回复
+    Framework->>Sender: 返回结果
+  end
+`} title="消息投递流程（本地与远程）" />
 
-1. 发送方通过 **Tell** 或 **Ask** 将消息发往目标 **ActorRef**。
-2. 框架根据地址与路径将消息投递到目标 Actor 的 **Mailbox**（邮箱）。
-3. 目标 Actor 的 **ActorContext** 从邮箱取信并调用当前 **Behavior**（默认即 Actor 的 `OnReceive`）。
-4. 若为 Ask，接收方通过 **Reply** 将结果写回，由框架完成与 **Future** 的关联。
+1. 发送方将消息发往目标引用；框架根据引用中的地址判断**本机**或**远程**。
+2. **本机**：消息投递到目标 Actor 的邮箱，由目标串行取信并处理。
+3. **远程**：框架经远程通信序列化并发送，由对端投递到目标 Actor。
+4. 若为请求-响应模式，接收方回复后，框架将结果交回发送方。
 
 <Callout type="info" title="位置透明">
-远程节点上的 Actor 拥有不同的 `GetAddress()`，Remoting 负责跨节点序列化与网络传输。**业务代码无需区分本地/远程**：只要配置好 Codec（或消息注册），调用 `ctx.Tell(ref, msg)` 或 `ctx.Ask(ref, msg)` 时，无论 `ref` 指向本机还是远程，API 不变，框架自动完成路由与序列化。
+远程节点上的 Actor 拥有不同的网络地址，Remoting 负责跨节点序列化与网络传输。**业务代码无需区分本地或远程**：配置好编解码后，向任意 Actor 发消息的写法一致，框架按引用自动选择本地投递或跨网络发送。
 </Callout>
 
 ## 适用场景
