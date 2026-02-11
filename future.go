@@ -22,4 +22,9 @@ type Future[T any] interface {
 	// 返回值:
 	//   - error: Future 结束对应的异常信息（正常结束则为 nil）
 	Wait() error
+
+	// PipeTo 在 Future 得到结果时，将结果以 *PipeResult（Message + Error）形式转发给指定的 ActorRef，可跨网络序列化。
+	// 参数:
+	//   - forwarders: 结果需要进一步转发给的其他 ActorRef 列表
+	PipeTo(forwarders ActorRefs) error
 }

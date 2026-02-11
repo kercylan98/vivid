@@ -230,7 +230,7 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 
 	// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
 	agentRef, _ := NewAgentRef(c.ref)
-	futureIns := future.NewFuture[vivid.Message](askTimeout, func() {
+	futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
 		c.system.removeFuture(agentRef)
 	})
 	c.system.appendFuture(agentRef, futureIns)
@@ -247,7 +247,7 @@ func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.F
 		return future.NewFutureFail[vivid.Message](vivid.ErrorFutureInvalid.WithMessage("no task to be executed"))
 	}
 
-	futureIns := future.NewFuture[vivid.Message](timeout, nil)
+	futureIns := future.NewFuture[vivid.Message](c, timeout, nil)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {

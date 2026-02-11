@@ -2,6 +2,7 @@ package future
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -13,25 +14,11 @@ var (
 	_ vivid.Mailbox               = (*Future[vivid.Message])(nil)
 )
 
-// NewFuture 创建并返回一个新的 Future，用于异步任务的结果处理与同步控制。
-//
-// 参数：
-//   - timeout：指定 Future 的超时时间。如果该值大于零，到达指定持续时间后 Future 会被自动关闭，并返回 vivid.ErrorFutureTimeout。
-//     如果设为零或负数，则不会自动超时关闭。
-//   - closer：可选的回调函数，在 Future 被关闭（无论是正常关闭还是超时关闭）时调用，通常用于资源清理或通知用途。如果不需要可传 nil。
-//
-// 行为说明：
-//   - 当 timeout 大于零时，Future 会在超时后自动调用 Close 并传递超时错误（vivid.ErrorFutureTimeout）。
-//   - 若传递了 closer，则 Future 关闭时会自动执行该回调。
-//   - 返回的 Future 实例可用于后续设置结果或错误，也可等待其完成。
-//
-// 示例：
-//
-//	future := NewFuture[MyMessageType](5*time.Second, func() { /* 清理逻辑 */ })
-func NewFuture[T vivid.Message](timeout time.Duration, closer func()) *Future[T] {
+func NewFuture[T vivid.Message](liaison vivid.ActorLiaison, timeout time.Duration, closer func()) *Future[T] {
 	future := &Future[T]{
-		done:   make(chan struct{}),
-		closer: closer,
+		done:    make(chan struct{}),
+		liaison: liaison,
+		closer:  closer,
 	}
 
 	if timeout > 0 {
@@ -53,12 +40,15 @@ func NewFutureFail[T vivid.Message](err error) *Future[T] {
 }
 
 type Future[T vivid.Message] struct {
-	done    chan struct{} // 用于通知 future 完成
-	timer   *time.Timer   // 超时定时器
-	closed  atomic.Bool   // 是否已关闭
-	err     error         // 完成时的错误
-	message T             // 完成时的消息
-	closer  func()        // Future 关闭时的回调函数
+	done       chan struct{}      // 用于通知 future 完成
+	timer      *time.Timer        // 超时定时器
+	closed     atomic.Bool        // 是否已关闭
+	err        error              // 完成时的错误
+	message    T                  // 完成时的消息
+	liaison    vivid.ActorLiaison // 关联的 ActorLiaison
+	closer     func()             // Future 关闭时的回调函数
+	mu         sync.Mutex         // 保护 forwarders 的并发读写
+	forwarders vivid.ActorRefs    // 需要转发的 ActorRefs
 }
 
 func (f *Future[T]) Pause() {
@@ -86,6 +76,35 @@ func (f *Future[T]) Close(err error) {
 	f.close(err)
 }
 
+func (f *Future[T]) PipeTo(forwarders vivid.ActorRefs) error {
+	if len(forwarders) == 0 {
+		return nil
+	}
+	f.mu.Lock()
+	if f.closed.Load() {
+		f.mu.Unlock()
+		f.tellForwarders(forwarders, f.message, f.err)
+		return nil
+	}
+	f.forwarders = append(f.forwarders, forwarders...).Unique()
+	f.mu.Unlock()
+	return nil
+}
+
+// tellForwarders 向指定 refs 投递结果（*vivid.PipeResult），仅包含消息与错误，可跨网络序列化；liaison 为 nil 时跳过。
+func (f *Future[T]) tellForwarders(refs vivid.ActorRefs, msg T, err error) {
+	if f.liaison == nil {
+		return
+	}
+	pipeResult := &vivid.PipeResult{
+		Message: msg,
+		Error:   err,
+	}
+	for _, ref := range refs {
+		f.liaison.Tell(ref, pipeResult)
+	}
+}
+
 func (f *Future[T]) close(v any) {
 	if !f.closed.CompareAndSwap(false, true) {
 		return
@@ -106,6 +125,12 @@ func (f *Future[T]) close(v any) {
 	if f.closer != nil {
 		f.closer()
 	}
+
+	f.mu.Lock()
+	toSend := f.forwarders
+	f.forwarders = nil
+	f.mu.Unlock()
+	f.tellForwarders(toSend, f.message, f.err)
 }
 
 func (f *Future[T]) Result() (T, error) {
