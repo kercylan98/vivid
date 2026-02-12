@@ -173,8 +173,6 @@ func (s *System) Start() error {
 	// 守护系统上下文
 	go func() {
 		<-s.options.Context.Done()
-		s.statusLock.Lock()
-		defer s.statusLock.Unlock()
 		_ = s.stop(false) // 无意义错误
 	}()
 	return nil
