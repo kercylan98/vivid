@@ -81,6 +81,10 @@ type Context struct {
 	scheduler     *Scheduler                         // 调度器
 }
 
+func (c *Context) IsClusterEnabled() bool {
+	return c.system.Cluster() != nil
+}
+
 func (c *Context) Cluster() vivid.ClusterContext {
 	return c.system.Cluster()
 }
@@ -346,6 +350,9 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	case *SchedulerMessage:
 		c.onScheduler(message, behavior)
 	default:
+		if c.MetricsEnabled() {
+			c.Metrics().Counter(metrics.NameCounterMessagesProcessedTotal).Inc()
+		}
 		c.executeBehaviorWithRecovery(behavior)
 	}
 }
@@ -376,8 +383,9 @@ func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 func (c *Context) onScheduler(message *SchedulerMessage, behavior vivid.Behavior) {
 	// 消息替换
 	c.envelop = newReplacedEnvelop(c.envelop, message.Message)
-
-	// 执行调度
+	if c.MetricsEnabled() {
+		c.Metrics().Counter(metrics.NameCounterMessagesProcessedTotal).Inc()
+	}
 	c.executeBehaviorWithRecovery(behavior)
 }
 

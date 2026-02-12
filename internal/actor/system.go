@@ -29,6 +29,8 @@ var (
 	_ vivid.ActorSystem              = (*System)(nil)
 	_ vivid.EnvelopHandler           = (*System)(nil)
 	_ remoting.NetworkEnvelopHandler = (*System)(nil)
+	_ vivid.SystemStateProvider      = (*System)(nil)
+	_ vivid.MetricsProvider          = (*System)(nil)
 )
 
 func NewSystem(options ...vivid.ActorSystemOption) *System {
@@ -64,6 +66,25 @@ type System struct {
 	statusLock        sync.Mutex                                        // 系统状态锁
 	clusterContext    *cluster.Context                                  // 集群上下文
 	cancel            context.CancelFunc                                // 上下文停止函数
+	startTime         time.Time                                         // 启动时间，Start() 时记录
+}
+
+func (s *System) GetSystemBasicState() vivid.SystemBasicState {
+	remotingEnabled := s.options.RemotingBindAddress != ""
+	addr := ""
+	if remotingEnabled {
+		addr = s.options.RemotingAdvertiseAddress
+		if addr == "" {
+			addr = s.options.RemotingBindAddress
+		}
+	}
+	return vivid.SystemBasicState{
+		StartTime:       s.startTime,
+		Version:         vivid.Version,
+		RemotingEnabled: remotingEnabled,
+		RemotingAddress: addr,
+		MetricsEnabled:  s.options.EnableMetrics,
+	}
 }
 
 func (s *System) IsClusterEnabled() bool {
@@ -132,6 +153,7 @@ func (s *System) Start() error {
 		return stateError
 	}
 
+	s.startTime = time.Now()
 	s.Logger().Debug("actor system starting")
 
 	startErr := chain.New(chain.WithContext(s.options.Context)).

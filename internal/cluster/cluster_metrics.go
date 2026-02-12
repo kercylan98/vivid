@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/pkg/metrics"
 )
 
 // MetricsUpdater 负责更新集群相关指标（成员数、健康数、quorum、DC 等）。
@@ -18,14 +19,14 @@ func (u *MetricsUpdater) Update(ctx vivid.ActorContext, v *ClusterView) {
 		return
 	}
 	m := ctx.Metrics()
-	m.Gauge("cluster.members").Set(int64(len(v.Members)))
-	m.Gauge("cluster.healthy").Set(int64(v.HealthyCount))
-	m.Gauge("cluster.unhealthy").Set(int64(v.UnhealthyCount))
-	m.Gauge("cluster.quorum_size").Set(int64(v.QuorumSize))
+	m.Gauge(metrics.NameGaugeClusterMembers).Set(int64(len(v.Members)))
+	m.Gauge(metrics.NameGaugeClusterHealthy).Set(int64(v.HealthyCount))
+	m.Gauge(metrics.NameGaugeClusterUnhealthy).Set(int64(v.UnhealthyCount))
+	m.Gauge(metrics.NameGaugeClusterQuorumSize).Set(int64(v.QuorumSize))
 	if v.QuorumSize > 0 && v.HealthyCount >= v.QuorumSize {
-		m.Gauge("cluster.in_quorum").Set(1)
+		m.Gauge(metrics.NameGaugeClusterInQuorum).Set(1)
 	} else {
-		m.Gauge("cluster.in_quorum").Set(0)
+		m.Gauge(metrics.NameGaugeClusterInQuorum).Set(0)
 	}
 	dcMembers := make(map[string]int)
 	dcHealthy := make(map[string]int)
@@ -43,8 +44,8 @@ func (u *MetricsUpdater) Update(ctx vivid.ActorContext, v *ClusterView) {
 		}
 	}
 	for dc, count := range dcMembers {
-		m.Gauge("cluster.dc." + dc + ".members").Set(int64(count))
-		m.Gauge("cluster.dc." + dc + ".healthy").Set(int64(dcHealthy[dc]))
+		m.Gauge(metrics.NamePrefixClusterDC + dc + metrics.NameSuffixClusterDCMembers).Set(int64(count))
+		m.Gauge(metrics.NamePrefixClusterDC + dc + metrics.NameSuffixClusterDCHealthy).Set(int64(dcHealthy[dc]))
 	}
 }
 
@@ -68,5 +69,5 @@ func (u *MetricsUpdater) UpdateViewDivergence(ctx vivid.ActorContext, local, oth
 			diff++
 		}
 	}
-	ctx.Metrics().Gauge("cluster.view_divergence").Set(int64(diff))
+	ctx.Metrics().Gauge(metrics.NameGaugeClusterViewDivergence).Set(int64(diff))
 }

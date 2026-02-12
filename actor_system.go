@@ -161,6 +161,26 @@ type ActorSystemOptions struct {
 	SupervisionStrategy SupervisionStrategy
 }
 
+// SystemBasicState 当前 ActorSystem 的基本状态，供控制台等展示；不含集群名称（仅集群有集群名）。
+type SystemBasicState struct {
+	StartTime       time.Time `json:"startTime"`    // 启动时间
+	Version         string   `json:"version"`      // Vivid 库版本号，来自包常量 Version
+	RemotingEnabled bool     `json:"remotingEnabled"` // 是否开启远程
+	RemotingAddress string   `json:"remotingAddress"` // 远程广告地址，未开启时为空
+	MetricsEnabled  bool     `json:"metricsEnabled"`  // 是否启用指标收集（WithActorSystemEnableMetrics）
+}
+
+// SystemStateProvider 可由 ActorSystem 实现，用于提供系统基本状态（启动时间、版本、是否开启远程等）。
+type SystemStateProvider interface {
+	GetSystemBasicState() SystemBasicState
+}
+
+// MetricsProvider 可由 ActorSystem 实现，用于提供指标收集器；配合 EnableMetricsUpdatedNotify 实现指标展示。
+type MetricsProvider interface {
+	MetricsEnabled() bool
+	Metrics() metrics.Metrics
+}
+
 // WithActorSystemSupervisionStrategy 返回一个 ActorSystemOption，用于指定 ActorSystem 的监督策略。
 //
 // 用法场景：

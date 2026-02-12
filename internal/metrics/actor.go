@@ -60,6 +60,7 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 }
 
 func (a *Actor) onStreamEvent(ctx vivid.ActorContext, event vivid.StreamEvent) {
+	a.metrics.Counter(metrics.NameCounterStreamEventsTotal).Inc()
 	switch e := event.(type) {
 	case ves.ActorSpawnedEvent:
 		a.onActorSpawned(e)
@@ -104,9 +105,9 @@ func (a *Actor) onActorSpawned(event ves.ActorSpawnedEvent) {
 	a.actorSpawnedTimes[path] = now
 
 	// 更新指标
-	a.metrics.Counter("vivid_actor_spawned_total").Inc()
-	a.metrics.Gauge("vivid_actor_count").Inc()
-	a.metrics.Counter("vivid_actor_spawned_total_by_type").Add(1) // 可以按类型进一步细分
+	a.metrics.Counter(metrics.NameCounterActorSpawnedTotal).Inc()
+	a.metrics.Gauge(metrics.NameGaugeActorCount).Inc()
+	a.metrics.Counter(metrics.NameCounterActorSpawnedTotalByType).Add(1)
 }
 
 func (a *Actor) onActorLaunched(event ves.ActorLaunchedEvent) {
@@ -117,7 +118,7 @@ func (a *Actor) onActorLaunched(event ves.ActorLaunchedEvent) {
 	// 计算启动耗时
 	if spawnedTime, ok := a.actorSpawnedTimes[path]; ok {
 		duration := now.Sub(spawnedTime).Seconds()
-		a.metrics.Histogram("vivid_actor_launch_duration_seconds").Observe(duration)
+		a.metrics.Histogram(metrics.NameHistogramActorLaunchDurationSeconds).Observe(duration)
 		delete(a.actorSpawnedTimes, path)
 	}
 }
@@ -128,7 +129,7 @@ func (a *Actor) onActorKilled(event ves.ActorKilledEvent) {
 	// 计算生命周期时长
 	if launchTime, ok := a.actorLaunchTimes[path]; ok {
 		duration := time.Since(launchTime).Seconds()
-		a.metrics.Histogram("vivid_actor_lifetime_seconds").Observe(duration)
+		a.metrics.Histogram(metrics.NameHistogramActorLifetimeSeconds).Observe(duration)
 		delete(a.actorLaunchTimes, path)
 	}
 
@@ -138,8 +139,8 @@ func (a *Actor) onActorKilled(event ves.ActorKilledEvent) {
 	delete(a.mailboxPauseTimes, path)
 
 	// 更新指标
-	a.metrics.Counter("vivid_actor_killed_total").Inc()
-	a.metrics.Gauge("vivid_actor_count").Dec()
+	a.metrics.Counter(metrics.NameCounterActorKilledTotal).Inc()
+	a.metrics.Gauge(metrics.NameGaugeActorCount).Dec()
 }
 
 func (a *Actor) onActorRestarting(event ves.ActorRestartingEvent) {
@@ -147,8 +148,8 @@ func (a *Actor) onActorRestarting(event ves.ActorRestartingEvent) {
 	a.actorRestartTimes[path] = time.Now()
 
 	// 更新指标
-	a.metrics.Counter("vivid_actor_restart_total").Inc()
-	a.metrics.Counter("vivid_actor_restart_total_by_type").Add(1)
+	a.metrics.Counter(metrics.NameCounterActorRestartTotal).Inc()
+	a.metrics.Counter(metrics.NameCounterActorRestartTotalByType).Add(1)
 }
 
 func (a *Actor) onActorRestarted(event ves.ActorRestartedEvent) {
@@ -157,30 +158,30 @@ func (a *Actor) onActorRestarted(event ves.ActorRestartedEvent) {
 	// 计算重启耗时
 	if restartTime, ok := a.actorRestartTimes[path]; ok {
 		duration := time.Since(restartTime).Seconds()
-		a.metrics.Histogram("vivid_actor_restart_duration_seconds").Observe(duration)
+		a.metrics.Histogram(metrics.NameHistogramActorRestartDurationSeconds).Observe(duration)
 		delete(a.actorRestartTimes, path)
 	}
 
 	// 更新指标
-	a.metrics.Counter("vivid_actor_restart_success_total").Inc()
+	a.metrics.Counter(metrics.NameCounterActorRestartSuccessTotal).Inc()
 }
 
 func (a *Actor) onActorFailed(_ ves.ActorFailedEvent) {
 	// 更新指标
-	a.metrics.Counter("vivid_actor_failed_total").Inc()
-	a.metrics.Counter("vivid_actor_failed_total_by_type").Add(1)
+	a.metrics.Counter(metrics.NameCounterActorFailedTotal).Inc()
+	a.metrics.Counter(metrics.NameCounterActorFailedTotalByType).Add(1)
 }
 
 func (a *Actor) onActorWatched(_ ves.ActorWatchedEvent) {
 	// 更新指标
-	a.metrics.Counter("vivid_actor_watch_total").Inc()
-	a.metrics.Gauge("vivid_actor_watch_count").Inc()
+	a.metrics.Counter(metrics.NameCounterActorWatchTotal).Inc()
+	a.metrics.Gauge(metrics.NameGaugeActorWatchCount).Inc()
 }
 
 func (a *Actor) onActorUnwatched(_ ves.ActorUnwatchedEvent) {
 	// 更新指标
-	a.metrics.Counter("vivid_actor_unwatch_total").Inc()
-	a.metrics.Gauge("vivid_actor_watch_count").Dec()
+	a.metrics.Counter(metrics.NameCounterActorUnwatchTotal).Inc()
+	a.metrics.Gauge(metrics.NameGaugeActorWatchCount).Dec()
 }
 
 func (a *Actor) onMailboxPaused(event ves.ActorMailboxPausedEvent) {
@@ -188,8 +189,8 @@ func (a *Actor) onMailboxPaused(event ves.ActorMailboxPausedEvent) {
 	a.mailboxPauseTimes[path] = time.Now()
 
 	// 更新指标
-	a.metrics.Counter("vivid_mailbox_paused_total").Inc()
-	a.metrics.Gauge("vivid_mailbox_paused_count").Inc()
+	a.metrics.Counter(metrics.NameCounterMailboxPausedTotal).Inc()
+	a.metrics.Gauge(metrics.NameGaugeMailboxPausedCount).Inc()
 }
 
 func (a *Actor) onMailboxResumed(event ves.ActorMailboxResumedEvent) {
@@ -198,18 +199,18 @@ func (a *Actor) onMailboxResumed(event ves.ActorMailboxResumedEvent) {
 	// 计算暂停时长
 	if pauseTime, ok := a.mailboxPauseTimes[path]; ok {
 		duration := time.Since(pauseTime).Seconds()
-		a.metrics.Histogram("vivid_mailbox_paused_duration_seconds").Observe(duration)
+		a.metrics.Histogram(metrics.NameHistogramMailboxPausedDurationSeconds).Observe(duration)
 		delete(a.mailboxPauseTimes, path)
 	}
 
 	// 更新指标
-	a.metrics.Counter("vivid_mailbox_resumed_total").Inc()
-	a.metrics.Gauge("vivid_mailbox_paused_count").Dec()
+	a.metrics.Counter(metrics.NameCounterMailboxResumedTotal).Inc()
+	a.metrics.Gauge(metrics.NameGaugeMailboxPausedCount).Dec()
 }
 
 func (a *Actor) onDeathLetter(_ ves.DeathLetterEvent) {
 	// 更新指标
-	a.metrics.Counter("vivid_death_letter_total").Inc()
+	a.metrics.Counter(metrics.NameCounterDeathLetterTotal).Inc()
 }
 
 // GetMetrics 返回指标收集器实例。
