@@ -70,14 +70,21 @@ func (c *Context) GetMembers() ([]vivid.ClusterMemberInfo, error) {
 			continue
 		}
 		ver := resp.View.VersionVector.Get(m.ID)
-		out = append(out, vivid.ClusterMemberInfo{
+		info := vivid.ClusterMemberInfo{
 			Address:    m.Address,
 			Version:    strconv.FormatUint(ver, 10),
 			Datacenter: m.Datacenter(),
 			Rack:       m.Rack(),
 			Region:     m.Region(),
 			Zone:       m.Zone(),
-		})
+		}
+		if len(m.CustomState) > 0 {
+			info.CustomState = make(map[string]string, len(m.CustomState))
+			for k, v := range m.CustomState {
+				info.CustomState[k] = v
+			}
+		}
+		out = append(out, info)
 	}
 	return out, nil
 }
@@ -105,6 +112,14 @@ func (c *Context) Leave() {
 	}
 	c.leaveLock.Unlock()
 	<-c.leaveWait
+}
+
+// UpdateNodeState 将 customState 增量合并到本节点 NodeState.CustomState 并触发 Gossip 传播。
+func (c *Context) UpdateNodeState(customState map[string]string) {
+	if c == nil || c.clusterRef == nil || c.system == nil || len(customState) == 0 {
+		return
+	}
+	c.system.Tell(c.clusterRef, &UpdateNodeStateRequest{CustomState: customState})
 }
 
 // getView 向 NodeActor 请求当前视图，用于 GetMembers、InQuorum。

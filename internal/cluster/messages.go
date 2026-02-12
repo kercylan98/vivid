@@ -11,8 +11,8 @@ type StartJoinRequest struct {
 
 // JoinRequest 节点向种子发起的加入请求。
 type JoinRequest struct {
-	NodeState *NodeState
-	AuthToken string // 加入认证令牌，当接收方配置了 JoinSecret 时必填
+	NodeState *NodeState // 发送方节点状态
+	AuthToken string     // 加入认证令牌，当接收方配置了 JoinSecret 时必填
 }
 
 // JoinResponse 种子节点对加入请求的回复，携带当前视图。
@@ -72,4 +72,11 @@ type ForceMemberDown struct {
 // TriggerViewBroadcast 管理消息：立即触发一轮视图广播（用于运维收敛）。
 type TriggerViewBroadcast struct {
 	AdminToken string
+}
+
+// UpdateNodeStateRequest 请求更新本节点的运行时自定义状态（CustomState），合并后通过 Gossip 传播。
+// 仅本节点处理；CustomState 为增量合并，nil 表示不修改，非 nil 的 key 会覆盖或新增。
+// Metadata/Labels 适用于固定拓扑等常量，运行时可变状态应使用 CustomState。
+type UpdateNodeStateRequest struct {
+	CustomState map[string]string // 增量合并到 NodeState.CustomState，nil 表示不修改
 }

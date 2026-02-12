@@ -61,6 +61,7 @@ func newNodeState(id string, clusterName string, address string) *NodeState {
 		LogicalClock: 1,
 		Metadata:     make(map[string]string),
 		Labels:       make(map[string]string),
+		CustomState:  make(map[string]string),
 		Checksum:     0,
 	}
 }
@@ -101,6 +102,7 @@ func (n *NodeState) Zone() string {
 // 节点在视图中的因果版本由 ClusterView.VersionVector 维护，GetMembers 等从 VersionVector.Get(nodeID) 获取。
 // Generation 在节点重启后递增，用于区分同一节点的不同 incarnation，避免脑裂时采纳旧实例。
 // Labels 可携带 datacenter/rack 等拓扑信息，用于多数据中心与跨 DC 故障检测。
+// CustomState 为运行时可变的自定义状态，通过 ClusterContext.UpdateNodeState 更新并随 Gossip 传播；Metadata/Labels 适合固定常量。
 // LogicalClock 本节点产生的状态变更的逻辑时钟，用于同一节点多实例的偏序比较，减少对物理时钟偏差的依赖；0 表示未使用。
 type NodeState struct {
 	ID           string
@@ -113,8 +115,9 @@ type NodeState struct {
 	Unreachable  bool
 	LastSeen     int64
 	LogicalClock uint64 // 本节点逻辑时钟，同一节点比较时优先于 Timestamp
-	Metadata     map[string]string
-	Labels       map[string]string
+	Metadata     map[string]string // 固定/常量元数据，通常加入时确定
+	Labels       map[string]string // 固定/常量标签（如 datacenter/rack），用于拓扑与故障检测
+	CustomState  map[string]string // 运行时可变的自定义状态，可随时更新并随 Gossip 传播
 	Checksum     uint32
 }
 
@@ -134,6 +137,12 @@ func (n *NodeState) Clone() *NodeState {
 		out.Labels = make(map[string]string, len(n.Labels))
 		for k, v := range n.Labels {
 			out.Labels[k] = v
+		}
+	}
+	if len(n.CustomState) > 0 {
+		out.CustomState = make(map[string]string, len(n.CustomState))
+		for k, v := range n.CustomState {
+			out.CustomState[k] = v
 		}
 	}
 	return &out

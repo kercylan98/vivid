@@ -375,6 +375,16 @@ type actorRace interface {
 type actorBasic interface {
 	ActorLiaison
 
+	// IsClusterEnabled 返回当前系统是否启用了集群功能。
+	//
+	// 功能说明：
+	//   - 便于在业务逻辑、Actor 层代码中判断系统集群能力是否开启，避免因未启用集群导致调用相关接口 panic 或逻辑异常。
+	//   - 典型用法如：if ctx.IsClusterEnabled() { ... }
+	//
+	// 返回值：
+	//   - bool：true 表示当前系统已开启集群功能，false 表示集群未启用。
+	IsClusterEnabled() bool
+
 	// Cluster 获取集群上下文（ClusterContext）实例，用于访问当前 Actor 所处的集群管理功能。
 	//
 	// 功能说明：

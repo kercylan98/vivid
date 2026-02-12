@@ -100,6 +100,8 @@ func (a *NodeActor) OnReceive(ctx vivid.ActorContext) {
 		a.handleForceMemberDown(ctx, m)
 	case *TriggerViewBroadcast:
 		a.handleTriggerBroadcast(ctx, m)
+	case *UpdateNodeStateRequest:
+		a.handleUpdateNodeState(ctx, m)
 	case *ExitingReady:
 		if a.nodeState != nil {
 			a.nodeState.Status = MemberStatusExiting
@@ -328,6 +330,25 @@ func (a *NodeActor) handleTriggerBroadcast(ctx vivid.ActorContext, m *TriggerVie
 	}
 	a.broadcastViewOnce(ctx)
 	ctx.Reply(nil)
+}
+
+func (a *NodeActor) handleUpdateNodeState(ctx vivid.ActorContext, m *UpdateNodeStateRequest) {
+	if a.nodeState == nil || m == nil || len(m.CustomState) == 0 {
+		return
+	}
+	if a.nodeState.CustomState == nil {
+		a.nodeState.CustomState = make(map[string]string, len(m.CustomState))
+	}
+	for k, v := range m.CustomState {
+		a.nodeState.CustomState[k] = v
+	}
+	a.nodeState.Timestamp = time.Now().UnixNano()
+	if a.nodeState.LogicalClock != 0 {
+		a.nodeState.LogicalClock++
+	}
+	a.incrementLocalVersion()
+	a.clusterView.AddMember(a.nodeState)
+	a.broadcastViewOnce(ctx)
 }
 
 func (a *NodeActor) handleJoinRequest(ctx vivid.ActorContext, m *JoinRequest) {

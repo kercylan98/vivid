@@ -7,7 +7,8 @@ import (
 )
 
 // ProtocolVersion 集群协议版本号，随 ClusterView 序列化，用于跨版本滚动升级与兼容性校验。
-const ProtocolVersion uint16 = 1
+// 2：NodeState 含 CustomState，视图 wire 中 ProtocolVersion 位于 members 之前。
+const ProtocolVersion uint16 = 2
 
 func newClusterView() *ClusterView {
 	return &ClusterView{

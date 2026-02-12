@@ -42,6 +42,8 @@ func init() {
 		"clusterForceMemberDown", clusterForceMemberDownReader, clusterForceMemberDownWriter)
 	messages.RegisterInternalMessage[*TriggerViewBroadcast](
 		"clusterTriggerViewBroadcast", clusterTriggerViewBroadcastReader, clusterTriggerViewBroadcastWriter)
+	messages.RegisterInternalMessage[*UpdateNodeStateRequest](
+		"clusterUpdateNodeStateRequest", clusterUpdateNodeStateRequestReader, clusterUpdateNodeStateRequestWriter)
 	messages.RegisterInternalMessage[*singletonForwardedMessage](
 		"clusterSingletonForwardedMessage", clusterSingletonForwardedMessageReader, clusterSingletonForwardedMessageWriter)
 }
@@ -69,7 +71,10 @@ func writerWriteNodeStateBody(w *messages.Writer, n *NodeState) error {
 	if err := writeMapStringString(w, n.Labels); err != nil {
 		return err
 	}
-	return w.WriteFrom(n.Checksum)
+	if err := w.WriteFrom(n.Checksum); err != nil {
+		return err
+	}
+	return writeMapStringString(w, n.CustomState)
 }
 
 // maxMapEntries 反序列化时单 map 最大条目数，防止损坏数据导致异常分配或死循环
@@ -133,11 +138,15 @@ func readerReadNodeStateBody(r *messages.Reader) (*NodeState, error) {
 	if err := r.ReadInto(&checksum); err != nil {
 		return nil, err
 	}
+	customState, err := readMapStringString(r)
+	if err != nil {
+		return nil, err
+	}
 	return &NodeState{
 		ID: id, ClusterName: clusterName, Address: address,
 		Generation: int(gen), Timestamp: timestamp, SeqNo: seqNo,
 		Status: MemberStatus(status), Unreachable: unreachable, LastSeen: lastSeen, LogicalClock: logicalClock,
-		Metadata: metadata, Labels: labels, Checksum: checksum,
+		Metadata: metadata, Labels: labels, CustomState: customState, Checksum: checksum,
 	}, nil
 }
 
@@ -167,14 +176,18 @@ func readMapStringString(r *messages.Reader) (map[string]string, error) {
 	return m, nil
 }
 
-// writeClusterView 将 ClusterView 按二进制格式写入，nil 写长度 0。
+const clusterViewFormatV1 = 1 // 视图 wire：ViewID,Epoch,Timestamp,memberCount,members(无 CustomState),...,ProtocolVersion,MaxVersionVectorEntries
+const clusterViewFormatV2 = 2 // 视图 wire：formatByte=2, ViewID,Epoch,Timestamp,ProtocolVersion,MaxVersionVectorEntries,memberCount,members(含 CustomState),...,VersionVector
+
+// writeClusterView 将 ClusterView 按二进制格式写入，nil 写长度 0。当前使用 formatV2。
 func writeClusterView(w *messages.Writer, v *ClusterView) error {
 	if v == nil {
 		w.WriteUint32(0)
 		return w.Err()
 	}
 	w.WriteUint32(1)
-	if err := w.WriteFrom(v.ViewID, v.Epoch, v.Timestamp); err != nil {
+	w.WriteUint8(clusterViewFormatV2)
+	if err := w.WriteFrom(v.ViewID, v.Epoch, v.Timestamp, v.ProtocolVersion, int32(v.MaxVersionVectorEntries)); err != nil {
 		return err
 	}
 	memberIDs := make([]string, 0, len(v.Members))
@@ -198,10 +211,7 @@ func writeClusterView(w *messages.Writer, v *ClusterView) error {
 	if err := w.WriteFrom(int32(v.HealthyCount), int32(v.UnhealthyCount), int32(v.QuorumSize)); err != nil {
 		return err
 	}
-	if err := WriteVersionVector(w, v.VersionVector); err != nil {
-		return err
-	}
-	return w.WriteFrom(v.ProtocolVersion, int32(v.MaxVersionVectorEntries))
+	return WriteVersionVector(w, v.VersionVector)
 }
 
 func readClusterView(r *messages.Reader) (*ClusterView, error) {
@@ -214,8 +224,10 @@ func readClusterView(r *messages.Reader) (*ClusterView, error) {
 	}
 	var viewID string
 	var epoch, timestamp int64
+	var protoVer uint16
+	var maxVV int32
 	var memLen uint32
-	if err := r.ReadInto(&viewID, &epoch, &timestamp, &memLen); err != nil {
+	if err := r.ReadInto(&viewID, &epoch, &timestamp, &protoVer, &maxVV, &memLen); err != nil {
 		return nil, err
 	}
 	members := make(map[string]*NodeState, memLen)
@@ -239,11 +251,6 @@ func readClusterView(r *messages.Reader) (*ClusterView, error) {
 	}
 	vv, err := ReadVersionVector(r)
 	if err != nil {
-		return nil, err
-	}
-	var protoVer uint16
-	var maxVV int32
-	if err := r.ReadInto(&protoVer, &maxVV); err != nil {
 		return nil, err
 	}
 	return &ClusterView{
@@ -373,6 +380,21 @@ func clusterTriggerViewBroadcastReader(message any, reader *messages.Reader, cod
 func clusterTriggerViewBroadcastWriter(message any, writer *messages.Writer, codec messages.Codec) error {
 	m := message.(*TriggerViewBroadcast)
 	return writer.WriteFrom(m.AdminToken)
+}
+
+func clusterUpdateNodeStateRequestReader(message any, reader *messages.Reader, codec messages.Codec) error {
+	m := message.(*UpdateNodeStateRequest)
+	cs, err := readMapStringString(reader)
+	if err != nil {
+		return err
+	}
+	m.CustomState = cs
+	return nil
+}
+
+func clusterUpdateNodeStateRequestWriter(message any, writer *messages.Writer, codec messages.Codec) error {
+	m := message.(*UpdateNodeStateRequest)
+	return writeMapStringString(writer, m.CustomState)
 }
 
 func clusterSingletonForwardedMessageReader(message any, reader *messages.Reader, codec messages.Codec) error {

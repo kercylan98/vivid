@@ -66,6 +66,10 @@ type System struct {
 	cancel            context.CancelFunc                                // 上下文停止函数
 }
 
+func (s *System) IsClusterEnabled() bool {
+	return s.clusterContext != nil
+}
+
 func (s *System) Cluster() vivid.ClusterContext {
 	return s.clusterContext
 }
