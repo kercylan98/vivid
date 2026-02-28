@@ -8,7 +8,6 @@ import (
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
-// 编译期接口实现校验。
 var (
 	_ PrelaunchActor  = (*prelaunchActor)(nil)
 	_ PreRestartActor = (*preRestartActor)(nil)
@@ -235,50 +234,43 @@ type ActorOptions struct {
 	Provider            ActorProvider       // 指定 Actor 的提供者，在 Actor 重启时用于提供新实例；未指定则不会在重启时替换实例，仍可在其生命周期内主动重置。
 }
 
-// WithActorSupervisionStrategy 返回一个设置 Actor.SupervisionStrategy 字段的配置项。
+// WithActorSupervisionStrategy 设置该 Actor 的监督策略。
 //
-// supervisionStrategy 为 Actor 的监督策略。如果未指定，则使用系统默认的监督策略。
-//
-// 返回:
-//   - ActorOption: 一个设置 Actor.SupervisionStrategy 字段的配置项。
+// 未指定时使用系统默认监督策略。
 func WithActorSupervisionStrategy(supervisionStrategy SupervisionStrategy) ActorOption {
 	return func(opts *ActorOptions) {
 		opts.SupervisionStrategy = supervisionStrategy
 	}
 }
 
-// WithActorOptions 返回一个设置完整 ActorOptions 的配置项。
-// 通常用于批量重用 ActorOptions 结构体。
+// WithActorOptions 使用完整的 ActorOptions 覆盖当前配置，常用于批量重用。
 func WithActorOptions(options ActorOptions) ActorOption {
 	return func(opts *ActorOptions) {
 		*opts = options
 	}
 }
 
-// WithActorName 返回一个设置 Actor.Name 字段的配置项。
+// WithActorName 设置该 Actor 的标识名称。
 //
-// name 用于标识 Actor 实例，建议在同一父级下具备唯一性。
-// 若未指定，则由系统自动分配。
+// 建议在同一父级下保持唯一；未指定时由系统自动分配。
 func WithActorName(name string) ActorOption {
 	return func(opts *ActorOptions) {
 		opts.Name = name
 	}
 }
 
-// WithActorMailbox 返回一个设置 Actor.Mailbox 字段的配置项。
+// WithActorMailbox 设置该 Actor 的消息邮箱。
 //
-// mailbox 允许注入自定义邮箱模型，实现消息优先级、自定义调度等需求。
-// 若未指定，则采用系统默认邮箱实现。
+// 未指定时采用系统默认邮箱实现。
 func WithActorMailbox(mailbox Mailbox) ActorOption {
 	return func(opts *ActorOptions) {
 		opts.Mailbox = mailbox
 	}
 }
 
-// WithActorDefaultAskTimeout 返回一个设置 Actor.DefaultAskTimeout 字段的配置项。
+// WithActorDefaultAskTimeout 设置该 Actor 的默认 Ask 超时时间。
 //
-// timeout 仅在大于零时生效，优先级高于系统级超时时间。
-// 常用场景为依赖外部接口或需定制响应 SLA 的 Actor。
+// 仅当 timeout 大于零时生效，优先级高于系统级超时。
 func WithActorDefaultAskTimeout(timeout time.Duration) ActorOption {
 	return func(opts *ActorOptions) {
 		if timeout > 0 {
@@ -287,19 +279,18 @@ func WithActorDefaultAskTimeout(timeout time.Duration) ActorOption {
 	}
 }
 
-// WithActorLogger 返回一个设置 Actor.Logger 字段的配置项。
+// WithActorLogger 设置该 Actor 的专用 Logger。
 //
-// logger 可为每个 Actor 提供独立日志输出，以便隔离追踪及模块化管理。
-// 未指定时，通常由系统注入默认 Logger。
+// 未指定时由系统注入默认 Logger。
 func WithActorLogger(logger log.Logger) ActorOption {
 	return func(opts *ActorOptions) {
 		opts.Logger = logger
 	}
 }
 
-// WithActorProvider 返回一个设置 Actor.Provider 字段的配置项。
+// WithActorProvider 设置该 Actor 的提供者。
 //
-// provider 在 Actor 重启时用于提供新实例；未指定则不会在重启时替换实例，仍可在其生命周期内主动重置。
+// 重启时用于提供新实例；未指定则不会在重启时替换实例。
 func WithActorProvider(provider ActorProvider) ActorOption {
 	return func(opts *ActorOptions) {
 		opts.Provider = provider
