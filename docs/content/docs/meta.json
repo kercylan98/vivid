@@ -41,6 +41,7 @@
         "config/complex-combination-actor",
         "config/ping",
         "---集成---",
-        "integrations/vivid-proto"
+        "integrations/vivid-proto",
+        "integrations/nexus"
     ]
 }
