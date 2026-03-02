@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -48,7 +49,7 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 	}
 	ctx.scheduler = newScheduler(ctx)
 
-	initializer := newContextInitializer(ctx, actor, options...)
+	initializer := newContextInitializer(ctx, actor, initContextOptions(actor, options)...)
 
 	if err := chain.New().
 		Append(chain.ChainFN(initializer.applyOptions)).
@@ -61,6 +62,16 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 		return nil, vivid.ErrorActorSpawnFailed.With(err)
 	}
 	return ctx, nil
+}
+
+func initContextOptions(actor vivid.Actor, userOptions []vivid.ActorOption) []vivid.ActorOption {
+	if fixedOptionActor, ok := actor.(vivid.FixedOptionActor); ok {
+		userOptions = append(userOptions, fixedOptionActor.FixedOptions()...)
+	}
+	userOptions = slices.DeleteFunc(userOptions, func(option vivid.ActorOption) bool {
+		return option == nil
+	})
+	return userOptions
 }
 
 type Context struct {
