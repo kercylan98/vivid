@@ -521,7 +521,7 @@ func formatValue(value any) string {
 	case error:
 		return strconv.Quote(typed.Error())
 	default:
-		return fmt.Sprintf("%v", typed)
+		return fmt.Sprintf("%+v", typed)
 	}
 }
 
