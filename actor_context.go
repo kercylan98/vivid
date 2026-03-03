@@ -621,6 +621,24 @@ type ActorLiaison interface {
 	Logger() log.Logger
 }
 
+// FixedOptionContext 定义了 Actor 固定选项（FixedOption）的上下文接口，用于在 Actor 启动时提供固定的选项配置。
+//
+// 功能说明：
+//   - 该上下文在 Actor 启动时提供，允许在 Actor 启动时访问固定的选项配置。
+//   - 主要用于 Actor 的启动过程中，进行必要的配置、资源准备等操作。
+//   - 与 ActorContext 不同，FixedOptionContext 不提供消息发送、子 Actor 管理等运行时能力，仅提供基础的系统访问接口。
+type FixedOptionContext interface {
+	// Logger 返回日志记录器。
+	//
+	// 功能说明：
+	//   - 返回当前 FixedOptionContext 可用的日志记录器实例，用于在 Actor 启动时进行日志输出。
+	//   - 日志记录器的返回策略与 ActorContext.Logger() 相同，优先返回 Actor 专用日志记录器，否则返回系统全局日志记录器。
+	//
+	// 返回值：
+	//   - log.Logger：当前上下文可用的日志记录器实例，保证非 nil。
+	Logger() log.Logger
+}
+
 // PrelaunchContext 定义了 Actor 启动前（Pre-launch）阶段的上下文接口，用于在 Actor 正式启动前进行初始化配置。
 //
 // 功能说明：

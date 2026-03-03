@@ -49,7 +49,7 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 	}
 	ctx.scheduler = newScheduler(ctx)
 
-	initializer := newContextInitializer(ctx, actor, initContextOptions(actor, options)...)
+	initializer := newContextInitializer(ctx, actor, initContextOptions(ctx, actor, options)...)
 
 	if err := chain.New().
 		Append(chain.ChainFN(initializer.applyOptions)).
@@ -64,9 +64,9 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 	return ctx, nil
 }
 
-func initContextOptions(actor vivid.Actor, userOptions []vivid.ActorOption) []vivid.ActorOption {
+func initContextOptions(ctx *Context, actor vivid.Actor, userOptions []vivid.ActorOption) []vivid.ActorOption {
 	if fixedOptionActor, ok := actor.(vivid.FixedOptionActor); ok {
-		userOptions = append(userOptions, fixedOptionActor.FixedOptions()...)
+		userOptions = append(userOptions, fixedOptionActor.FixedOptions(ctx)...)
 	}
 	userOptions = slices.DeleteFunc(userOptions, func(option vivid.ActorOption) bool {
 		return option == nil

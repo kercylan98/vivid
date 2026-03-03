@@ -35,10 +35,10 @@ func NewComplexCombinationActor(actors ...Actor) Actor {
 	}
 }
 
-func (a *complexCombinationActor) FixedOptions() []ActorOption {
+func (a *complexCombinationActor) FixedOptions(ctx FixedOptionContext) []ActorOption {
 	for _, actor := range a.actors {
 		if fixedOptionActor, ok := actor.(FixedOptionActor); ok {
-			return fixedOptionActor.FixedOptions()
+			return fixedOptionActor.FixedOptions(ctx)
 		}
 	}
 	return nil
@@ -104,7 +104,7 @@ func (fn ActorProviderFN) Provide() Actor {
 // FixedOptionActor 扩展 Actor，在启动时注入固定选项（ActorOption 列表）。
 type FixedOptionActor interface {
 	Actor
-	FixedOptions() []ActorOption
+	FixedOptions(ctx FixedOptionContext) []ActorOption
 }
 
 // fixedOptionActor 包装 Actor 并注入固定选项。
@@ -113,7 +113,7 @@ type fixedOptionActor struct {
 	fixedOptions []ActorOption
 }
 
-func (a *fixedOptionActor) FixedOptions() []ActorOption {
+func (a *fixedOptionActor) FixedOptions(ctx FixedOptionContext) []ActorOption {
 	return a.fixedOptions
 }
 
