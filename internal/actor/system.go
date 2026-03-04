@@ -222,7 +222,13 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 		select {
 		case <-s.guardClosedSignal:
 			break
-		case <-time.After(stopTimeout):
+		case <-func() <-chan time.Time {
+			if stopTimeout > 0 {
+				return time.After(stopTimeout)
+			}
+			// 如果永不超时，则返回一个永不关闭的通道
+			return make(chan time.Time)
+		}():
 			s.Logger().Error("actor system stop failed", log.Duration("timeout", stopTimeout))
 			return vivid.ErrorActorSystemStopFailed.With(context.DeadlineExceeded)
 		}
