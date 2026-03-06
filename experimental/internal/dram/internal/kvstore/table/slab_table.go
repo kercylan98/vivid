@@ -1,6 +1,10 @@
 package table
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"iter"
+	"time"
+)
 
 const (
 	// 元数据字段定义
@@ -32,6 +36,7 @@ type SlabTable struct {
 	offset    uint64            // 当前写入数据的偏移量
 	inuse     uint64            // 已使用的字节数
 	invalid   uint64            // 无效的字节数
+	resetAt   int64             // 上次重置时间
 }
 
 // Put 将指定的 value 写入 slab 表，并根据 hashKey 存储其偏移量
@@ -111,4 +116,31 @@ func (t *SlabTable) Inuse() uint64 {
 // Invalid 返回无效的字节数
 func (t *SlabTable) Invalid() uint64 {
 	return t.invalid
+}
+
+func (t *SlabTable) Iter() iter.Seq2[uint64, []byte] {
+	return func(yield func(uint64, []byte) bool) {
+		for hashKey := range t.keyOffset {
+			value, _ := t.Get(hashKey)
+			if !yield(hashKey, value) {
+				return
+			}
+		}
+	}
+}
+
+func (t *SlabTable) Reset() {
+	t.keyOffset = make(map[uint64]uint64)
+	t.offset = 0
+	t.inuse = 0
+	t.invalid = 0
+	t.resetAt = time.Now().UnixNano()
+}
+
+func (t *SlabTable) Reuse() {
+	t.resetAt = 0
+}
+
+func (t *SlabTable) ResetAt() int64 {
+	return t.resetAt
 }
