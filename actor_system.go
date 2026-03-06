@@ -65,6 +65,9 @@ type ActorSystem interface {
 
 	// ActorOf 该方法的效果与 ActorContext.ActorOf 相同，但是它是并发安全的。
 	ActorOf(actor Actor, options ...ActorOption) (ActorRef, error)
+
+	// VirtualRef 创建一个虚拟 Actor 的引用。
+	VirtualRef(kind string, name string) ActorRef
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。
@@ -159,15 +162,20 @@ type ActorSystemOptions struct {
 
 	// SupervisionStrategy 指定 ActorSystem 默认的监督策略。
 	SupervisionStrategy SupervisionStrategy
+
+	// VirtualActorProviders 指定虚拟 Actor 的提供者。
+	//
+	// 其中 key 为虚拟 Actor 的种类，value 为 VirtualActorProvider。
+	VirtualActorProviders map[string]ActorProvider
 }
 
 // SystemBasicState 当前 ActorSystem 的基本状态，供控制台等展示；不含集群名称（仅集群有集群名）。
 type SystemBasicState struct {
-	StartTime       time.Time `json:"startTime"`    // 启动时间
-	Version         string   `json:"version"`      // Vivid 库版本号，来自包常量 Version
-	RemotingEnabled bool     `json:"remotingEnabled"` // 是否开启远程
-	RemotingAddress string   `json:"remotingAddress"` // 远程广告地址，未开启时为空
-	MetricsEnabled  bool     `json:"metricsEnabled"`  // 是否启用指标收集（WithActorSystemEnableMetrics）
+	StartTime       time.Time `json:"startTime"`       // 启动时间
+	Version         string    `json:"version"`         // Vivid 库版本号，来自包常量 Version
+	RemotingEnabled bool      `json:"remotingEnabled"` // 是否开启远程
+	RemotingAddress string    `json:"remotingAddress"` // 远程广告地址，未开启时为空
+	MetricsEnabled  bool      `json:"metricsEnabled"`  // 是否启用指标收集（WithActorSystemEnableMetrics）
 }
 
 // SystemStateProvider 可由 ActorSystem 实现，用于提供系统基本状态（启动时间、版本、是否开启远程等）。
@@ -617,3 +625,24 @@ func WithActorSystemRemotingClusterOption(opts ...ClusterOption) ActorSystemRemo
 	}
 }
 
+// WithActorSystemVirtualActorProvider 返回一个 ActorSystemOption，用于配置虚拟 Actor 的提供者。
+//
+// 参数：
+//   - kind: 虚拟 Actor 的种类。
+//   - provider: 虚拟 Actor 的提供者。
+//
+// 如果 kind 已存在，将会发生 panic。
+func WithActorSystemVirtualActorProvider(kind string, provider ActorProvider) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		if provider == nil {
+			return
+		}
+		if opts.VirtualActorProviders == nil {
+			opts.VirtualActorProviders = make(map[string]ActorProvider)
+		}
+		if _, ok := opts.VirtualActorProviders[kind]; ok {
+			panic("virtual actor provider already exists for kind: " + kind)
+		}
+		opts.VirtualActorProviders[kind] = provider
+	}
+}

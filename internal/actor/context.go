@@ -37,7 +37,7 @@ const (
 	killed
 )
 
-func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid.ActorOption) (*Context, error) {
+func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, options ...vivid.ActorOption) (*Context, error) {
 	ctx := &Context{
 		options: &vivid.ActorOptions{
 			DefaultAskTimeout: system.options.DefaultAskTimeout, // 默认继承系统默认的 Ask 超时时间
@@ -77,8 +77,8 @@ func initContextOptions(ctx *Context, actor vivid.Actor, userOptions []vivid.Act
 type Context struct {
 	options       *vivid.ActorOptions                // 当前 ActorContext 的选项
 	system        *System                            // 当前 ActorContext 所属的 ActorSystem
-	parent        *Ref                               // 父 Actor 引用，如果为 nil 则表示根 Actor
-	ref           *Ref                               // 当前 Actor 引用
+	parent        vivid.ActorRef                     // 父 Actor 引用，如果为 nil 则表示根 Actor
+	ref           vivid.ActorRef                     // 当前 Actor 引用
 	actor         vivid.Actor                        // 当前 Actor
 	behaviorStack *BehaviorStack                     // 行为栈
 	mailbox       vivid.Mailbox                      // 邮箱
@@ -227,10 +227,17 @@ func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
 }
 
 func (c *Context) tell(system bool, recipient vivid.ActorRef, message vivid.Message) {
-	envelop := mailbox.NewEnvelop(system, c.ref, recipient, message)
-	ref, _ := recipient.(*Ref)
-	receiverMailbox := c.system.findMailbox(ref)
-	receiverMailbox.Enqueue(envelop)
+	c.tellWithSender(system, c.ref, recipient, message)
+}
+
+func (c *Context) tellWithSender(system bool, sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message) {
+	if !recipient.IsVirtual() {
+		envelop := mailbox.NewEnvelop(system, sender, recipient, message)
+		receiverMailbox := c.system.findMailbox(recipient.(*Ref))
+		receiverMailbox.Enqueue(envelop)
+	} else {
+		c.system.virtualCoordinator.Tell(sender, recipient, message)
+	}
 }
 
 func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
@@ -238,23 +245,31 @@ func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout .
 }
 
 func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
+	return c.askWithSender(system, c.ref, recipient, message, timeout...)
+}
+
+func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
 	var askTimeout = c.options.DefaultAskTimeout
 	if len(timeout) > 0 {
 		askTimeout = timeout[0]
 	}
 
-	// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
-	agentRef, _ := NewAgentRef(c.ref)
-	futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
-		c.system.removeFuture(agentRef)
-	})
-	c.system.appendFuture(agentRef, futureIns)
+	if !recipient.IsVirtual() {
+		// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
+		agentRef, _ := NewAgentRef(sender.(*Ref))
+		futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
+			c.system.removeFuture(agentRef)
+		})
+		c.system.appendFuture(agentRef, futureIns)
 
-	envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
-	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
-	receiverMailbox.Enqueue(envelop)
+		envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
+		receiverMailbox := c.system.findMailbox(recipient.(*Ref))
+		receiverMailbox.Enqueue(envelop)
 
-	return futureIns
+		return futureIns
+	} else {
+		return c.system.virtualCoordinator.Ask(sender, recipient, message, timeout...)
+	}
 }
 
 func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.Future[vivid.Message] {
@@ -555,7 +570,7 @@ func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
 }
 
 func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
-	c.Logger().Debug("receive kill", log.String("path", c.ref.path), log.Bool("restarting", c.restarting != nil), log.Bool("zombie", c.zombie))
+	c.Logger().Debug("receive kill", log.String("path", c.ref.GetPath()), log.Bool("restarting", c.restarting != nil), log.Bool("zombie", c.zombie))
 
 	// 清理所有正在等待自身的 Future
 	c.system.removeFuturesByAgentPath(c.ref.GetPath(), vivid.ErrorActorDeaded)

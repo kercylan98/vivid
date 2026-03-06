@@ -45,8 +45,8 @@ func (i *contextInitializer) initRef() error {
 	}
 	var joinPathErr error
 	if i.ctx.parent != nil {
-		parentAddress = i.ctx.parent.address
-		path, joinPathErr = url.JoinPath(i.ctx.parent.path, path)
+		parentAddress = i.ctx.parent.GetAddress()
+		path, joinPathErr = url.JoinPath(i.ctx.parent.GetPath(), path)
 	} else {
 		path = "/"
 	}

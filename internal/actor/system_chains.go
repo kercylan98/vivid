@@ -7,6 +7,7 @@ import (
 	"github.com/kercylan98/vivid/internal/guard"
 	metricsActor "github.com/kercylan98/vivid/internal/metrics"
 	"github.com/kercylan98/vivid/internal/remoting"
+	"github.com/kercylan98/vivid/internal/virtual"
 	"github.com/kercylan98/vivid/pkg/metrics"
 )
 
@@ -97,5 +98,16 @@ func (c *_systemChains) initializeCluster(system *System) chain.Chain {
 			return nil
 		}
 		return nil
+	})
+}
+
+func (c *_systemChains) initializeVirtualCoordinator(system *System) chain.Chain {
+	return chain.ChainFN(func() (err error) {
+		if len(system.options.VirtualActorProviders) == 0 {
+			return nil
+		}
+		coordinatorInjecter := virtual.NewCoordinatorActor(system)
+		system.virtualCoordinator, err = coordinatorInjecter.Inject(system)
+		return err
 	})
 }
