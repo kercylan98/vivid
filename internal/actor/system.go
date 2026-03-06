@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/bridge"
 	"github.com/kercylan98/vivid/internal/chain"
 	"github.com/kercylan98/vivid/internal/cluster"
 	"github.com/kercylan98/vivid/internal/future"
@@ -14,6 +15,7 @@ import (
 	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/internal/scheduler"
 	"github.com/kercylan98/vivid/internal/sugar"
+	"github.com/kercylan98/vivid/internal/virtual"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/ves"
@@ -31,6 +33,7 @@ var (
 	_ remoting.NetworkEnvelopHandler = (*System)(nil)
 	_ vivid.SystemStateProvider      = (*System)(nil)
 	_ vivid.MetricsProvider          = (*System)(nil)
+	_ bridge.VirtualActorSystem      = (*System)(nil)
 )
 
 func NewSystem(options ...vivid.ActorSystemOption) *System {
@@ -51,22 +54,23 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 }
 
 type System struct {
-	*Context                                                            // ActorSystem 本身就表示了根 Actor
-	actorOfLock       sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
-	options           *vivid.ActorSystemOptions                         // 系统选项
-	actorContexts     sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
-	futureAgents      map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
-	futureLock        sync.Mutex                                        // Future 的锁，保证 Future 的并发安全
-	guardClosedSignal chan struct{}                                     // 用于通知系统关闭的信号
-	remotingServer    *remoting.ServerActor                             // 远程服务器
-	eventStream       vivid.EventStream                                 // 事件流
-	metrics           metrics.Metrics                                   // 指标收集器
-	scheduler         *scheduler.Scheduler                              // 调度器
-	status            int32                                             // 系统状态
-	statusLock        sync.Mutex                                        // 系统状态锁
-	clusterContext    *cluster.Context                                  // 集群上下文
-	cancel            context.CancelFunc                                // 上下文停止函数
-	startTime         time.Time                                         // 启动时间，Start() 时记录
+	*Context                                                             // ActorSystem 本身就表示了根 Actor
+	actorOfLock        sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
+	options            *vivid.ActorSystemOptions                         // 系统选项
+	actorContexts      sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
+	futureAgents       map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
+	futureLock         sync.Mutex                                        // Future 的锁，保证 Future 的并发安全
+	guardClosedSignal  chan struct{}                                     // 用于通知系统关闭的信号
+	remotingServer     *remoting.ServerActor                             // 远程服务器
+	eventStream        vivid.EventStream                                 // 事件流
+	metrics            metrics.Metrics                                   // 指标收集器
+	scheduler          *scheduler.Scheduler                              // 调度器
+	status             int32                                             // 系统状态
+	statusLock         sync.Mutex                                        // 系统状态锁
+	clusterContext     *cluster.Context                                  // 集群上下文
+	cancel             context.CancelFunc                                // 上下文停止函数
+	startTime          time.Time                                         // 启动时间，Start() 时记录
+	virtualCoordinator bridge.VirtualCoordinator                         // 虚拟协调器
 }
 
 func (s *System) GetSystemBasicState() vivid.SystemBasicState {
@@ -87,7 +91,7 @@ func (s *System) GetSystemBasicState() vivid.SystemBasicState {
 	}
 }
 
-func (s *System) IsClusterEnabled() bool {
+func (s *System) InCluster() bool {
 	return s.clusterContext != nil
 }
 
@@ -161,6 +165,7 @@ func (s *System) Start() error {
 		Append(systemChains.initializeMetrics(s)).
 		Append(systemChains.initializeRemoting(s)).
 		Append(systemChains.initializeCluster(s)).
+		Append(systemChains.initializeVirtualCoordinator(s)).
 		Run()
 
 	if startErr != nil {
@@ -220,7 +225,13 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 		select {
 		case <-s.guardClosedSignal:
 			break
-		case <-time.After(stopTimeout):
+		case <-func() <-chan time.Time {
+			if stopTimeout > 0 {
+				return time.After(stopTimeout)
+			}
+			// 如果永不超时，则返回一个永不关闭的通道
+			return make(chan time.Time)
+		}():
 			s.Logger().Error("actor system stop failed", log.Duration("timeout", stopTimeout))
 			return vivid.ErrorActorSystemStopFailed.With(context.DeadlineExceeded)
 		}
@@ -365,4 +376,20 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 	}
 	// 若上述皆未命中，返回系统根 Actor 的 Mailbox 作为默认兜底方案，保证 Mailbox 一定可用。
 	return s.Mailbox()
+}
+
+func (s *System) GetVirtualActorProvider(kind string) vivid.ActorProvider {
+	return s.options.VirtualActorProviders[kind]
+}
+
+func (s *System) TellWithSender(sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message) {
+	s.tellWithSender(false, sender, recipient, message)
+}
+
+func (s *System) AskWithSender(sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
+	return s.askWithSender(false, sender, recipient, message, timeout...)
+}
+
+func (s *System) VirtualRef(kind string, name string) vivid.ActorRef {
+	return virtual.NewIdentity(kind, name)
 }

@@ -375,15 +375,15 @@ type actorRace interface {
 type actorBasic interface {
 	ActorLiaison
 
-	// IsClusterEnabled 返回当前系统是否启用了集群功能。
+	// InCluster 返回当前系统是否在集群中。
 	//
 	// 功能说明：
 	//   - 便于在业务逻辑、Actor 层代码中判断系统集群能力是否开启，避免因未启用集群导致调用相关接口 panic 或逻辑异常。
-	//   - 典型用法如：if ctx.IsClusterEnabled() { ... }
+	//   - 典型用法如：if ctx.InCluster() { ... }
 	//
 	// 返回值：
 	//   - bool：true 表示当前系统已开启集群功能，false 表示集群未启用。
-	IsClusterEnabled() bool
+	InCluster() bool
 
 	// Cluster 获取集群上下文（ClusterContext）实例，用于访问当前 Actor 所处的集群管理功能。
 	//
@@ -614,6 +614,24 @@ type ActorLiaison interface {
 	//
 	// 功能说明：
 	//   - 返回当前 ActorLiaison 上下文可用的日志记录器实例，用于进行日志输出。
+	//   - 日志记录器的返回策略与 ActorContext.Logger() 相同，优先返回 Actor 专用日志记录器，否则返回系统全局日志记录器。
+	//
+	// 返回值：
+	//   - log.Logger：当前上下文可用的日志记录器实例，保证非 nil。
+	Logger() log.Logger
+}
+
+// FixedOptionContext 定义了 Actor 固定选项（FixedOption）的上下文接口，用于在 Actor 启动时提供固定的选项配置。
+//
+// 功能说明：
+//   - 该上下文在 Actor 启动时提供，允许在 Actor 启动时访问固定的选项配置。
+//   - 主要用于 Actor 的启动过程中，进行必要的配置、资源准备等操作。
+//   - 与 ActorContext 不同，FixedOptionContext 不提供消息发送、子 Actor 管理等运行时能力，仅提供基础的系统访问接口。
+type FixedOptionContext interface {
+	// Logger 返回日志记录器。
+	//
+	// 功能说明：
+	//   - 返回当前 FixedOptionContext 可用的日志记录器实例，用于在 Actor 启动时进行日志输出。
 	//   - 日志记录器的返回策略与 ActorContext.Logger() 相同，优先返回 Actor 专用日志记录器，否则返回系统全局日志记录器。
 	//
 	// 返回值：

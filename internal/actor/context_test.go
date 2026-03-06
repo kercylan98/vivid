@@ -1815,3 +1815,30 @@ func TestContext_Ping(t *testing.T) {
 		close(wake)
 	})
 }
+
+func TestContext_FixedOptions(t *testing.T) {
+	system := actor.NewTestSystem(t)
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
+
+	var wait = make(chan struct{})
+
+	fixedActor := vivid.NewFixedOptionActor(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch ctx.Message().(type) {
+		case *vivid.OnLaunch:
+			assert.Equal(t, "test", ctx.Name())
+			close(wait)
+		}
+	}), vivid.WithActorName("test"))
+
+	ref, err := system.ActorOf(fixedActor, vivid.WithActorName("invalid-name"))
+	assert.NoError(t, err)
+	assert.NotNil(t, ref)
+
+	select {
+	case <-wait:
+	case <-time.After(time.Second):
+		assert.Fail(t, "timeout")
+	}
+}

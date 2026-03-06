@@ -40,6 +40,9 @@ type ActorRef interface {
 
 	// String 返回当前 ActorRef 的字符串表示。
 	String() string
+
+	// IsVirtual 返回当前 ActorRef 是否为虚拟 ActorRef。
+	IsVirtual() bool
 }
 
 // ActorRefs 定义了 ActorRef 的切片类型，表示一组 ActorRef。

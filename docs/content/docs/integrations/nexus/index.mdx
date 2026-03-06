@@ -1,0 +1,57 @@
+---
+title: Nexus 概览
+description: 基于 Vivid Actor 的会话管理层，统一托管连接与读写生命周期
+---
+
+**Vivid-Nexus** 是基于 [Vivid](/docs/introduction/what-is-vivid) Actor 模型的会话管理层：将每个连接抽象为 **Session**，由 Nexus 统一托管并驱动读写与生命周期，业务通过 **SessionActor** 实现连接建立、断开与收包回调，并可通过同一实例进行 **Close**、**Send**、**Broadcast** 等操作。
+
+<Callout type="info" title="依赖">
+需配合 [vivid](https://github.com/kercylan98/vivid) 使用；Nexus 为独立仓库 [vivid-nexus](https://github.com/kercylan98/vivid-nexus)，按需引入。
+</Callout>
+
+## 特性
+
+- **会话即 Actor**：每个 Session 对应一个 sessionActor，生命周期与消息由 vivid 统一调度
+- **业务侧回调**：实现 SessionActor（OnConnected / OnDisconnected / OnMessage）即可处理连接与收包
+- **读路径背压**：读循环与业务处理通过 channel 同步，读一条、处理完、再读下一条，避免邮箱堆积
+- **统一操作入口**：同一 Nexus 实例既可作为 Actor 接收 Session 托管，也可调用 Close(sessionId)、Send(sessionId, message)、Broadcast(message)，并发安全
+- **可替换读策略**：通过 SessionReaderProvider 定制按协议/会话的读取逻辑，默认提供按字节流读取实现
+- **同 ID 替换**：相同 GetSessionId() 的新连接会替换旧会话并关闭旧连接
+
+## 架构概览
+
+<Mermaid diagram={`graph TB
+  subgraph 接入层
+    Conn[连接 TCP/WS/...]
+  end
+  subgraph Nexus
+    Actor[actor 实现 vivid.Actor]
+    Op[operator: Close/Send/Broadcast]
+    Map[sessions map]
+    Actor --> Map
+    Actor --> Op
+  end
+  subgraph 每个 Session
+    SA[sessionActor]
+    Info[sessionInfo]
+    RL[readLoop]
+    SA --> Info
+    SA --> RL
+  end
+  Conn -->|实现 Session| Session[Session]
+  Actor -->|Tell Session| Session
+  Session -->|托管| SA
+  Map -->|sessionId -> sessionInfo| Info
+  RL -->|TellSelf data| SA
+  SA -->|OnMessage ctx message| Biz[SessionActor 业务]
+`} title="Nexus 与 Session、sessionActor 关系" />
+
+- **Nexus**：一个 actor + operator。作为 Actor 接收 Session 并维护 sessions 映射；作为 operator 对外提供 Close、Send、SendTo、Broadcast，内部用 sessionLock 保证并发安全。
+- **sessionActor**：每个托管连接一个，负责 Prelaunch（拉取 SessionActor、SessionReader）、OnLaunch（OnConnected、启动 readLoop）、OnKill（OnDisconnected、关闭 Session 与 messageC）。
+- **readLoop**：独立 goroutine 中循环 SessionReader.Read()，将读到的 []byte 投递到本 Actor 邮箱并等待处理完成再读下一条（背压）。
+
+## 文档导航
+
+- [快速开始](/docs/integrations/nexus/quick-start) — 安装、依赖与最小示例
+- [核心接口](/docs/integrations/nexus/interfaces) — Session、SessionContext、SessionActor、SessionReader 等
+- [配置](/docs/integrations/nexus/config) — Options、SessionReaderProvider、SendErrorHandler

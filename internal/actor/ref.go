@@ -64,10 +64,8 @@ func (r *Ref) GetAddress() string {
 }
 
 func (r *Ref) Equals(other vivid.ActorRef) bool {
-	if other == nil {
-		return false
-	}
-	return r.GetAddress() == other.GetAddress() && r.GetPath() == other.GetPath()
+	ref, ok := other.(*Ref)
+	return ok && r.GetAddress() == ref.GetAddress() && r.GetPath() == ref.GetPath()
 }
 
 func (r *Ref) Clone() vivid.ActorRef {
@@ -83,6 +81,10 @@ func (r *Ref) ToActorRefs() vivid.ActorRefs {
 
 func (r *Ref) String() string {
 	return utils.FormatRefString(r.GetAddress(), r.GetPath())
+}
+
+func (r *Ref) IsVirtual() bool {
+	return false
 }
 
 func NewAgentRef(agent *Ref) (*AgentRef, error) {

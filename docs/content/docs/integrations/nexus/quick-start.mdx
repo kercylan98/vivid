@@ -1,0 +1,78 @@
+---
+title: 快速开始
+description: Nexus 安装、依赖与最小示例
+---
+
+## 前置条件
+
+- **Go**：1.26+
+- **Vivid**：需先引入 [vivid](https://github.com/kercylan98/vivid) 并完成 Actor 系统初始化
+
+## 安装
+
+```bash
+go get github.com/kercylan98/vivid-nexus
+```
+
+## 最小示例
+
+1. 实现 **Session**（底层连接抽象，需 `io.ReadWriteCloser` + `GetSessionId() string`）。
+2. 实现 **SessionActor**（OnConnected / OnDisconnected / OnMessage），或使用 **SessionActorProviderFN** 提供实例。
+3. 使用 **nexus.New(provider, options...)** 创建 Nexus，将 Session 通过 **TakeoverSession(session)** 或 **Tell(nexusRef, session)** 托管。
+
+```go
+package main
+
+import (
+	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid-nexus"
+	"github.com/kercylan98/vivid/pkg/bootstrap"
+)
+
+func main() {
+	system := bootstrap.NewActorSystem()
+	if err := system.Start(); err != nil {
+		panic(err)
+	}
+	defer system.Stop()
+
+	provider := nexus.SessionActorProviderFN(func() (nexus.SessionActor, error) {
+		return &MySessionActor{}, nil
+	})
+	n, err := nexus.New(provider)
+	if err != nil {
+		panic(err)
+	}
+
+	ref := system.Spawn(nil, n)
+	// 当有新连接时：将实现 Session 的连接 Tell 给 ref，或调用 n.TakeoverSession(session)
+	_ = ref
+}
+
+type MySessionActor struct{}
+
+func (a *MySessionActor) OnConnected(ctx nexus.SessionContext) {}
+func (a *MySessionActor) OnDisconnected(ctx nexus.SessionContext) {}
+func (a *MySessionActor) OnMessage(ctx nexus.SessionContext, message []byte) {
+	ctx.Send(message) // 回显
+}
+```
+
+## 托管会话
+
+- **TakeoverSession(session)**：在拿到 Nexus 的 operator 引用后调用，将 Session 交给 Nexus 托管；同 ID 会替换旧会话。
+- 或将 **Session** 通过 **Tell(nexusActorRef, session)** 发给 Nexus Actor，效果相同。
+
+## 操作会话
+
+通过同一 Nexus 实例（operator）可并发安全地：
+
+- **Close(sessionId)**：关闭指定会话
+- **Send(sessionId, message)**：向指定会话写数据
+- **SendTo(sessionIds, message, errorHandler...)**：向多个会话发送
+- **Broadcast(message, errorHandler...)**：向当前所有托管会话广播
+
+## 下一步
+
+- [核心接口](/docs/integrations/nexus/interfaces) — Session、SessionContext、SessionActor、SessionReader 约定
+- [配置](/docs/integrations/nexus/config) — SessionReaderProvider、Options

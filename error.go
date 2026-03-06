@@ -27,17 +27,17 @@ var (
 
 // Future 与消息相关错误。
 var (
-	ErrorFutureTimeout             = RegisterError(110000, "future timeout")               // Result/Wait 超时未收到应答
-	ErrorFutureMessageTypeMismatch = RegisterError(110001, "future message type mismatch") // 应答类型与泛型声明不一致
-	ErrorFutureUnexpectedError     = RegisterError(110002, "future unexpected error")      // 收到非预期错误
-	ErrorFutureInvalid             = RegisterError(110003, "future invalid", ErrorIllegalArgument)               // 创建时 timeout 非法
-	ErrorInvalidMessageLength      = RegisterError(110004, "invalid message length", ErrorIllegalArgument)       // 消息长度非法
-	ErrorReadMessageBufferFailed   = RegisterError(110005, "read message buffer failed")   // 读消息缓冲失败
+	ErrorFutureTimeout             = RegisterError(110000, "future timeout")                               // Result/Wait 超时未收到应答
+	ErrorFutureMessageTypeMismatch = RegisterError(110001, "future message type mismatch")                 // 应答类型与泛型声明不一致
+	ErrorFutureUnexpectedError     = RegisterError(110002, "future unexpected error")                      // 收到非预期错误
+	ErrorFutureInvalid             = RegisterError(110003, "future invalid", ErrorIllegalArgument)         // 创建时 timeout 非法
+	ErrorInvalidMessageLength      = RegisterError(110004, "invalid message length", ErrorIllegalArgument) // 消息长度非法
+	ErrorReadMessageBufferFailed   = RegisterError(110005, "read message buffer failed")                   // 读消息缓冲失败
 )
 
 // 参数、调度与状态相关错误。
 var (
-	ErrorIllegalArgument = RegisterError(120000, "illegal argument")       // 参数无效或缺失
+	ErrorIllegalArgument = RegisterError(120000, "illegal argument")                            // 参数无效或缺失
 	ErrorCronParse       = RegisterError(120001, "parse cron expression", ErrorIllegalArgument) // Cron 表达式解析失败
 	//ErrorTriggerExpired          = RegisterError(120002, "trigger has expired")        // 触发器已过期
 	//ErrorIllegalState            = RegisterError(120003, "illegal state")              // 违反当前状态或上下文
@@ -50,7 +50,7 @@ var (
 
 // ActorRef 相关错误。
 var (
-	ErrorRefEmpty          = RegisterError(130001, "actor ref is empty", ErrorNotFound)                      // ActorRef 为空
+	ErrorRefEmpty          = RegisterError(130001, "actor ref is empty", ErrorNotFound)                             // ActorRef 为空
 	ErrorRefFormat         = RegisterError(130002, "actor ref must contain address and path", ErrorIllegalArgument) // 缺少 address 或 path
 	ErrorRefInvalidAddress = RegisterError(130003, "actor ref address is invalid", ErrorIllegalArgument)            // 地址非法
 	ErrorRefInvalidPath    = RegisterError(130004, "actor ref path is invalid", ErrorIllegalArgument)               // 路径非法
@@ -77,6 +77,12 @@ var (
 	ErrorClusterProtocolVersionMismatch = RegisterError(150006, "cluster protocol version mismatch") // 集群协议版本不兼容
 	ErrorClusterJoinNotAllowed          = RegisterError(150007, "cluster join not allowed")          // 地址或 DC 不在白名单
 	ErrorClusterAdminAuthFailed         = RegisterError(150008, "cluster admin auth failed")         // 管理操作 Token 无效
+)
+
+// Virtual 相关错误。
+var (
+	ErrorVirtualActorProviderNotFound = RegisterError(160000, "virtual actor provider not found", ErrorNotFound) // 虚拟 Actor 种类未找到
+	ErrorVirtualRecipientException    = RegisterError(160001, "virtual recipient exception", ErrorException)     // 虚拟 Actor 接收者异常，该错误通常是框架内部逻辑错误，正常不应该产生
 )
 
 var _ error = (*Error)(nil)
