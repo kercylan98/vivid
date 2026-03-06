@@ -92,7 +92,7 @@ type Context struct {
 	scheduler     *Scheduler                         // 调度器
 }
 
-func (c *Context) IsClusterEnabled() bool {
+func (c *Context) InCluster() bool {
 	return c.system.Cluster() != nil
 }
 
@@ -227,17 +227,22 @@ func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
 }
 
 func (c *Context) tell(system bool, recipient vivid.ActorRef, message vivid.Message) {
-	c.tellWithSender(system, c.ref, recipient, message)
+	if err := c.tellWithSender(system, c.ref, recipient, message); err != nil {
+		// 本地消息直接投递，不经过虚拟协调器，不返回错误
+		// 意外情况记录日志用于排查
+		c.Logger().Error("failed to tell", log.String("path", c.ref.GetPath()), log.String("recipient", recipient.GetPath()), log.Any("message", message), log.Any("error", err))
+	}
 }
 
-func (c *Context) tellWithSender(system bool, sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message) {
+func (c *Context) tellWithSender(system bool, sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message) (err error) {
 	if !recipient.IsVirtual() {
 		envelop := mailbox.NewEnvelop(system, sender, recipient, message)
 		receiverMailbox := c.system.findMailbox(recipient.(*Ref))
 		receiverMailbox.Enqueue(envelop)
 	} else {
-		c.system.virtualCoordinator.Tell(sender, recipient, message)
+		err = c.system.virtualCoordinator.TellVirtual(sender, recipient, message)
 	}
+	return
 }
 
 func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
@@ -268,7 +273,7 @@ func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vi
 
 		return futureIns
 	} else {
-		return c.system.virtualCoordinator.Ask(sender, recipient, message, timeout...)
+		return c.system.virtualCoordinator.AskVirtual(sender, recipient, message, timeout...)
 	}
 }
 

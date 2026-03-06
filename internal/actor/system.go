@@ -91,7 +91,7 @@ func (s *System) GetSystemBasicState() vivid.SystemBasicState {
 	}
 }
 
-func (s *System) IsClusterEnabled() bool {
+func (s *System) InCluster() bool {
 	return s.clusterContext != nil
 }
 

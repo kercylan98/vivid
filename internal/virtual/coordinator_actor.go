@@ -65,11 +65,13 @@ func (c *CoordinatorActor) onKilled(_ vivid.ActorContext, message *vivid.OnKille
 	c.activation.deactivate(message.Ref)
 }
 
-func (c *CoordinatorActor) Tell(sender, recipient vivid.ActorRef, message vivid.Message) {
+func (c *CoordinatorActor) TellVirtual(sender, recipient vivid.ActorRef, message vivid.Message) error {
 	identity, ok := recipient.(*Identity)
 	if !ok {
-		return
+		return vivid.ErrorVirtualRecipientException.WithMessage(recipient.String())
 	}
+
+	// 确保虚拟 Actor 的存在，并在需要的时候启动它
 	ref, err := c.activation.activate(c.coordinatorCtx, identity)
 	if err != nil {
 		c.system.Logger().Error("failed to activate virtual actor",
@@ -78,12 +80,13 @@ func (c *CoordinatorActor) Tell(sender, recipient vivid.ActorRef, message vivid.
 			log.String("name", identity.name),
 			log.Any("err", err),
 		)
-		return
+		return err
 	}
 	c.system.TellWithSender(sender, ref, message)
+	return nil
 }
 
-func (c *CoordinatorActor) Ask(sender, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
+func (c *CoordinatorActor) AskVirtual(sender, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
 	identity, ok := recipient.(*Identity)
 	if !ok {
 		return future.NewFutureFail[vivid.Message](vivid.ErrorVirtualRecipientException.WithMessage(recipient.String()))

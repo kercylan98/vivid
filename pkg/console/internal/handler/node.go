@@ -33,7 +33,7 @@ func (n *Node) CurrentNodeCluster(w http.ResponseWriter, _ *http.Request) {
 	}
 	view, err := cluster.GetView()
 	if err != nil {
-		api.Ok(w, &clusterStatusResponse{IsClusterNode: n.System.IsClusterEnabled()})
+		api.Ok(w, &clusterStatusResponse{IsClusterNode: n.System.InCluster()})
 		return
 	}
 	members, _ := cluster.GetMembers()

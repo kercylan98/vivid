@@ -11,27 +11,27 @@ import (
 
 func newActivation(system bridge.VirtualActorSystem) *activation {
 	return &activation{
-		system: system,
-		actors: make(map[string]vivid.ActorRef),
-		ttl:    time.Minute * 10,
+		system:      system,
+		activations: make(map[string]vivid.ActorRef),
+		ttl:         time.Minute * 10,
 	}
 }
 
 type activation struct {
-	system  bridge.VirtualActorSystem
-	lock    sync.RWMutex
-	actors  map[string]vivid.ActorRef
-	loading singleflight.Group
-	ttl     time.Duration
+	system      bridge.VirtualActorSystem // 虚拟 Actor 系统
+	lock        sync.RWMutex              // 保护激活的虚拟 Actor 集合
+	activations map[string]vivid.ActorRef // 已激活的虚拟 Actor 引用
+	loading     singleflight.Group        // 避免重复加载虚拟 Actor
+	ttl         time.Duration             // 虚拟 Actor 的钝化时间
 }
 
 func (a *activation) deactivate(ref vivid.ActorRef) {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
-	for key, r := range a.actors {
+	for key, r := range a.activations {
 		if r.Equals(ref) {
-			delete(a.actors, key)
+			delete(a.activations, key)
 			break
 		}
 	}
@@ -41,7 +41,7 @@ func (a *activation) activate(ctx vivid.ActorContext, identity *Identity) (vivid
 	key := identity.String()
 
 	a.lock.RLock()
-	if ref, exist := a.actors[key]; exist {
+	if ref, exist := a.activations[key]; exist {
 		a.lock.RUnlock()
 		return ref, nil
 	}
@@ -62,7 +62,7 @@ func (a *activation) activate(ctx vivid.ActorContext, identity *Identity) (vivid
 			return nil, err
 		}
 
-		a.actors[key] = ref
+		a.activations[key] = ref
 		return ref, nil
 	})
 
