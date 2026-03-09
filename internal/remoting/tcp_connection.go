@@ -62,28 +62,32 @@ func (c *tcpConnectionActor) OnReceive(ctx vivid.ActorContext) {
 	case *vivid.OnLaunch:
 		c.onLaunch(ctx)
 	case net.Conn:
-		// 消息读取失败仅作回调，不影响连接的正常使用
-		// 假设连接需要关闭，内部会自动关闭连接
-		if fatal, err := c.onReadConn(ctx); err != nil && c.options.readFailedHandler != nil {
-			// 当非致命错误时，可通过返回 error 来决定是否关闭 Actor
-			if err := c.options.readFailedHandler.HandleRemotingConnectionReadFailed(fatal, err); err != nil && !fatal {
-				ctx.Kill(ctx.Ref(), false, err.Error())
-			}
-		} else if err != nil {
-			ctx.Logger().Warn("read connection failed",
-				log.Bool("fatal", fatal),
-				log.Any("err", err),
-				log.String("remote_addr", c.conn.RemoteAddr().String()),
-				log.String("local_addr", c.conn.LocalAddr().String()),
-				log.String("advertise_addr", c.advertiseAddr),
-				log.Bool("is_client", c.client))
-		}
+		c.onConn(ctx)
 	}
 }
 
 func (c *tcpConnectionActor) onLaunch(ctx vivid.ActorContext) {
 	// 启动 reader 循环
 	ctx.Tell(ctx.Ref(), c.conn)
+}
+
+func (c *tcpConnectionActor) onConn(ctx vivid.ActorContext) {
+	// 消息读取失败仅作回调，不影响连接的正常使用
+	// 假设连接需要关闭，内部会自动关闭连接
+	if fatal, err := c.onReadConn(ctx); err != nil && c.options.readFailedHandler != nil {
+		// 当非致命错误时，可通过返回 error 来决定是否关闭 Actor
+		if err := c.options.readFailedHandler.HandleRemotingConnectionReadFailed(fatal, err); err != nil && !fatal {
+			ctx.Kill(ctx.Ref(), false, err.Error())
+		}
+	} else if err != nil {
+		ctx.Logger().Warn("read connection failed",
+			log.Bool("fatal", fatal),
+			log.Any("err", err),
+			log.String("remote_addr", c.conn.RemoteAddr().String()),
+			log.String("local_addr", c.conn.LocalAddr().String()),
+			log.String("advertise_addr", c.advertiseAddr),
+			log.Bool("is_client", c.client))
+	}
 }
 
 func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err error) {
