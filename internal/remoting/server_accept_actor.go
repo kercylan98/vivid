@@ -41,7 +41,7 @@ func (a *serverAcceptActor) OnReceive(ctx vivid.ActorContext) {
 }
 
 func (a *serverAcceptActor) onLaunch(ctx vivid.ActorContext) {
-	ctx.TellSelf(a.listener)
+	ctx.Tell(ctx.Ref(), a.listener)
 }
 
 func (a *serverAcceptActor) onAccept(ctx vivid.ActorContext) {
@@ -69,5 +69,5 @@ func (a *serverAcceptActor) onAccept(ctx vivid.ActorContext) {
 	}()
 
 	// 进入下一次循环监听
-	ctx.TellSelf(a.listener)
+	ctx.Tell(ctx.Ref(), a.listener)
 }

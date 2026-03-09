@@ -92,7 +92,7 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 			delay := s.backoff.Next()
 			ctx.Logger().Warn("server listener listen failed, restart later", log.String("bind_addr", s.bindAddr), log.Duration("delay", delay), log.Any("err", err))
 			s.backoffTimer = time.AfterFunc(delay, func() {
-				ctx.TellSelf(startAcceptorMessage)
+				ctx.Tell(ctx.Ref(), startAcceptorMessage)
 			})
 			return
 		}
@@ -100,7 +100,7 @@ func (s *ServerActor) onStartAcceptor(ctx vivid.ActorContext) {
 		delay := s.backoff.Next()
 		ctx.Logger().Warn("server listener resolve address failed, restart later", log.String("bind_addr", s.bindAddr), log.Duration("delay", delay), log.Any("err", err))
 		s.backoffTimer = time.AfterFunc(delay, func() {
-			ctx.TellSelf(startAcceptorMessage)
+			ctx.Tell(ctx.Ref(), startAcceptorMessage)
 		})
 		return
 	}
@@ -134,7 +134,7 @@ func (s *ServerActor) onLaunch(ctx vivid.ActorContext) {
 	s.remotingMailboxCentralWG.Done()
 
 	// 投递 Acceptor 作为启动消息，实现重试启动
-	ctx.TellSelf(startAcceptorMessage)
+	ctx.Tell(ctx.Ref(), startAcceptorMessage)
 }
 
 func (s *ServerActor) onConnection(ctx vivid.ActorContext, connection *tcpConnectionActor) {
@@ -235,6 +235,6 @@ func (s *ServerActor) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) 
 		// Acceptor 被终止，尝试重启
 		// 假如是此 Actor 的终止导致其终止，那么该消息会被屏蔽，因为 Actor 已经非正常状态
 		s.acceptorRef = nil
-		ctx.TellSelf(startAcceptorMessage)
+		ctx.Tell(ctx.Ref(), startAcceptorMessage)
 	}
 }

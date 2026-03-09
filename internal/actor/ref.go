@@ -65,7 +65,7 @@ func (r *Ref) GetAddress() string {
 
 func (r *Ref) Equals(other vivid.ActorRef) bool {
 	ref, ok := other.(*Ref)
-	return ok && r.GetAddress() == ref.GetAddress() && r.GetPath() == ref.GetPath()
+	return ok && r.GetPath() == ref.GetPath() && r.GetAddress() == ref.GetAddress()
 }
 
 func (r *Ref) Clone() vivid.ActorRef {

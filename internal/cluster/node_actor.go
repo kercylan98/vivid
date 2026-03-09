@@ -152,7 +152,7 @@ func (a *NodeActor) onJoinRetryTick(ctx vivid.ActorContext) {
 func (a *NodeActor) onLeaveWhileJoining(ctx vivid.ActorContext) {
 	a.cancelAllSchedulers(ctx)
 	a.nodeState.Status = MemberStatusExiting
-	ctx.TellSelf(&ExitingReady{})
+	ctx.Tell(ctx.Ref(), &ExitingReady{})
 }
 
 // scheduleJoinRetry 使用指数退避调度下一次 Join 重试，返回本次使用的延迟（用于日志）。

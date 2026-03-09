@@ -83,7 +83,7 @@ func (c *tcpConnectionActor) OnReceive(ctx vivid.ActorContext) {
 
 func (c *tcpConnectionActor) onLaunch(ctx vivid.ActorContext) {
 	// 启动 reader 循环
-	ctx.TellSelf(c.conn)
+	ctx.Tell(ctx.Ref(), c.conn)
 }
 
 func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err error) {
@@ -119,7 +119,7 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 	// 消息长度超过 4MB 则认为无效
 	if msgLen > 4*1024*1024 {
 		ctx.Logger().Warn("invalid message length", log.Int64("length", int64(msgLen)))
-		ctx.TellSelf(c.conn)
+		ctx.Tell(ctx.Ref(), c.conn)
 		return false, vivid.ErrorInvalidMessageLength.WithMessage(fmt.Sprintf("length: %d", msgLen))
 	}
 	msgBuf := make([]byte, msgLen)
@@ -151,7 +151,7 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 			Error:         err,
 		})
 		// 消息解码不影响连接的正常使用，继续监听连接
-		ctx.TellSelf(c.conn)
+		ctx.Tell(ctx.Ref(), c.conn)
 		ctx.Logger().Warn("decode remote message failed",
 			log.String("sender", ctx.Ref().String()),
 			log.String("receiver", ctx.Ref().GetPath()),
@@ -173,7 +173,7 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 		})
 		// 即便是远程消息处理失败，也继续监听连接
 		err = c.envelopHandler.HandleRemotingEnvelop(system, senderAddr, senderPath, receiverAddr, receiverPath, messageInstance)
-		ctx.TellSelf(c.conn)
+		ctx.Tell(ctx.Ref(), c.conn)
 		if err != nil {
 			err = vivid.ErrorRemotingMessageHandleFailed.With(err)
 			ctx.Logger().Warn("failed to handle remoting message",
