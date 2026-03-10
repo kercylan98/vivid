@@ -223,6 +223,10 @@ func (c *Context) TellSelf(message vivid.Message) {
 }
 
 func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
+	if recipient == nil {
+		c.system.mailbox.Enqueue(mailbox.NewEnvelop(false, c.ref, recipient, message))
+		return
+	}
 	if recipient.Equals(c.ref) {
 		c.TellSelf(message)
 		return

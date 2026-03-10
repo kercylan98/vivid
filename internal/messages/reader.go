@@ -278,9 +278,6 @@ func (r *Reader) Read(v interface{}) error {
 		}
 		*ptr = val
 	default:
-		if v, ok := v.(Serializable); ok {
-			return v.Deserialize(r)
-		}
 		rv := reflect.ValueOf(v)
 		switch rv.Kind() {
 		case reflect.Slice:

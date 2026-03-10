@@ -85,6 +85,12 @@ var (
 	ErrorVirtualRecipientException    = RegisterError(160001, "virtual recipient exception", ErrorException)     // 虚拟 Actor 接收者异常，该错误通常是框架内部逻辑错误，正常不应该产生
 )
 
+// Gossip 相关错误。
+var (
+	ErrorGossipInvalidMember       = RegisterError(170000, "gossip invalid member", ErrorIllegalArgument)        // 成员信息非法
+	ErrorGossipMemberAlreadyExists = RegisterError(170001, "gossip member already exists", ErrorIllegalArgument) // 成员已存在
+)
+
 var _ error = (*Error)(nil)
 var codeOfError = make(map[int32]*Error)
 var codeOfErrorMu sync.RWMutex

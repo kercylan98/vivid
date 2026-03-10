@@ -10,15 +10,9 @@ var outsideMessageDesc = &MessageDesc{
 	typeOf:      nil,
 	messageName: "",
 	reader: func(message any, reader *Reader, codec Codec) error {
-		if s, ok := message.(Serializable); ok {
-			return s.Deserialize(reader)
-		}
 		return fmt.Errorf("outside message desc reader is not implemented")
 	},
 	writer: func(message any, writer *Writer, codec Codec) error {
-		if s, ok := message.(Serializable); ok {
-			return s.Serialize(writer)
-		}
 		return fmt.Errorf("outside message desc writer is not implemented")
 	},
 }

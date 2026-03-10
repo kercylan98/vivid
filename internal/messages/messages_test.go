@@ -8,22 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var (
-	_ messages.Serializable = (*SerializableStruct)(nil)
-)
-
-type SerializableStruct struct {
-	Value int32
-}
-
-func (s *SerializableStruct) Serialize(writer *messages.Writer) error {
-	return writer.Write(s.Value).Err()
-}
-
-func (s *SerializableStruct) Deserialize(reader *messages.Reader) error {
-	return reader.Read(&s.Value)
-}
-
 func Test_Read(t *testing.T) {
 	t.Run("byte", func(t *testing.T) {
 		var val = byte(1)
@@ -387,25 +371,5 @@ func Test_Read(t *testing.T) {
 		var actual map[string]int
 		assert.NoError(t, reader.Read(&actual))
 		assert.Equal(t, *val, actual)
-	})
-
-	t.Run("Serializable", func(t *testing.T) {
-		var val = &SerializableStruct{Value: 1}
-		var writer = messages.NewWriter()
-		assert.NoError(t, writer.Write(val).Err())
-		var reader = messages.NewReader(writer.Bytes())
-		var actual = new(SerializableStruct)
-		assert.NoError(t, reader.Read(actual))
-		assert.Equal(t, val.Value, actual.Value)
-	})
-
-	t.Run("Serializable_ReadTo**", func(t *testing.T) {
-		var val = &SerializableStruct{Value: 1}
-		var writer = messages.NewWriter()
-		assert.NoError(t, writer.Write(val).Err())
-		var reader = messages.NewReader(writer.Bytes())
-		var actual = new(SerializableStruct)
-		assert.NoError(t, reader.Read(&actual))
-		assert.Equal(t, val.Value, actual.Value)
 	})
 }

@@ -269,14 +269,6 @@ func (w *Writer) Write(v interface{}) *Writer {
 	case []byte:
 		w.WriteBytes(val)
 	default:
-		// 其他类型，尝试使用 Serializable 接口处理
-		if v, ok := v.(Serializable); ok {
-			if err := v.Serialize(w); err != nil {
-				w.err = err
-			}
-			return w
-		}
-
 		// 对 slice、array、map 类型进行特殊处理
 		rv := reflect.ValueOf(v)
 		switch rv.Kind() {

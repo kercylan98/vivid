@@ -224,7 +224,7 @@ func (refs ActorRefs) String() string {
 	var result strings.Builder
 	result.WriteString("[")
 	for i, ref := range refs {
-		result.WriteString(ref.GetPath())
+		result.WriteString(ref.String())
 		if i != len(refs)-1 {
 			result.WriteString(", ")
 		}
