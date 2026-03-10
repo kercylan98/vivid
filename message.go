@@ -76,6 +76,7 @@ type CustomMessageWriter = messages.InternalMessageWriter
 //   - 注册仅需执行一次，通常在 init 或应用初始化阶段统一登记所有自定义消息。
 //   - 否则系统无法支持该消息类型的远程传输（会视为外部消息，编解码将失败，除非已用 WithCodec 设置 Codec）。
 func RegisterCustomMessage[T any](messageName string, reader CustomMessageReader, writer CustomMessageWriter) {
+	messageName = "OUTSIDE:" + messageName
 	messages.RegisterInternalMessage[T](messageName, reader, writer)
 }
 
