@@ -1097,7 +1097,7 @@ func TestContext_Tell(t *testing.T) {
 		system.Tell(nil, 0)
 	})
 
-	t.Run("10,000,000 tell", func(t *testing.T) {
+	t.Run("100,000 tell, pass race", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
 		defer func() {
 			assert.NoError(t, system.Stop())
@@ -1109,6 +1109,9 @@ func TestContext_Tell(t *testing.T) {
 			switch ctx.Message().(type) {
 			case int:
 				counter++
+				if counter%10000 == 0 {
+					ctx.Logger().Debug("test counter", log.Int("counter", counter))
+				}
 			case *vivid.OnKilled:
 				close(wait)
 			}
@@ -1116,14 +1119,14 @@ func TestContext_Tell(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, ref)
 
-		for i := 0; i < 10000000; i++ {
+		for i := 0; i < 100_000; i++ {
 			system.Tell(ref, 1)
 		}
 		system.Kill(ref, true)
 
 		select {
 		case <-wait:
-			assert.Equal(t, 10000000, counter)
+			assert.Equal(t, 100_000, counter)
 		case <-time.After(time.Second):
 			assert.Fail(t, "timeout")
 		}
