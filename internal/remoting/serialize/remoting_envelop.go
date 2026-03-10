@@ -21,7 +21,7 @@ func EncodeEnvelopWithRemoting(codec vivid.Codec, envelop vivid.Envelop) (data [
 		if err != nil {
 			return nil, err
 		}
-		writer.WriteBytesWithLength(data, 4)
+		writer.WriteBytes(data)
 	} else {
 		// 内部消息序列化
 		err = messages.SerializeRemotingMessage(codec, writer, messageDesc, envelop.Message())

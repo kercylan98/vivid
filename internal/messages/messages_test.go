@@ -1,159 +1,411 @@
-package messages
+package messages_test
 
 import (
+	"slices"
 	"testing"
 
+	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/stretchr/testify/assert"
 )
 
-type TestMessage struct {
-	Bytes   []byte
-	String  string
-	Int64   int64
-	Uint64  uint64
-	Float64 float64
-	Int32   int32
-	Uint32  uint32
-	Float32 float32
-	Int16   int16
-	Uint16  uint16
-	Int8    int8
-	Uint8   uint8
-	Bool    bool
+var (
+	_ messages.Serializable = (*SerializableStruct)(nil)
+)
+
+type SerializableStruct struct {
+	Value int32
 }
 
-func TestMessageReaderAndWriter(t *testing.T) {
-
-	message := TestMessage{
-		Int8:    1,
-		Int16:   2,
-		Int32:   3,
-		Int64:   4,
-		Uint8:   5,
-		Uint16:  6,
-		Uint32:  7,
-		Uint64:  8,
-		Float32: 9,
-		Float64: 10,
-		Bool:    true,
-		String:  "hello",
-		Bytes:   []byte("world"),
-	}
-
-	writer := NewWriter()
-	assert.NoError(t, writer.WriteFrom(
-		int8(1), int16(2), int32(3), int64(4),
-		uint8(5), uint16(6), uint32(7), uint64(8),
-		float32(9), float64(10),
-		bool(true),
-		string("hello"),
-		[]byte("world"),
-		[]TestMessage{message, message, message},
-		[]byte{1, 2, 3, 4, 5, 6, 7, 8},
-		message,
-	))
-
-	assert.Empty(t, writer.Err(), "writer should not return error")
-
-	reader := NewReader(writer.Bytes())
-
-	var i8 int8
-	var i16 int16
-	var i32 int32
-	var i64 int64
-	var ui8 uint8
-	var ui16 uint16
-	var ui32 uint32
-	var ui64 uint64
-	var f32 float32
-	var f64 float64
-	var b bool
-	var strHello string
-	var bytesWorld []byte
-	var testMessages []TestMessage
-	var bytes2 []byte
-	var testMessage TestMessage
-
-	err := reader.ReadInto(
-		&i8, &i16, &i32, &i64,
-		&ui8, &ui16, &ui32, &ui64,
-		&f32, &f64, &b, &strHello, &bytesWorld, &testMessages, &bytes2, &testMessage)
-
-	assert.Empty(t, err, "reader should not return error")
-
-	assert.Equal(t, i8, int8(1), "i8 should be 1")
-	assert.Equal(t, i16, int16(2), "i16 should be 2")
-	assert.Equal(t, i32, int32(3), "i32 should be 3")
-	assert.Equal(t, i64, int64(4), "i64 should be 4")
-	assert.Equal(t, ui8, uint8(5), "ui8 should be 5")
-	assert.Equal(t, ui16, uint16(6), "ui16 should be 6")
-	assert.Equal(t, ui32, uint32(7), "ui32 should be 7")
-	assert.Equal(t, ui64, uint64(8), "ui64 should be 8")
-	assert.Equal(t, f32, float32(9), "f32 should be 9")
-	assert.Equal(t, f64, float64(10), "f64 should be 10")
-	assert.Equal(t, b, true, "b should be true")
-	assert.Equal(t, strHello, "hello", "strHello should be hello")
-	assert.Equal(t, bytesWorld, []byte("world"), "bytesWorld should be world")
-	assert.Equal(t, testMessages, []TestMessage{message, message, message}, "testMessages should be [message, message, message]")
-	assert.Equal(t, bytes2, []byte{1, 2, 3, 4, 5, 6, 7, 8}, "bytes2 should be [1, 2, 3, 4, 5, 6, 7, 8]")
-	assert.Equal(t, testMessage, message, "testMessage should be message")
-	assert.Equal(t, reader.Pos(), len(writer.Bytes()), "reader pos should be equal to writer length")
-	assert.Equal(t, reader.RemainingSize(), 0, "reader remaining size should be 0")
-	assert.Equal(t, reader.Remaining(), []byte{}, "reader remaining should be empty")
+func (s *SerializableStruct) Serialize(writer *messages.Writer) error {
+	return writer.Write(s.Value).Err()
 }
 
-func BenchmarkReader_WriteAndRead(b *testing.B) {
-	message := TestMessage{
-		Int8:    1,
-		Int16:   2,
-		Int32:   3,
-		Int64:   4,
-		Uint8:   5,
-		Uint16:  6,
-		Uint32:  7,
-		Uint64:  8,
-		Float32: 9,
-		Float64: 10,
-		Bool:    true,
-		String:  "hello",
-		Bytes:   []byte("world"),
-	}
+func (s *SerializableStruct) Deserialize(reader *messages.Reader) error {
+	return reader.Read(&s.Value)
+}
 
-	for i := 0; i < b.N; i++ {
-		writer := NewWriter()
-		assert.NoError(b, writer.WriteFrom(
-			int8(1), int16(2), int32(3), int64(4),
-			uint8(5), uint16(6), uint32(7), uint64(8),
-			float32(9), float64(10),
-			bool(true),
-			string("hello"),
-			[]byte("world"),
-			[]TestMessage{message, message, message},
-			[]byte{1, 2, 3, 4, 5, 6, 7, 8},
-			message,
-		))
-		assert.Empty(b, writer.Err(), "writer should not return error")
-		reader := NewReader(writer.Bytes())
-		var i8 int8
-		var i16 int16
-		var i32 int32
-		var i64 int64
-		var ui8 uint8
-		var ui16 uint16
-		var ui32 uint32
-		var ui64 uint64
-		var f32 float32
-		var f64 float64
-		var bb bool
-		var strHello string
-		var bytesWorld []byte
-		var testMessages []TestMessage
-		var bytes2 []byte
-		var testMessage TestMessage
-		err := reader.ReadInto(
-			&i8, &i16, &i32, &i64,
-			&ui8, &ui16, &ui32, &ui64,
-			&f32, &f64, &bb, &strHello, &bytesWorld, &testMessages, &bytes2, &testMessage)
-		assert.Empty(b, err, "reader should not return error")
-	}
+func Test_Read(t *testing.T) {
+	t.Run("byte", func(t *testing.T) {
+		var val = byte(1)
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual byte
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*byte", func(t *testing.T) {
+		var val = new(byte(1))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual byte
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("int8", func(t *testing.T) {
+		var val = new(int8(1))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.WriteInt8Ptr(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual int8
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("*int8", func(t *testing.T) {
+		var val = new(int8(1))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual int8
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("uint8", func(t *testing.T) {
+		var val = uint8(1)
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.WriteUint8(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual uint8
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*uint8", func(t *testing.T) {
+		var val = new(uint8(1))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual uint8
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("int16", func(t *testing.T) {
+		var val = int16(1)
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual int16
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*int16", func(t *testing.T) {
+		var val = new(int16(1))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual int16
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("uint16", func(t *testing.T) {
+		var val = uint16(1)
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual uint16
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*uint16", func(t *testing.T) {
+		var val = new(uint16(1))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual uint16
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("int32", func(t *testing.T) {
+		var val = int32(1)
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual int32
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*int32", func(t *testing.T) {
+		var val = new(int32(1))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual int32
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("uint32", func(t *testing.T) {
+		var val = uint32(1)
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual uint32
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*uint32", func(t *testing.T) {
+		var val = new(uint32(1))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual uint32
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("int64", func(t *testing.T) {
+		var val = int64(1)
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual int64
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*int64", func(t *testing.T) {
+		var val = new(int64(1))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual int64
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("uint64", func(t *testing.T) {
+		var val = uint64(1)
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual uint64
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*uint64", func(t *testing.T) {
+		var val = new(uint64(1))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual uint64
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("bool", func(t *testing.T) {
+		var val = true
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual bool
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*bool", func(t *testing.T) {
+		var val = new(bool(true))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual bool
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("float32", func(t *testing.T) {
+		var val = float32(1.0)
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual float32
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*float32", func(t *testing.T) {
+		var val = new(float32(1.0))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual float32
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("float64", func(t *testing.T) {
+		var val = float64(1.0)
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual float64
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*float64", func(t *testing.T) {
+		var val = new(float64(1.0))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual float64
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("string", func(t *testing.T) {
+		var val = "hello"
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual string
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val, actual)
+	})
+
+	t.Run("*string", func(t *testing.T) {
+		var val = new(string("hello"))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual string
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("bytes", func(t *testing.T) {
+		var val = []byte("hello")
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual []byte
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, string(val), string(actual))
+	})
+
+	t.Run("*bytes", func(t *testing.T) {
+		var val = new([]byte("hello"))
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual []byte
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("slice", func(t *testing.T) {
+		var val = []int{1, 2, 3}
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual []int
+		assert.NoError(t, reader.Read(&actual))
+
+		assert.Equal(t, len(val), len(actual))
+		for i := range val {
+			index := slices.Index(actual, val[i])
+			assert.NotEqual(t, -1, index)
+		}
+	})
+
+	t.Run("*slice", func(t *testing.T) {
+		var val = new([]int{1, 2, 3})
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual []int
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+
+		assert.Equal(t, len(*val), len(actual))
+		for i := range *val {
+			index := slices.Index(actual, (*val)[i])
+			assert.NotEqual(t, -1, index)
+		}
+	})
+
+	t.Run("array", func(t *testing.T) {
+		var val = [3]int{1, 2, 3}
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual [3]int
+		assert.NoError(t, reader.Read(&actual))
+
+		assert.Equal(t, len(val), len(actual))
+		for i := range val {
+			assert.Equal(t, val[i], actual[i])
+		}
+	})
+
+	t.Run("*array", func(t *testing.T) {
+		var val = new([3]int{1, 2, 3})
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual [3]int
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+
+		assert.Equal(t, len(*val), len(actual))
+		for i := range *val {
+			assert.Equal(t, (*val)[i], actual[i])
+		}
+	})
+
+	t.Run("map", func(t *testing.T) {
+		var val = map[string]int{"hello": 1, "world": 2}
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual map[string]int
+		assert.NoError(t, reader.Read(&actual))
+
+		assert.Equal(t, len(val), len(actual))
+		for k, v := range val {
+			assert.Equal(t, v, actual[k])
+		}
+	})
+
+	t.Run("*map", func(t *testing.T) {
+		var val = new(map[string]int{"hello": 1, "world": 2})
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual map[string]int
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, *val, actual)
+	})
+
+	t.Run("Serializable", func(t *testing.T) {
+		var val = &SerializableStruct{Value: 1}
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual = new(SerializableStruct)
+		assert.NoError(t, reader.Read(actual))
+		assert.Equal(t, val.Value, actual.Value)
+	})
+
+	t.Run("Serializable_ReadTo**", func(t *testing.T) {
+		var val = &SerializableStruct{Value: 1}
+		var writer = messages.NewWriter()
+		assert.NoError(t, writer.Write(val).Err())
+		var reader = messages.NewReader(writer.Bytes())
+		var actual = new(SerializableStruct)
+		assert.NoError(t, reader.Read(&actual))
+		assert.Equal(t, val.Value, actual.Value)
+	})
 }
