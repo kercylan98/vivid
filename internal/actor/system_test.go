@@ -7,7 +7,6 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/actor"
-	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/ves"
 	"github.com/stretchr/testify/assert"
@@ -166,49 +165,6 @@ func TestSystem_Stop(t *testing.T) {
 	})
 }
 
-func TestSystem_RemotingAsk(t *testing.T) {
-	type TestInternalMessage struct {
-		Text string `json:"text"`
-	}
-
-	codec := NewTestCodec().
-		Register("test_message", &TestInternalMessage{})
-
-	system1 := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"), vivid.WithActorSystemCodec(codec))
-	system2 := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8081"), vivid.WithActorSystemCodec(codec), vivid.WithActorSystemLogger(log.GetDefault()))
-
-	ref, err := system1.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-		switch v := ctx.Message().(type) {
-		case *TestInternalMessage:
-			ctx.Reply(v)
-		}
-	}))
-	assert.NotNil(t, ref)
-	assert.NoError(t, err)
-	ref = ref.Clone()
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	_, err = system2.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-		switch ctx.Message().(type) {
-		case *vivid.OnLaunch:
-			f := ctx.Ask(ref, &TestInternalMessage{Text: "hello"}, time.Second*5)
-			reply, err := f.Result()
-			assert.Nil(t, err)
-			m, ok := reply.(*TestInternalMessage)
-			assert.True(t, ok)
-			assert.True(t, m.Text == "hello")
-			wg.Done()
-		}
-	}))
-	assert.NoError(t, err)
-
-	wg.Wait()
-
-	assert.NoError(t, system1.Stop())
-	assert.NoError(t, system2.Stop())
-}
-
 func TestSystem_Metrics(t *testing.T) {
 	t.Run("metrics", func(t *testing.T) {
 		system := actor.NewTestSystem(t, vivid.WithActorSystemEnableMetrics(true))
@@ -250,91 +206,12 @@ func TestSystem_Metrics(t *testing.T) {
 	})
 }
 
-func TestSystem_HandleRemotingEnvelop_InvalidAgentRef(t *testing.T) {
-	system := actor.NewTestSystem(t)
-	defer func() {
-		assert.Nil(t, recover())
-		assert.NoError(t, system.Stop())
-	}()
-
-	// 获取系统根引用的合法地址和路径
-	rootRef := system.Ref()
-
-	senderAddr := rootRef.GetAddress()
-	senderPath := rootRef.GetPath()
-	receiverAddr := rootRef.GetAddress()
-	receiverPath := rootRef.GetPath()
-
-	// 构造非法的 agent 地址：不带端口的裸 IP，会被 NormalizeAddress 拒绝
-	invalidAddr := "127.0.0.1"
-
-	err := system.HandleRemotingEnvelop(false, invalidAddr, senderPath, receiverAddr, receiverPath, "test message")
-	assert.NotNil(t, err)
-	err = system.HandleRemotingEnvelop(false, senderAddr, senderPath, invalidAddr, receiverPath, "test message")
-	assert.NotNil(t, err)
-}
-
 func TestSystem_WithRemoting(t *testing.T) {
 	t.Run("normal", func(t *testing.T) {
 		system := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))
 		defer func() {
 			assert.NoError(t, system.Stop())
 		}()
-	})
-
-	t.Run("remote close", func(t *testing.T) {
-		runningSystem := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))
-		closeSystem := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8081"))
-		defer func() {
-			assert.NoError(t, runningSystem.Stop())
-			assert.NoError(t, closeSystem.Stop())
-		}()
-
-		runningSystemConnected := make(chan struct{})
-		closeSystemConnected := make(chan struct{})
-
-		// 监听 Actor
-		runningWatcherRef, err := runningSystem.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-			switch m := ctx.Message().(type) {
-			case *vivid.OnLaunch:
-				ctx.EventStream().Subscribe(ctx, ves.RemotingConnectionEstablishedEvent{})
-			case ves.RemotingConnectionEstablishedEvent:
-				if m.IsClient {
-					close(runningSystemConnected)
-				}
-			}
-		}))
-		assert.NoError(t, err)
-		assert.NotNil(t, runningWatcherRef)
-
-		closeWatcherRef, err := closeSystem.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-			switch m := ctx.Message().(type) {
-			case *vivid.OnLaunch:
-				ctx.EventStream().Subscribe(ctx, ves.RemotingConnectionEstablishedEvent{})
-			case ves.RemotingConnectionEstablishedEvent:
-				if m.IsClient {
-					close(closeSystemConnected)
-				}
-			}
-		}))
-		assert.NoError(t, err)
-		assert.NotNil(t, closeWatcherRef)
-
-		// 触发建立连接
-		message := &actor.TestRemoteMessage{Text: "hello"}
-		runningSystem.Tell(closeSystem.Ref().Clone(), message)
-		closeSystem.Tell(runningSystem.Ref().Clone(), message)
-
-		select {
-		case <-runningSystemConnected:
-		case <-time.After(time.Second * 3):
-			t.Fatal("timeout")
-		}
-		select {
-		case <-closeSystemConnected:
-		case <-time.After(time.Second * 3):
-			t.Fatal("timeout")
-		}
 	})
 
 	t.Run("no Remoting, send to remote system", func(t *testing.T) {

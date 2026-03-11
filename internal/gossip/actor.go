@@ -108,6 +108,7 @@ func (a *Actor) onJoining(ctx vivid.ActorContext) {
 }
 
 func (a *Actor) onUp(ctx vivid.ActorContext) {
+	panic(1)
 	ctx.Logger().Debug("joined cluster")
 	// 上线后开始 gossip
 	ctx.Scheduler().Loop(ctx.Ref(), defaultGossipInterval, func(ctx vivid.ActorContext) {

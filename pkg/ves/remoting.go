@@ -148,8 +148,8 @@ type RemotingMessageReceivedEvent struct {
 	MessageType string
 	// MessageSize 消息的字节大小
 	MessageSize int
-	// ReceiverPath 目标接收者 Actor 的路径
-	ReceiverPath string
+	// Receiver 目标接收者 Actor 的路径
+	Receiver string
 }
 
 // RemotingMessageSendFailedEvent 表示远程消息发送失败的事件。

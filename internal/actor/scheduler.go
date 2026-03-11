@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/internal/scheduler"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/reugn/go-quartz/job"
@@ -32,33 +31,9 @@ var quartzErrorToVivid = []struct {
 	//{func(e error) bool { return errors.Is(e, quartz.ErrJobIsActive) }, vivid.ErrorJobIsActive},
 }
 
-func init() {
-	messages.RegisterInternalMessage[*SchedulerMessage]("SchedulerMessage", schedulerMessageReader, schedulerMessageWriter)
-}
-
 type SchedulerMessage struct {
 	Reference string
 	Message   vivid.Message
-}
-
-func schedulerMessageReader(message any, reader *messages.Reader, codec messages.Codec) (err error) {
-	m := message.(*SchedulerMessage)
-
-	if m.Message, err = reader.ReadMessage(codec); err != nil {
-		return err
-	}
-
-	return reader.ReadInto(&m.Reference)
-}
-
-func schedulerMessageWriter(message any, writer *messages.Writer, codec messages.Codec) (err error) {
-	m := message.(*SchedulerMessage)
-
-	if err = writer.WriteMessage(m.Message, codec); err != nil {
-		return err
-	}
-
-	return writer.WriteFrom(m.Reference)
 }
 
 func newScheduler(ctx *Context) *Scheduler {

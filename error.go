@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/kercylan98/vivid/internal/messages"
+	"github.com/kercylan98/vivid/internal/serialization"
 )
 
 // 系统与资源相关错误。可用 errors.Is 判定并做兜底或日志处理。
@@ -91,13 +91,12 @@ var (
 	ErrorGossipMemberAlreadyExists = RegisterError(170001, "gossip member already exists", ErrorIllegalArgument) // 成员已存在
 )
 
-var _ error = (*Error)(nil)
-var codeOfError = make(map[int32]*Error)
-var codeOfErrorMu sync.RWMutex
-
-func init() {
-	messages.RegisterInternalMessage[*Error]("Error", errorReader, errorWriter)
-}
+var (
+	_             error                      = (*Error)(nil)
+	_             serialization.MessageCodec = (*Error)(nil)
+	codeOfError                              = make(map[int32]*Error)
+	codeOfErrorMu sync.RWMutex
+)
 
 // RegisterError 在全局注册一个错误类型并返回其实例。
 //
@@ -144,16 +143,16 @@ type Error struct {
 	err  error  // 包装的底层错误（不参与序列化）
 }
 
-// errorReader 从 reader 反序列化 Error 的 code 与 msg 到 message，供内部消息框架使用。
-func errorReader(message any, reader *messages.Reader, codec messages.Codec) error {
-	m := message.(*Error)
-	return reader.ReadInto(&m.code, &m.msg)
+// Decode implements [serialization.MessageCodec].
+func (e *Error) Decode(reader *serialization.Reader, message any) error {
+	err := message.(*Error)
+	return reader.Read(&err.code, &err.msg)
 }
 
-// errorWriter 将 Error 的 code 与 msg 序列化写入 writer，供内部消息框架使用。
-func errorWriter(message any, writer *messages.Writer, codec messages.Codec) error {
-	m := message.(*Error)
-	return writer.WriteFrom(m.code, m.msg)
+// Encode implements [serialization.MessageCodec].
+func (e *Error) Encode(writer *serialization.Writer, message any) error {
+	err := message.(*Error)
+	return writer.Write(err.code, err.msg).Err()
 }
 
 // Error 实现 error 接口，返回格式为 "[vivid: <code>] <msg>" 的字符串。

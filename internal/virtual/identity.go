@@ -2,15 +2,12 @@ package virtual
 
 import (
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/messages"
+	"github.com/kercylan98/vivid/internal/serialization"
 )
 
-func init() {
-	messages.RegisterInternalMessage[*Identity]("virtual.Identity", onIdentityReader, onIdentityWriter)
-}
-
 var (
-	_ vivid.ActorRef = (*Identity)(nil)
+	_ vivid.ActorRef             = (*Identity)(nil)
+	_ serialization.MessageCodec = (*Identity)(nil)
 )
 
 func NewIdentity(kind string, name string) *Identity {
@@ -25,14 +22,16 @@ type Identity struct {
 	name string
 }
 
-func onIdentityReader(message any, reader *messages.Reader, codec messages.Codec) error {
+// Decode implements [serialization.MessageCodec].
+func (i *Identity) Decode(reader *serialization.Reader, message any) error {
 	identity := message.(*Identity)
-	return reader.ReadInto(identity.kind, identity.name)
+	return reader.Read(identity.kind, identity.name)
 }
 
-func onIdentityWriter(message any, writer *messages.Writer, codec messages.Codec) error {
+// Encode implements [serialization.MessageCodec].
+func (i *Identity) Encode(writer *serialization.Writer, message any) error {
 	identity := message.(*Identity)
-	return writer.WriteFrom(identity.kind, identity.name)
+	return writer.Write(identity.kind, identity.name).Err()
 }
 
 func (i *Identity) Clone() vivid.ActorRef {

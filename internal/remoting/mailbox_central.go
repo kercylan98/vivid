@@ -5,10 +5,11 @@ import (
 	"sync"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
-func newMailboxCentral(ctx context.Context, remotingServerRef vivid.ActorRef, actorLiaison vivid.ActorLiaison, codec vivid.Codec, eventStream vivid.EventStream, options vivid.ActorSystemRemotingOptions) *MailboxCentral {
+func newMailboxCentral(ctx context.Context, remotingServerRef vivid.ActorRef, actorLiaison vivid.ActorLiaison, codec *serialization.VividCodec, eventStream vivid.EventStream, options vivid.ActorSystemRemotingOptions) *MailboxCentral {
 	return &MailboxCentral{
 		ctx:               ctx,
 		codec:             codec,
@@ -23,12 +24,12 @@ func newMailboxCentral(ctx context.Context, remotingServerRef vivid.ActorRef, ac
 type MailboxCentral struct {
 	ctx               context.Context
 	options           vivid.ActorSystemRemotingOptions
-	codec             vivid.Codec         // 编解码器
-	actorLiaison      vivid.ActorLiaison  // 演员联络员
-	remotingServerRef vivid.ActorRef      // 远程服务器 ActorRef
-	eventStream       vivid.EventStream   // 事件流
-	mailboxes         map[string]*Mailbox // 远程邮箱集合
-	lock              sync.Mutex          // 锁
+	codec             *serialization.VividCodec // 编解码器
+	actorLiaison      vivid.ActorLiaison        // 演员联络员
+	remotingServerRef vivid.ActorRef            // 远程服务器 ActorRef
+	eventStream       vivid.EventStream         // 事件流
+	mailboxes         map[string]*Mailbox       // 远程邮箱集合
+	lock              sync.Mutex                // 锁
 }
 
 func (rmc *MailboxCentral) Close() {

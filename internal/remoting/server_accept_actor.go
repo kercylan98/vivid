@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
@@ -12,7 +13,7 @@ var (
 	_ vivid.Actor = (*serverAcceptActor)(nil)
 )
 
-func newServerAcceptActor(listener net.Listener, advertiseAddr string, envelopHandler NetworkEnvelopHandler, codec vivid.Codec, options vivid.ActorSystemRemotingOptions) *serverAcceptActor {
+func newServerAcceptActor(listener net.Listener, advertiseAddr string, envelopHandler NetworkEnvelopHandler, codec *serialization.VividCodec, options vivid.ActorSystemRemotingOptions) *serverAcceptActor {
 	return &serverAcceptActor{
 		options:        options,
 		listener:       listener,
@@ -28,7 +29,7 @@ type serverAcceptActor struct {
 	listener       net.Listener                     // 监听器
 	advertiseAddr  string                           // 对外宣称的服务地址
 	envelopHandler NetworkEnvelopHandler            // 网络消息处理器
-	codec          vivid.Codec                      // 外部跨进程消息编解码器
+	codec          *serialization.VividCodec        // 外部跨进程消息编解码器
 }
 
 func (a *serverAcceptActor) OnReceive(ctx vivid.ActorContext) {

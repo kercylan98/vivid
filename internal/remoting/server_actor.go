@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/ves"
@@ -22,7 +23,7 @@ var (
 type startAcceptor struct{}
 
 // NewServerActor 创建新的服务器
-func NewServerActor(ctx context.Context, bindAddr string, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions) *ServerActor {
+func NewServerActor(ctx context.Context, bindAddr string, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions) *ServerActor {
 	sa := &ServerActor{
 		ctx:               ctx,
 		options:           options,
@@ -48,7 +49,7 @@ type ServerActor struct {
 	backoff                  *utils.ExponentialBackoff        // 指数退避器，用于监听端口失败时的重试延迟策略，防止过于频繁重试导致资源浪费
 	backoffTimer             *time.Timer                      // 指数退避重试定时器，用于重试启动服务器监听
 	acceptConnections        map[string]*tcpConnectionActor   // 当前已建立并被服务器管理的连接集合，key为连接唯一标识
-	codec                    vivid.Codec                      // 消息编解码器，实现消息的序列化与反序列化
+	codec                    *serialization.VividCodec        // 消息编解码器，实现消息的序列化与反序列化
 	envelopHandler           NetworkEnvelopHandler            // 网络消息处理器，处理接收到的远程消息
 	remotingMailboxCentral   *MailboxCentral                  // 远程邮箱中心，用于转发和分发网络层消息的核心模块
 	remotingMailboxCentralWG sync.WaitGroup                   // 用于等待远程邮箱中心初始化完成，保证远程相关操作在其准备好后再进行

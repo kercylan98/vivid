@@ -3,10 +3,12 @@ package actor
 import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/chain"
-	"github.com/kercylan98/vivid/internal/cluster"
 	"github.com/kercylan98/vivid/internal/guard"
+	"github.com/kercylan98/vivid/internal/messages"
+	"github.com/kercylan98/vivid/internal/messages/messagecodecs"
 	metricsActor "github.com/kercylan98/vivid/internal/metrics"
 	"github.com/kercylan98/vivid/internal/remoting"
+	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/virtual"
 	"github.com/kercylan98/vivid/pkg/metrics"
 )
@@ -14,6 +16,36 @@ import (
 var systemChains = &_systemChains{}
 
 type _systemChains struct{}
+
+func (c *_systemChains) initializeCodec(system *System) chain.Chain {
+	return chain.ChainFN(func() (err error) {
+		system.codec = serialization.NewVividCodec(system.options.RemotingCodec)
+
+		// 注册系统消息
+		registry := newMessageRegistry(system.codec).SetClass("SYS")
+
+		registry.RegisterMessage("*vivid.Error", new(vivid.Error))
+		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnLaunch", new(vivid.OnLaunch), messagecodecs.OnLaunchEncoder(), messagecodecs.OnLaunchDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKill", new(vivid.OnKill), messagecodecs.OnKillEncoder(), messagecodecs.OnKillDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKilled", new(vivid.OnKilled), messagecodecs.OnKilledEncoder(), messagecodecs.OnKilledDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*vivid.Pong", new(vivid.Pong), messagecodecs.PongEncoder(), messagecodecs.PongDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*vivid.PipeResult", new(vivid.PipeResult), messagecodecs.PipeResultEncoder(), messagecodecs.PipeResultDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*messages.NoneArgsCommandMessage", new(messages.NoneArgsCommandMessage), messagecodecs.NoneArgsCommandMessageEncoder(), messagecodecs.NoneArgsCommandMessageDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*messages.PingMessage", new(messages.PingMessage), messagecodecs.PingMessageEncoder(), messagecodecs.PingMessageDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*messages.PongMessage", new(messages.PongMessage), messagecodecs.PongMessageEncoder(), messagecodecs.PongMessageDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*messages.WatchMessage", new(messages.WatchMessage), messagecodecs.WatchMessageEncoder(), messagecodecs.WatchMessageDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*messages.UnwatchMessage", new(messages.UnwatchMessage), messagecodecs.UnwatchMessageEncoder(), messagecodecs.UnwatchMessageDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*actor.SchedulerMessage", new(SchedulerMessage), messagecodecs.SchedulerMessageEncoder(), messagecodecs.SchedulerMessageDecoder())
+		registry.RegisterMessage("*virtual.Identity", new(virtual.Identity))
+
+		// 注册用户消息
+		registry.SetClass("USER")
+		for _, register := range system.options.MessageRegister {
+			register.Register(registry)
+		}
+		return registry.Err()
+	})
+}
 
 func (c *_systemChains) spawnGuardActor(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
@@ -51,53 +83,13 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 			system.options.Context,
 			system.options.RemotingBindAddress,
 			system.options.RemotingAdvertiseAddress,
-			system.options.RemotingCodec,
+			system.codec,
 			system, // NetworkEnvelopHandler 实现
 			*system.options.RemotingOptions,
 		)
 		system.options.Logger = system.options.Logger.With("addr", system.options.RemotingAdvertiseAddress)
 		_, err = system.ActorOf(system.remotingServer, vivid.WithActorName("@remoting"))
 		return err
-	})
-}
-
-func (c *_systemChains) initializeCluster(system *System) chain.Chain {
-	return chain.ChainFN(func() (err error) {
-		if system.options.RemotingOptions != nil && system.options.RemotingOptions.ClusterOptions != nil {
-			clusterOpts := system.options.RemotingOptions.ClusterOptions
-			nodeActor := cluster.NewNodeActor(
-				system.options.RemotingAdvertiseAddress,
-				*clusterOpts)
-
-			clusterRef, err := system.ActorOf(nodeActor, vivid.WithActorName("@cluster"))
-			if err != nil {
-				return err
-			}
-			var singletonNames []string
-			if clusterOpts.SingletonTemplates != nil {
-				for n := range clusterOpts.SingletonTemplates {
-					singletonNames = append(singletonNames, n)
-				}
-			}
-			system.clusterContext = cluster.NewContext(system, clusterRef, singletonNames)
-
-			proxyManager := cluster.NewSingletonProxyManager()
-			proxyManagerRef, err := system.ActorOf(proxyManager, vivid.WithActorName(cluster.SingletonProxyActorName))
-			if err != nil {
-				return err
-			}
-			system.clusterContext.SetProxyManagerRef(proxyManagerRef)
-
-			if len(clusterOpts.SingletonTemplates) > 0 {
-				manager := cluster.NewSingletonManager(clusterOpts.SingletonTemplates)
-				_, err = system.ActorOf(manager, vivid.WithActorName(cluster.SingletonsActorName))
-				if err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		return nil
 	})
 }
 

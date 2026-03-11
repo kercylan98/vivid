@@ -1,10 +1,9 @@
 package remoting
 
 import (
+	"encoding/binary"
 	"net"
 	"time"
-
-	"github.com/kercylan98/vivid/internal/messages"
 )
 
 type Handshake struct {
@@ -12,17 +11,15 @@ type Handshake struct {
 }
 
 func (h *Handshake) Send(conn net.Conn) error {
-	writer := messages.NewWriterFromPool()
-	defer messages.ReleaseWriterToPool(writer)
-	if err := writer.WriteFrom(h.AdvertiseAddr); err != nil {
-		return err
-	}
-	data := writer.Bytes()
-	if err := conn.SetWriteDeadline(time.Now().Add(time.Second * 10)); err != nil {
-		return err
-	}
+	var advertiseAddrLength = len(h.AdvertiseAddr)
 
-	_, err := conn.Write(data)
+	var buf = make([]byte, 4+advertiseAddrLength)
+	// 写入广告地址长度
+	binary.BigEndian.PutUint32(buf, uint32(advertiseAddrLength))
+	// 写入广告地址
+	copy(buf[4:], h.AdvertiseAddr)
+
+	_, err := conn.Write(buf)
 	return err
 }
 
@@ -35,10 +32,9 @@ func (h *Handshake) Wait(conn net.Conn) error {
 	if _, err := conn.Read(buf); err != nil {
 		return err
 	}
-	reader := messages.NewReaderFromPool(buf)
-	defer messages.ReleaseReaderToPool(reader)
-	if err := reader.ReadInto(&h.AdvertiseAddr); err != nil {
-		return err
-	}
+
+	advertiseAddrLength := binary.BigEndian.Uint32(buf)
+	h.AdvertiseAddr = string(buf[4 : 4+advertiseAddrLength])
+
 	return nil
 }

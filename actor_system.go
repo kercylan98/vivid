@@ -167,6 +167,9 @@ type ActorSystemOptions struct {
 	//
 	// 其中 key 为虚拟 Actor 的种类，value 为 VirtualActorProvider。
 	VirtualActorProviders map[string]ActorProvider
+
+	// MessageRegister 指定消息注册器。
+	MessageRegister []MessageRegister
 }
 
 // SystemBasicState 当前 ActorSystem 的基本状态，供控制台等展示；不含集群名称（仅集群有集群名）。
@@ -419,7 +422,6 @@ func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSyste
 		ReconnectMaxDelay:     10 * time.Second,
 		ReconnectFactor:       2.5,
 		ReconnectJitter:       true,
-		ClusterOptions:        nil,
 	}
 	for _, opt := range opts {
 		opt(options)
@@ -451,9 +453,6 @@ type ActorSystemRemotingOptions struct {
 
 	// TLSConfig 可选；非空时 Remoting 服务端使用 TLS 监听，跨 DC/公网部署时建议启用以保证传输加密与身份校验（如 mTLS）。
 	TLSConfig *tls.Config
-
-	// ClusterOptions 用于配置集群通信相关的选项。
-	ClusterOptions *ClusterOptions
 }
 
 // WithActorSystemRemotingOptions 返回一个 ActorSystemOption，用于批量配置 ActorSystem 远程通信的高级选项。
@@ -598,33 +597,6 @@ func WithActorSystemRemotingTLSConfig(cfg *tls.Config) ActorSystemRemotingOption
 	}
 }
 
-// WithActorSystemRemotingClusterOptions 返回一个 ActorSystemRemotingOption，用于配置集群通信相关的选项。
-//
-// 参数：
-//   - options: 集群通信选项。
-//
-// 返回值：
-//   - ActorSystemRemotingOption: 可传给 NewActorSystemRemotingOptions 或其它配置参数的 Option 函数。
-func WithActorSystemRemotingClusterOptions(options *ClusterOptions) ActorSystemRemotingOption {
-	return func(opts *ActorSystemRemotingOptions) {
-		opts.ClusterOptions = options
-	}
-}
-
-// WithActorSystemRemotingClusterOption 返回一个 ActorSystemRemotingOption，用于配置集群通信相关的选项。
-//
-// 参数：
-//   - opts ...ClusterOption: 集群通信选项。
-//
-// 返回值：
-//   - ActorSystemRemotingOption: 可传给 NewActorSystemRemotingOptions 或其它配置参数的 Option 函数。
-func WithActorSystemRemotingClusterOption(opts ...ClusterOption) ActorSystemRemotingOption {
-	clusterOptions := NewClusterOptions(opts...)
-	return func(opts *ActorSystemRemotingOptions) {
-		opts.ClusterOptions = clusterOptions
-	}
-}
-
 // WithActorSystemVirtualActorProvider 返回一个 ActorSystemOption，用于配置虚拟 Actor 的提供者。
 //
 // 参数：
@@ -644,5 +616,14 @@ func WithActorSystemVirtualActorProvider(kind string, provider ActorProvider) Ac
 			panic("virtual actor provider already exists for kind: " + kind)
 		}
 		opts.VirtualActorProviders[kind] = provider
+	}
+}
+
+func WithActorSystemMessageRegister(register MessageRegister) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		if register == nil {
+			return
+		}
+		opts.MessageRegister = append(opts.MessageRegister, register)
 	}
 }

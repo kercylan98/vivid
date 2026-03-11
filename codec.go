@@ -1,6 +1,5 @@
 package vivid
 
-type Codec interface {
-	Encode(message Message) ([]byte, error)
-	Decode(message []byte) (Message, error)
-}
+import "github.com/kercylan98/vivid/internal/serialization"
+
+type Codec = serialization.Codec

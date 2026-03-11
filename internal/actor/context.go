@@ -91,14 +91,6 @@ type Context struct {
 	scheduler     *Scheduler                         // 调度器
 }
 
-func (c *Context) InCluster() bool {
-	return c.system.Cluster() != nil
-}
-
-func (c *Context) Cluster() vivid.ClusterContext {
-	return c.system.Cluster()
-}
-
 func (c *Context) Stash() {
 	c.stash = append(c.stash, c.envelop)
 }
@@ -582,7 +574,12 @@ func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
 }
 
 func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
-	c.Logger().Debug("receive kill", log.String("path", c.ref.GetPath()), log.Bool("restarting", c.restarting != nil), log.Bool("zombie", c.zombie))
+	c.Logger().Debug("receive kill",
+		log.String("path", c.ref.GetPath()),
+		log.Bool("restarting", c.restarting != nil),
+		log.Bool("zombie", c.zombie),
+		log.String("reason", message.Reason),
+	)
 
 	// 清理所有正在等待自身的 Future
 	c.system.removeFuturesByAgentPath(c.ref.GetPath(), vivid.ErrorActorDeaded)

@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/remoting/serialize"
+	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/ves"
 )
 
-func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, options ...tcpConnectionActorOption) (*tcpConnectionActor, error) {
+func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, options ...tcpConnectionActorOption) (*tcpConnectionActor, error) {
 	opts := &tcpConnectionActorOptions{}
 	for _, option := range options {
 		option(opts)
@@ -49,7 +49,7 @@ type tcpConnectionActorOptions struct {
 type tcpConnectionActor struct {
 	options        tcpConnectionActorOptions
 	conn           net.Conn
-	codec          vivid.Codec
+	codec          *serialization.VividCodec
 	envelopHandler NetworkEnvelopHandler
 	advertiseAddr  string
 	writeCloseLock sync.RWMutex
@@ -116,7 +116,7 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 	msgLen := binary.BigEndian.Uint32(lengthBuf)
 	if msgLen == 0 {
 		_, _ = c.Write(lengthBuf)
-		ctx.Kill(ctx.Ref(), false, "peer closed")
+		ctx.Kill(ctx.Ref(), false, "peer closed, receive zero packet")
 		return false, nil
 	}
 
@@ -142,10 +142,9 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 	}
 
 	if system,
-		senderAddr, senderPath,
-		receiverAddr, receiverPath,
+		sender, receiver,
 		messageInstance,
-		err := serialize.DecodeEnvelopWithRemoting(c.codec, msgBuf); err != nil {
+		err := decodeEnvelop(c.codec, msgBuf); err != nil {
 		err = vivid.ErrorRemotingMessageDecodeFailed.With(err)
 		// 发布消息解码失败事件
 		ctx.EventStream().Publish(ctx, ves.RemotingMessageDecodeFailedEvent{
@@ -173,10 +172,10 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 			RemoteAddr:    c.conn.RemoteAddr().String(),
 			MessageType:   messageType,
 			MessageSize:   int(msgLen),
-			ReceiverPath:  receiverPath,
+			Receiver:      receiver,
 		})
 		// 即便是远程消息处理失败，也继续监听连接
-		err = c.envelopHandler.HandleRemotingEnvelop(system, senderAddr, senderPath, receiverAddr, receiverPath, messageInstance)
+		err = c.envelopHandler.HandleRemotingEnvelop(system, sender, receiver, messageInstance)
 		ctx.Tell(ctx.Ref(), c.conn)
 		if err != nil {
 			err = vivid.ErrorRemotingMessageHandleFailed.With(err)

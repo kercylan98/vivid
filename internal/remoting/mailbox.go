@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/remoting/serialize"
+	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
@@ -36,7 +36,7 @@ var (
 	_ vivid.Mailbox = &Mailbox{}
 )
 
-func newMailbox(ctx context.Context, advertiseAddress string, codec vivid.Codec, envelopHandler NetworkEnvelopHandler, actorLiaison vivid.ActorLiaison, remotingServerRef vivid.ActorRef, eventStream vivid.EventStream, options vivid.ActorSystemRemotingOptions) *Mailbox {
+func newMailbox(ctx context.Context, advertiseAddress string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, actorLiaison vivid.ActorLiaison, remotingServerRef vivid.ActorRef, eventStream vivid.EventStream, options vivid.ActorSystemRemotingOptions) *Mailbox {
 	return &Mailbox{
 		ctx:               ctx,
 		options:           options,
@@ -61,7 +61,7 @@ type Mailbox struct {
 	envelopHandler    NetworkEnvelopHandler
 	actorLiaison      vivid.ActorLiaison
 	remotingServerRef vivid.ActorRef
-	codec             vivid.Codec
+	codec             *serialization.VividCodec
 	eventStream       vivid.EventStream
 	backoff           *utils.ExponentialBackoff
 }
@@ -94,24 +94,29 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 		}
 		m.connection = conn
 
-		data, err := m.encodeEnvelopWithLength(envelop)
+		data, err := encodeEnvelop(m.codec, envelop)
 		if err != nil {
 			m.onEncodeFailed(envelop, err)
 			return true, err
 		}
+
+		// 写入消息长度
+		fullData := make([]byte, 4+len(data))
+		binary.BigEndian.PutUint32(fullData, uint32(len(data)))
+		copy(fullData[4:], data)
 
 		if m.connection.Closed() {
 			m.connection = nil
 			return false, fmt.Errorf("connection closed before write")
 		}
 
-		if _, err = m.connection.Write(data); err != nil {
+		if _, err = m.connection.Write(fullData); err != nil {
 			m.connection = nil
 			m.publishMessageSendFailed(envelop, vivid.ErrorRemotingMessageSendFailed.With(err))
 			return false, err
 		}
 
-		m.publishMessageSent(envelop, len(data))
+		m.publishMessageSent(envelop, len(fullData))
 		return true, nil
 	})
 
@@ -155,16 +160,6 @@ func (m *Mailbox) getOrCreateConnection() (*tcpConnectionActor, error) {
 		return nil, err
 	}
 	return v.(*tcpConnectionActor), nil
-}
-
-func (m *Mailbox) encodeEnvelopWithLength(envelop vivid.Envelop) ([]byte, error) {
-	data, err := serialize.EncodeEnvelopWithRemoting(m.codec, envelop)
-	if err != nil {
-		return nil, err
-	}
-	lengthBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuf, uint32(len(data)))
-	return append(lengthBuf, data...), nil
 }
 
 func envelopMessageType(envelop vivid.Envelop) string {

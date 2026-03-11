@@ -9,11 +9,11 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/bridge"
 	"github.com/kercylan98/vivid/internal/chain"
-	"github.com/kercylan98/vivid/internal/cluster"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/internal/scheduler"
+	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/internal/virtual"
 	"github.com/kercylan98/vivid/pkg/log"
@@ -55,6 +55,7 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 
 type System struct {
 	*Context                                                             // ActorSystem 本身就表示了根 Actor
+	codec              *serialization.VividCodec                         // 内部消息编解码器
 	actorOfLock        sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
 	options            *vivid.ActorSystemOptions                         // 系统选项
 	actorContexts      sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
@@ -67,7 +68,6 @@ type System struct {
 	scheduler          *scheduler.Scheduler                              // 调度器
 	status             int32                                             // 系统状态
 	statusLock         sync.Mutex                                        // 系统状态锁
-	clusterContext     *cluster.Context                                  // 集群上下文
 	cancel             context.CancelFunc                                // 上下文停止函数
 	startTime          time.Time                                         // 启动时间，Start() 时记录
 	virtualCoordinator bridge.VirtualCoordinator                         // 虚拟协调器
@@ -91,29 +91,21 @@ func (s *System) GetSystemBasicState() vivid.SystemBasicState {
 	}
 }
 
-func (s *System) InCluster() bool {
-	return s.clusterContext != nil
-}
-
-func (s *System) Cluster() vivid.ClusterContext {
-	return s.clusterContext
-}
-
-func (s *System) HandleRemotingEnvelop(system bool, senderAddr, senderPath, receiverAddr, receiverPath string, messageInstance any) error {
-	var sender, receiver *Ref
+func (s *System) HandleRemotingEnvelop(system bool, sender, receiver string, messageInstance any) error {
+	var senderRef, receiverRef *Ref
 	var err error
-	sender, err = NewRef(senderAddr, senderPath)
+	senderRef, err = ParseRef(sender)
 	if err != nil {
-		s.Logger().Warn("invalid sender ref", log.String("address", senderAddr), log.String("path", senderPath), log.Any("err", err))
-		return fmt.Errorf("%w: invalid sender ref, %s/%s", err, senderAddr, senderPath)
+		s.Logger().Warn("invalid sender ref", log.String("ref", sender), log.Any("err", err))
+		return fmt.Errorf("%w: invalid sender ref, %s", err, sender)
 	}
-	receiver, err = NewRef(receiverAddr, receiverPath)
+	receiverRef, err = ParseRef(receiver)
 	if err != nil {
-		s.Logger().Warn("invalid receiver ref", log.String("address", receiverAddr), log.String("path", receiverPath), log.Any("err", err))
-		return fmt.Errorf("%w: invalid receiver ref, %s/%s", err, receiverAddr, receiverPath)
+		s.Logger().Warn("invalid receiver ref", log.String("ref", receiver), log.Any("err", err))
+		return fmt.Errorf("%w: invalid receiver ref, %s", err, receiver)
 	}
-	receiverMailbox := s.findMailbox(receiver)
-	envelop := mailbox.NewEnvelop(system, sender, receiver, messageInstance)
+	receiverMailbox := s.findMailbox(receiverRef)
+	envelop := mailbox.NewEnvelop(system, senderRef, receiverRef, messageInstance)
 	receiverMailbox.Enqueue(envelop)
 	return nil
 }
@@ -161,10 +153,10 @@ func (s *System) Start() error {
 	s.Logger().Debug("actor system starting")
 
 	startErr := chain.New(chain.WithContext(s.options.Context)).
+		Append(systemChains.initializeCodec(s)).
 		Append(systemChains.spawnGuardActor(s)).
 		Append(systemChains.initializeMetrics(s)).
 		Append(systemChains.initializeRemoting(s)).
-		Append(systemChains.initializeCluster(s)).
 		Append(systemChains.initializeVirtualCoordinator(s)).
 		Run()
 
@@ -209,11 +201,6 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 	}(s)
 	if stateError != nil {
 		return stateError
-	}
-
-	// 优先离开集群（未启用集群时 clusterContext 为 nil）
-	if s.clusterContext != nil {
-		s.clusterContext.Leave()
 	}
 
 	var stopTimeout = sugar.Max(sugar.FirstOrDefault(timeout, s.options.StopTimeout), 0)
