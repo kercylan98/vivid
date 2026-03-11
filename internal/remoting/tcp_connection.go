@@ -2,7 +2,6 @@ package remoting
 
 import (
 	"bufio"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -22,13 +21,21 @@ func newTCPConnectionActor(client bool, conn net.Conn, advertiseAddr string, cod
 	for _, option := range options {
 		option(opts)
 	}
-
+	readTimeout := opts.readTimeout
+	if readTimeout <= 0 {
+		readTimeout = 30 * time.Second
+	}
 	c := &tcpConnectionActor{
-		client:         client,
-		conn:           conn,
-		advertiseAddr:  advertiseAddr,
-		envelopHandler: envelopHandler,
-		codec:          codec,
+		client:            client,
+		conn:              conn,
+		advertiseAddr:     advertiseAddr,
+		envelopHandler:    envelopHandler,
+		codec:             codec,
+		options:           *opts,
+		readTimeout:       readTimeout,
+		heartbeatInterval: opts.heartbeatInterval,
+		stopHeartbeat:     make(chan struct{}),
+		headerBuf:         make([]byte, frameHeaderSize),
 	}
 	return c, c.handshake()
 }
@@ -41,20 +48,38 @@ func withTCPConnectionActorReadFailedHandler(handler vivid.ActorSystemRemotingCo
 	}
 }
 
+func withTCPConnectionActorReadTimeout(d time.Duration) tcpConnectionActorOption {
+	return func(options *tcpConnectionActorOptions) {
+		options.readTimeout = d
+	}
+}
+
+func withTCPConnectionActorHeartbeatInterval(d time.Duration) tcpConnectionActorOption {
+	return func(options *tcpConnectionActorOptions) {
+		options.heartbeatInterval = d
+	}
+}
+
 type tcpConnectionActorOptions struct {
-	readFailedHandler vivid.ActorSystemRemotingConnectionReadFailedHandler
+	readFailedHandler   vivid.ActorSystemRemotingConnectionReadFailedHandler
+	readTimeout         time.Duration
+	heartbeatInterval   time.Duration
 }
 
 // tcpConnectionActor TCP连接实现
 type tcpConnectionActor struct {
-	options        tcpConnectionActorOptions
-	conn           net.Conn
-	codec          *serialization.VividCodec
-	envelopHandler NetworkEnvelopHandler
-	advertiseAddr  string
-	writeCloseLock sync.RWMutex
-	client         bool
-	closed         bool
+	options            tcpConnectionActorOptions
+	conn               net.Conn
+	codec              *serialization.VividCodec
+	envelopHandler     NetworkEnvelopHandler
+	advertiseAddr      string
+	writeCloseLock     sync.RWMutex
+	client             bool
+	closed             bool
+	readTimeout        time.Duration
+	heartbeatInterval  time.Duration
+	stopHeartbeat      chan struct{}
+	headerBuf          []byte
 }
 
 func (c *tcpConnectionActor) OnReceive(ctx vivid.ActorContext) {
@@ -67,8 +92,28 @@ func (c *tcpConnectionActor) OnReceive(ctx vivid.ActorContext) {
 }
 
 func (c *tcpConnectionActor) onLaunch(ctx vivid.ActorContext) {
-	// 启动 reader 循环
+	if c.heartbeatInterval > 0 {
+		go c.runHeartbeat()
+	}
 	ctx.Tell(ctx.Ref(), c.conn)
+}
+
+func (c *tcpConnectionActor) runHeartbeat() {
+	ticker := time.NewTicker(c.heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.stopHeartbeat:
+			return
+		case <-ticker.C:
+			if c.Closed() {
+				return
+			}
+			if _, err := c.Write(heartbeatFrameBytes); err != nil {
+				return
+			}
+		}
+	}
 }
 
 func (c *tcpConnectionActor) onConn(ctx vivid.ActorContext) {
@@ -91,15 +136,13 @@ func (c *tcpConnectionActor) onConn(ctx vivid.ActorContext) {
 }
 
 func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err error) {
-	// 消息读取
+	_ = c.conn.SetReadDeadline(time.Now().Add(c.readTimeout))
 	reader := bufio.NewReader(c.conn)
-	lengthBuf := make([]byte, 4)
-	if _, err = io.ReadFull(reader, lengthBuf); err != nil {
-		// 对等连接已关闭
+	ctrlType, _, data, err := readFrame(reader, c.headerBuf)
+	if err != nil {
 		if errors.Is(err, io.EOF) {
 			return false, nil
 		}
-		// 当消息读取失败时，意味着连接已断开，终止 Actor
 		ctx.EventStream().Publish(ctx, ves.RemotingConnectionClosedEvent{
 			ConnectionRef: ctx.Ref(),
 			RemoteAddr:    c.conn.RemoteAddr().String(),
@@ -111,82 +154,75 @@ func (c *tcpConnectionActor) onReadConn(ctx vivid.ActorContext) (fatal bool, err
 		ctx.Kill(ctx.Ref(), false, err.Error())
 		return true, err
 	}
+	// 每次成功读完整帧后刷新读超时
+	_ = c.conn.SetReadDeadline(time.Now().Add(c.readTimeout))
 
-	// 消息长度，其中 0 表示连接关闭协议
-	msgLen := binary.BigEndian.Uint32(lengthBuf)
-	if msgLen == 0 {
-		_, _ = c.Write(lengthBuf)
-		ctx.Kill(ctx.Ref(), false, "peer closed, receive zero packet")
-		return false, nil
-	}
-
-	// 消息长度超过 4MB 则认为无效
-	if msgLen > 4*1024*1024 {
-		ctx.Logger().Warn("invalid message length", log.Int64("length", int64(msgLen)))
+	switch ctrlType {
+	case FrameCtrlHandshake:
+		// 握手帧应在连接建立时已处理，读循环中收到则忽略并继续
 		ctx.Tell(ctx.Ref(), c.conn)
-		return false, vivid.ErrorInvalidMessageLength.WithMessage(fmt.Sprintf("length: %d", msgLen))
-	}
-	msgBuf := make([]byte, msgLen)
-	if _, err := io.ReadFull(reader, msgBuf); err != nil {
-		// 当消息读取失败时，意味着连接已断开，终止 Actor
+		return false, nil
+	case FrameCtrlHeartbeat:
+		ctx.Tell(ctx.Ref(), c.conn)
+		return false, nil
+	case FrameCtrlClose:
+		_, _ = c.Write(closeFrameBytes)
 		ctx.EventStream().Publish(ctx, ves.RemotingConnectionClosedEvent{
 			ConnectionRef: ctx.Ref(),
 			RemoteAddr:    c.conn.RemoteAddr().String(),
 			LocalAddr:     c.conn.LocalAddr().String(),
 			AdvertiseAddr: c.advertiseAddr,
 			IsClient:      c.client,
-			Reason:        fmt.Sprintf("read message body failed: %v", err),
+			Reason:        "peer sent close frame",
 		})
-		ctx.Kill(ctx.Ref(), false, err.Error())
-		return true, vivid.ErrorReadMessageBufferFailed.With(err)
-	}
-
-	if system,
-		sender, receiver,
-		messageInstance,
-		err := decodeEnvelop(c.codec, msgBuf); err != nil {
-		err = vivid.ErrorRemotingMessageDecodeFailed.With(err)
-		// 发布消息解码失败事件
-		ctx.EventStream().Publish(ctx, ves.RemotingMessageDecodeFailedEvent{
-			ConnectionRef: ctx.Ref(),
-			RemoteAddr:    c.conn.RemoteAddr().String(),
-			MessageSize:   int(msgLen),
-			Error:         err,
-		})
-		// 消息解码不影响连接的正常使用，继续监听连接
-		ctx.Tell(ctx.Ref(), c.conn)
-		ctx.Logger().Warn("decode remote message failed",
-			log.String("sender", ctx.Ref().String()),
-			log.String("receiver", ctx.Ref().GetPath()),
-			log.Any("err", err),
-		)
+		ctx.Kill(ctx.Ref(), false, "peer closed")
 		return false, nil
-	} else {
-		// 发布消息接收成功事件
-		messageType := "unknown"
-		if messageInstance != nil {
-			messageType = reflect.TypeOf(messageInstance).String()
-		}
-		ctx.EventStream().Publish(ctx, ves.RemotingMessageReceivedEvent{
-			ConnectionRef: ctx.Ref(),
-			RemoteAddr:    c.conn.RemoteAddr().String(),
-			MessageType:   messageType,
-			MessageSize:   int(msgLen),
-			Receiver:      receiver,
-		})
-		// 即便是远程消息处理失败，也继续监听连接
-		err = c.envelopHandler.HandleRemotingEnvelop(system, sender, receiver, messageInstance)
-		ctx.Tell(ctx.Ref(), c.conn)
-		if err != nil {
-			err = vivid.ErrorRemotingMessageHandleFailed.With(err)
-			ctx.Logger().Warn("failed to handle remoting message",
+	case FrameCtrlData:
+		// 常规数据：decodeEnvelop + HandleRemotingEnvelop
+		if system, sender, receiver, messageInstance, err := decodeEnvelop(c.codec, data); err != nil {
+			err = vivid.ErrorRemotingMessageDecodeFailed.With(err)
+			ctx.EventStream().Publish(ctx, ves.RemotingMessageDecodeFailedEvent{
+				ConnectionRef: ctx.Ref(),
+				RemoteAddr:    c.conn.RemoteAddr().String(),
+				MessageSize:   len(data),
+				Error:         err,
+			})
+			ctx.Tell(ctx.Ref(), c.conn)
+			ctx.Logger().Warn("decode remote message failed",
 				log.String("sender", ctx.Ref().String()),
 				log.String("receiver", ctx.Ref().GetPath()),
-				log.String("message_type", fmt.Sprintf("%T", messageInstance)),
-				log.String("message", fmt.Sprintf("%+v", messageInstance)),
 				log.Any("err", err),
+				log.String("bytes", fmt.Sprintf("%s", data)),
 			)
+			return false, nil
+		} else {
+			messageType := "unknown"
+			if messageInstance != nil {
+				messageType = reflect.TypeOf(messageInstance).String()
+			}
+			ctx.EventStream().Publish(ctx, ves.RemotingMessageReceivedEvent{
+				ConnectionRef: ctx.Ref(),
+				RemoteAddr:    c.conn.RemoteAddr().String(),
+				MessageType:   messageType,
+				MessageSize:   len(data),
+				Receiver:      receiver,
+			})
+			err = c.envelopHandler.HandleRemotingEnvelop(system, sender, receiver, messageInstance)
+			ctx.Tell(ctx.Ref(), c.conn)
+			if err != nil {
+				err = vivid.ErrorRemotingMessageHandleFailed.With(err)
+				ctx.Logger().Warn("failed to handle remoting message",
+					log.String("sender", ctx.Ref().String()),
+					log.String("receiver", ctx.Ref().GetPath()),
+					log.String("message_type", fmt.Sprintf("%T", messageInstance)),
+					log.String("message", fmt.Sprintf("%+v", messageInstance)),
+					log.Any("err", err),
+				)
+			}
+			return false, nil
 		}
+	default:
+		ctx.Tell(ctx.Ref(), c.conn)
 		return false, nil
 	}
 }
@@ -218,15 +254,10 @@ func (c *tcpConnectionActor) Close() error {
 		return nil
 	}
 	c.closed = true
-
-	// 暂且以长度 0 的数据包作为关闭连接消息，写入成功后不再处理关闭，等待 ACK 关闭
-	data := make([]byte, 4)
-	binary.BigEndian.PutUint32(data, 0)
-	if _, err := c.conn.Write(data); err != nil {
-		// 写入失败时强行关闭
+	close(c.stopHeartbeat)
+	if _, err := c.conn.Write(closeFrameBytes); err != nil {
 		return c.conn.Close()
 	}
-	// 设置读超时
 	return c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 }
 

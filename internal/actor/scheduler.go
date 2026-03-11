@@ -80,7 +80,7 @@ func (s *Scheduler) tell(receiver vivid.ActorRef, message vivid.Message, options
 		Reference: options.Reference,
 		Message:   message,
 	}
-	s.ctx.Logger().Debug("scheduler trigger", log.String("reference", options.Reference), log.Time("time", time.Now()), log.String("messageType", fmt.Sprintf("%T", message)))
+	//s.ctx.Logger().Debug("scheduler trigger", log.String("reference", options.Reference), log.Time("time", time.Now()), log.String("messageType", fmt.Sprintf("%T", message)))
 	if receiver.Equals(s.ctx.Ref()) {
 		s.ctx.TellSelf(schedulerMessage)
 		return

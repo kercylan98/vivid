@@ -121,6 +121,12 @@ func (w *Writer) writeReflect(v reflect.Value) {
 			w.Write(v.Interface().(time.Time).UnixNano())
 			return
 		}
+		// 若该结构体指针类型实现了 MessageCodec，则优先使用其自定义编解码逻辑（适用于包含未导出字段的内部类型）
+		if v.CanAddr() && v.Addr().Type().Implements(messageCodecType) {
+			codec := v.Addr().Interface().(MessageCodec)
+			w.err = codec.Encode(w, v.Addr().Interface())
+			return
+		}
 		// 若能查到该类型的 MessageDesc 则用其 Encode；否则尝试 externalCodec；最后按字段递归写
 		if w.codec != nil {
 			if messageDesc := w.codec.FindMessageDescByType(v.Type()); messageDesc != nil {

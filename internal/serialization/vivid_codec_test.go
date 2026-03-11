@@ -11,7 +11,7 @@ import (
 func TestNewVividCodec(t *testing.T) {
 	c := NewVividCodec(nil)
 	require.NotNil(t, c)
-	assert.NotNil(t, c.fullname2desc)
+	assert.NotNil(t, c.fullName2desc)
 	assert.NotNil(t, c.tof2desc)
 	assert.Nil(t, c.externalCodec)
 
@@ -46,11 +46,11 @@ func TestVividCodec_RegisterMessage_FindMessageDesc(t *testing.T) {
 	descByType := c.FindMessageDescByType(reflect.TypeOf(&my))
 	assert.Equal(t, desc, descByType)
 
-	descByFull := c.FindMessageDescByFullname("test.MyMsg")
+	descByFull := c.FindMessageDescByFullName("test.MyMsg")
 	assert.Equal(t, desc, descByFull)
 
 	assert.Nil(t, c.FindMessageDesc("other", "X"))
-	assert.Nil(t, c.FindMessageDescByFullname("unknown.Foo"))
+	assert.Nil(t, c.FindMessageDescByFullName("unknown.Foo"))
 }
 
 func TestVividCodec_RegisterMessage_DuplicatePanics(t *testing.T) {
@@ -154,7 +154,7 @@ func TestGenerateMessageDescFullname(t *testing.T) {
 		MessageEncoderFN(func(w *Writer, m any) error { return nil }),
 		MessageDecoderFN(func(r *Reader, m any) error { return nil }),
 	))
-	d := c.FindMessageDescByFullname("pkg.X")
+	d := c.FindMessageDescByFullName("pkg.X")
 	require.NotNil(t, d)
 	assert.Equal(t, "pkg", d.Class())
 	assert.Equal(t, "X", d.Name())

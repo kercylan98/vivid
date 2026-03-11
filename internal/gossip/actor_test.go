@@ -37,17 +37,17 @@ func TestActor_Gossip(t *testing.T) {
 		assert.NoError(t, system3.Stop())
 	}()
 
-	gossipRef1, err := system1.ActorOf(gossip.New())
+	gossipRef1, err := system1.ActorOf(gossip.New(system1.Logger()))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef1)
 
-	gossipRef2, err := system2.ActorOf(gossip.New(gossipRef1.Clone()))
+	gossipRef2, err := system2.ActorOf(gossip.New(system2.Logger(), gossipRef1.Clone()))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef2)
 
-	gossipRef3, err := system3.ActorOf(gossip.New(gossipRef1.Clone()))
+	gossipRef3, err := system3.ActorOf(gossip.New(system3.Logger(), gossipRef1.Clone()))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef3)
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(100000 * time.Second)
 }

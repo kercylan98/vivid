@@ -1,5 +1,7 @@
 package serialization
 
+import "reflect"
+
 type MessageCodec interface {
 	MessageEncoder
 	MessageDecoder
@@ -24,3 +26,6 @@ type MessageDecoderFN func(reader *Reader, message any) error
 func (fn MessageDecoderFN) Decode(reader *Reader, message any) error {
 	return fn(reader, message)
 }
+
+// messageCodecType 用于在反射路径下快速判断某个类型是否实现了 MessageCodec。
+var messageCodecType = reflect.TypeOf((*MessageCodec)(nil)).Elem()

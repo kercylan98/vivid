@@ -6,11 +6,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/utils"
 )
 
 var (
-	_ vivid.ActorRef = (*Ref)(nil)
+	_ vivid.ActorRef             = (*Ref)(nil)
+	_ serialization.MessageCodec = (*Ref)(nil)
+	_ serialization.MessageCodec = (*AgentRef)(nil)
 )
 
 const agentFutureMarker = "@future@"
@@ -87,6 +90,18 @@ func (r *Ref) IsVirtual() bool {
 	return false
 }
 
+// Encode implements [serialization.MessageCodec].仅序列化 address、path，不包含 cache。
+func (r *Ref) Encode(writer *serialization.Writer, message any) error {
+	ref := message.(*Ref)
+	return writer.Write(ref.GetAddress(), ref.GetPath()).Err()
+}
+
+// Decode implements [serialization.MessageCodec].
+func (r *Ref) Decode(reader *serialization.Reader, message any) error {
+	ref := message.(*Ref)
+	return reader.Read(&ref.address, &ref.path)
+}
+
 func NewAgentRef(agent *Ref) (*AgentRef, error) {
 	if agent == nil {
 		return nil, vivid.ErrorRefNilAgent
@@ -114,4 +129,16 @@ func (r *Ref) Child(path string) (*Ref, error) {
 		return nil, vivid.ErrorRefInvalidPath
 	}
 	return NewRef(r.address, utils.JoinPath(r.path, path))
+}
+
+// Encode implements [serialization.MessageCodec].仅序列化 ref、agent，不包含 cache。
+func (a *AgentRef) Encode(writer *serialization.Writer, message any) error {
+	agent := message.(*AgentRef)
+	return writer.Write(agent.ref, agent.agent).Err()
+}
+
+// Decode implements [serialization.MessageCodec].
+func (a *AgentRef) Decode(reader *serialization.Reader, message any) error {
+	agent := message.(*AgentRef)
+	return reader.Read(&agent.ref, &agent.agent)
 }

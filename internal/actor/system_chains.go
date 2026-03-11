@@ -3,6 +3,10 @@ package actor
 import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/chain"
+	"github.com/kercylan98/vivid/internal/gossip/endpoint"
+	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
+	"github.com/kercylan98/vivid/internal/gossip/memberlist"
+	"github.com/kercylan98/vivid/internal/gossip/versionvector"
 	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/internal/messages/messagecodecs"
@@ -25,6 +29,8 @@ func (c *_systemChains) initializeCodec(system *System) chain.Chain {
 		registry := newMessageRegistry(system.codec).SetClass("SYS")
 
 		registry.RegisterMessage("*vivid.Error", new(vivid.Error))
+		registry.RegisterMessage("*actor.Ref", new(Ref))
+		registry.RegisterMessage("*actor.AgentRef", new(AgentRef))
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnLaunch", new(vivid.OnLaunch), messagecodecs.OnLaunchEncoder(), messagecodecs.OnLaunchDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKill", new(vivid.OnKill), messagecodecs.OnKillEncoder(), messagecodecs.OnKillDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKilled", new(vivid.OnKilled), messagecodecs.OnKilledEncoder(), messagecodecs.OnKilledDecoder())
@@ -37,6 +43,11 @@ func (c *_systemChains) initializeCodec(system *System) chain.Chain {
 		registry.RegisterMessageWithEncoderAndDecoder("*messages.UnwatchMessage", new(messages.UnwatchMessage), messagecodecs.UnwatchMessageEncoder(), messagecodecs.UnwatchMessageDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*actor.SchedulerMessage", new(SchedulerMessage), messagecodecs.SchedulerMessageEncoder(), messagecodecs.SchedulerMessageDecoder())
 		registry.RegisterMessage("*virtual.Identity", new(virtual.Identity))
+		registry.RegisterMessageWithEncoderAndDecoder("*endpoint.Information", new(endpoint.Information), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
+		registry.RegisterMessage("*memberlist.MemberList", new(memberlist.MemberList))
+		registry.RegisterMessage("*versionvector.VersionVector", new(versionvector.VersionVector))
+		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.Ping", new(gossipmessages.Ping), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.Pong", new(gossipmessages.Pong), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 
 		// 注册用户消息
 		registry.SetClass("USER")

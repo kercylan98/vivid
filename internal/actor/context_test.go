@@ -1845,3 +1845,30 @@ func TestContext_FixedOptions(t *testing.T) {
 		assert.Fail(t, "timeout")
 	}
 }
+
+func TestContext_RemotingAsk(t *testing.T) {
+	system1 := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))
+	system2 := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8081"))
+	defer func() {
+		assert.NoError(t, system1.Stop())
+		assert.NoError(t, system2.Stop())
+	}()
+
+	refA, err := system1.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch m := ctx.Message().(type) {
+		case vivid.ActorRef:
+			ctx.Reply(m)
+		}
+	}))
+	assert.NoError(t, err)
+	assert.NotNil(t, refA)
+
+	reply, err := system1.Ask(refA.Clone(), refA).Result()
+	assert.NoError(t, err)
+
+	replyRef, ok := reply.(vivid.ActorRef)
+	assert.True(t, ok)
+	assert.Equal(t, refA.String(), replyRef.String())
+
+	t.Log(replyRef.String())
+}

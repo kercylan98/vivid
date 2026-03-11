@@ -422,6 +422,8 @@ func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSyste
 		ReconnectMaxDelay:     10 * time.Second,
 		ReconnectFactor:       2.5,
 		ReconnectJitter:       true,
+		ReadTimeout:           30 * time.Second,
+		HeartbeatInterval:     10 * time.Second, // 默认启用心跳，避免空闲连接读超时
 	}
 	for _, opt := range opts {
 		opt(options)
@@ -450,6 +452,12 @@ type ActorSystemRemotingOptions struct {
 
 	// ReconnectJitter 用于配置远程连接的重试退避抖动。
 	ReconnectJitter bool
+
+	// ReadTimeout 读超时时长，用于 SetReadDeadline；每次成功读完整帧后刷新。
+	ReadTimeout time.Duration
+
+	// HeartbeatInterval 心跳发送间隔；为 0 时不发送心跳。默认 10s，保证空闲连接在 ReadTimeout 内能收到心跳。
+	HeartbeatInterval time.Duration
 
 	// TLSConfig 可选；非空时 Remoting 服务端使用 TLS 监听，跨 DC/公网部署时建议启用以保证传输加密与身份校验（如 mTLS）。
 	TLSConfig *tls.Config
@@ -586,6 +594,22 @@ func WithActorSystemRemotingReconnect(limit int, initialDelay, maxDelay time.Dur
 			opts.ReconnectFactor = factor
 		}
 		opts.ReconnectJitter = jitter
+	}
+}
+
+// WithActorSystemRemotingReadTimeout 返回一个 ActorSystemRemotingOption，用于配置读超时时长。
+func WithActorSystemRemotingReadTimeout(d time.Duration) ActorSystemRemotingOption {
+	return func(opts *ActorSystemRemotingOptions) {
+		if d > 0 {
+			opts.ReadTimeout = d
+		}
+	}
+}
+
+// WithActorSystemRemotingHeartbeatInterval 返回一个 ActorSystemRemotingOption，用于配置心跳发送间隔；为 0 时不发送。
+func WithActorSystemRemotingHeartbeatInterval(interval time.Duration) ActorSystemRemotingOption {
+	return func(opts *ActorSystemRemotingOptions) {
+		opts.HeartbeatInterval = interval
 	}
 }
 

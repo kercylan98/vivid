@@ -2,7 +2,6 @@ package remoting
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"net"
 	"reflect"
@@ -100,10 +99,7 @@ func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
 			return true, err
 		}
 
-		// 写入消息长度
-		fullData := make([]byte, 4+len(data))
-		binary.BigEndian.PutUint32(fullData, uint32(len(data)))
-		copy(fullData[4:], data)
+		fullData := dataFrameBytes(data)
 
 		if m.connection.Closed() {
 			m.connection = nil
@@ -136,12 +132,15 @@ func (m *Mailbox) getOrCreateConnection() (*tcpConnectionActor, error) {
 			publishRemotingConnectionFailedEvent(m, m.advertiseAddress, m.advertiseAddress, err, m.backoff.GetAttempt())
 			return nil, err
 		}
-		tcpConn, err := newTCPConnectionActor(true, conn, m.advertiseAddress, m.codec, m.envelopHandler, withTCPConnectionActorReadFailedHandler(m.options.ConnectionReadFailedHandler))
+		tcpConn, err := newTCPConnectionActor(true, conn, m.advertiseAddress, m.codec, m.envelopHandler,
+			withTCPConnectionActorReadFailedHandler(m.options.ConnectionReadFailedHandler),
+			withTCPConnectionActorReadTimeout(m.options.ReadTimeout),
+			withTCPConnectionActorHeartbeatInterval(m.options.HeartbeatInterval))
 		if err != nil {
 			m.actorLiaison.Logger().Warn("handshake failed", log.String("advertise_address", m.advertiseAddress), log.Any("err", err))
 			return nil, vivid.ErrorRemotingHandshakeFailed.With(err)
 		}
-		m.actorLiaison.Logger().Debug("handshake success", log.String("advertise_address", m.advertiseAddress))
+		// m.actorLiaison.Logger().Debug("handshake success", log.String("advertise_address", m.advertiseAddress))
 
 		if m.ctx.Err() != nil {
 			_ = tcpConn.Close()

@@ -55,7 +55,10 @@ func (a *serverAcceptActor) onAccept(ctx vivid.ActorContext) {
 
 	go func() {
 		// 异步握手
-		connActor, err := newTCPConnectionActor(false, conn, a.advertiseAddr, a.codec, a.envelopHandler, withTCPConnectionActorReadFailedHandler(a.options.ConnectionReadFailedHandler))
+		connActor, err := newTCPConnectionActor(false, conn, a.advertiseAddr, a.codec, a.envelopHandler,
+			withTCPConnectionActorReadFailedHandler(a.options.ConnectionReadFailedHandler),
+			withTCPConnectionActorReadTimeout(a.options.ReadTimeout),
+			withTCPConnectionActorHeartbeatInterval(a.options.HeartbeatInterval))
 		if err != nil {
 			ctx.Logger().Warn("handshake failed", log.String("advertise_addr", a.advertiseAddr), log.Any("err", err))
 			return

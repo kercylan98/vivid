@@ -8,7 +8,13 @@ import (
 	"time"
 )
 
+var builtInInstanceTypes = make(map[reflect.Type]reflect.Type)
 var timeType = reflect.TypeOf((*time.Time)(nil)).Elem()
+
+func RegisterBuiltInInstanceType[T any](tmpl any) {
+	tof := reflect.TypeOf((*T)(nil)).Elem()
+	builtInInstanceTypes[tof] = reflect.TypeOf(tmpl)
+}
 
 type Reader struct {
 	buf   []byte
@@ -163,8 +169,15 @@ func (r *Reader) readReflect(v reflect.Value) {
 			v.Set(vv)
 		}
 	case reflect.Interface:
-		// 无法从无类型信息的数据反序列化到 interface，需上层约定类型
-		r.err = fmt.Errorf("serialization: cannot Read into interface{}")
+		if insType, ok := builtInInstanceTypes[v.Type()]; ok {
+			orig := reflect.New(insType)
+			r.readReflect(orig.Elem())
+			if r.err == nil {
+				v.Set(orig.Elem())
+			}
+		} else {
+			r.err = fmt.Errorf("serialization: cannot Read into interface{}, %s", v.Type())
+		}
 	case reflect.Slice:
 		n, err := r.readUint32()
 		if err != nil {
@@ -224,6 +237,13 @@ func (r *Reader) readReflect(v reflect.Value) {
 				return
 			}
 			v.Set(reflect.ValueOf(time.Unix(0, unixNano)))
+			return
+		}
+
+		// 若该结构体指针类型实现了 MessageCodec，则优先使用其自定义解码逻辑（适用于包含未导出字段的内部类型）
+		if v.CanAddr() && v.Addr().Type().Implements(messageCodecType) {
+			codec := v.Addr().Interface().(MessageCodec)
+			r.err = codec.Decode(r, v.Addr().Interface())
 			return
 		}
 
