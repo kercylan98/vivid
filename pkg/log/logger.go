@@ -85,6 +85,7 @@ func NewLogger(options ...Option) Logger {
 func NewTextLogger(options ...Option) Logger {
 	return NewLogger(append([]Option{
 		WithConsoleOutput(os.Stderr, OutputText, true),
+		WithErrorStack(true),
 	}, options...)...)
 }
 

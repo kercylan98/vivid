@@ -62,8 +62,12 @@ func (h *VividHandler) Handle(_ context.Context, record slog.Record) error {
 	}
 
 	var attrs []flatAttr
-	var foundErr error
-	h.collectAttrs(&attrs, &foundErr, record)
+	var foundErrs []struct {
+		key string
+		err error
+	}
+	var foundStacks []customStackBlock
+	h.collectAttrs(&attrs, &foundErrs, &foundStacks, record)
 
 	for _, output := range h.outputs {
 		if record.Level < output.level.Level() {
@@ -82,8 +86,19 @@ func (h *VividHandler) Handle(_ context.Context, record slog.Record) error {
 			entry.Source = formatSource(record.PC)
 		}
 
-		if output.enableErrorStack && foundErr != nil {
-			entry.ErrorStack = extractErrorStack(foundErr)
+		if output.enableErrorStack {
+			if len(foundStacks) > 0 {
+				entry.CustomStacks = foundStacks
+			} else if len(foundErrs) > 0 {
+				entry.ErrorStacks = make([]errorStackItem, 0, len(foundErrs))
+				for _, e := range foundErrs {
+					entry.ErrorStacks = append(entry.ErrorStacks, errorStackItem{
+						Key:     e.key,
+						Message: e.err.Error(),
+						Stack:   extractErrorStack(e.err),
+					})
+				}
+			}
 		}
 
 		formatted, err := formatEntry(entry, output)
@@ -260,13 +275,47 @@ func (r *rateLimiter) OnDrop(now time.Time) (bool, int64) {
 	return false, 0
 }
 
+// errorStackItem 表示一个 error 的堆栈信息，用于按顺序、带字段名输出多份堆栈。
+type errorStackItem struct {
+	Key     string // 字段名，如 "err"
+	Message string // err.Error()
+	Stack   string
+}
+
+// stackAttrValue 为 log.Stack 使用的 Attr 值类型，Handler 据此识别并单独渲染堆栈块，不参与主行属性展示。
+type stackAttrValue struct {
+	Stacks [][]byte
+}
+
+// customStackBlock 表示一条 log.Stack 收集到的堆栈块（一个 key 对应多份堆栈）。
+type customStackBlock struct {
+	Key    string
+	Stacks [][]byte
+}
+
 type logEntry struct {
-	Time       time.Time
-	Level      slog.Level
-	Message    string
-	Source     string
-	Attrs      []flatAttr
-	ErrorStack string
+	Time         time.Time
+	Level        slog.Level
+	Message      string
+	Source       string
+	Attrs        []flatAttr
+	ErrorStacks  []errorStackItem   // 来自 error 属性
+	CustomStacks []customStackBlock // 来自 log.Stack，若非空则不再显示 ErrorStacks
+}
+
+// Stack 返回一个用于附加到日志记录的 Attr，会在该条日志下方按与 error 堆栈相同格式输出堆栈。
+// key 为堆栈块标题的字段名；stacks 可传多份堆栈，若不传则自动生成当前调用栈。
+// 若同一条日志中使用了 Stack，则不再显示该条日志中 error 属性的堆栈。
+func Stack(key string, stacks ...[]byte) slog.Attr {
+	if len(stacks) == 0 {
+		stacks = [][]byte{debug.Stack()}
+	}
+	// 拷贝一份，避免调用方后续修改
+	cp := make([][]byte, len(stacks))
+	for i := range stacks {
+		cp[i] = append([]byte(nil), stacks[i]...)
+	}
+	return slog.Any(key, stackAttrValue{Stacks: cp})
 }
 
 type flatAttr struct {
@@ -331,6 +380,8 @@ func makeOutputWriter(options *HandlerConfig, output OutputOptions, writer io.Wr
 		enableErrorStack = *output.EnableErrorStack
 	}
 
+	output.Color = output.Color || !noColor
+
 	return outputWriter{
 		writer:           writer,
 		format:           output.Format,
@@ -343,18 +394,24 @@ func makeOutputWriter(options *HandlerConfig, output OutputOptions, writer io.Wr
 	}
 }
 
-func (h *VividHandler) collectAttrs(out *[]flatAttr, foundErr *error, record slog.Record) {
+func (h *VividHandler) collectAttrs(out *[]flatAttr, foundErrs *[]struct {
+	key string
+	err error
+}, foundStacks *[]customStackBlock, record slog.Record) {
 	groups := append([]string{}, h.groups...)
 	for _, attr := range h.attrs {
-		h.appendAttr(out, groups, attr, foundErr)
+		h.appendAttr(out, groups, attr, foundErrs, foundStacks)
 	}
 	record.Attrs(func(attr slog.Attr) bool {
-		h.appendAttr(out, groups, attr, foundErr)
+		h.appendAttr(out, groups, attr, foundErrs, foundStacks)
 		return true
 	})
 }
 
-func (h *VividHandler) appendAttr(out *[]flatAttr, groups []string, attr slog.Attr, foundErr *error) {
+func (h *VividHandler) appendAttr(out *[]flatAttr, groups []string, attr slog.Attr, foundErrs *[]struct {
+	key string
+	err error
+}, foundStacks *[]customStackBlock) {
 	if attr.Equal(slog.Attr{}) {
 		return
 	}
@@ -369,7 +426,7 @@ func (h *VividHandler) appendAttr(out *[]flatAttr, groups []string, attr slog.At
 		groupAttrs := attr.Value.Group()
 		nextGroups := append(append([]string{}, groups...), attr.Key)
 		for _, groupAttr := range groupAttrs {
-			h.appendAttr(out, nextGroups, groupAttr, foundErr)
+			h.appendAttr(out, nextGroups, groupAttr, foundErrs, foundStacks)
 		}
 		return
 	}
@@ -377,9 +434,25 @@ func (h *VividHandler) appendAttr(out *[]flatAttr, groups []string, attr slog.At
 	keyPath := append(append([]string{}, groups...), attr.Key)
 	value := valueToAny(attr.Value)
 
-	if foundErr != nil && *foundErr == nil {
+	if foundStacks != nil {
+		if sv, ok := value.(stackAttrValue); ok {
+			*foundStacks = append(*foundStacks, customStackBlock{
+				Key:    strings.Join(keyPath, "."),
+				Stacks: sv.Stacks,
+			})
+			return // 不加入主行 attrs
+		}
+	}
+
+	if foundErrs != nil {
 		if err, ok := value.(error); ok {
-			*foundErr = err
+			*foundErrs = append(*foundErrs, struct {
+				key string
+				err error
+			}{
+				key: strings.Join(keyPath, "."),
+				err: err,
+			})
 		}
 	}
 
@@ -428,7 +501,18 @@ func formatText(entry logEntry, output outputWriter) []byte {
 	appendSource(&buffer, entry.Source, output.color)
 	appendMessage(&buffer, entry.Message, output.color)
 	appendAttrsText(&buffer, entry.Attrs, output.color)
-	appendStack(&buffer, entry.ErrorStack, output.color)
+	for _, block := range entry.CustomStacks {
+		for _, stack := range block.Stacks {
+			if len(stack) > 0 {
+				buffer.Write(formatStackBlockWithHeader(block.Key, "", string(stack), output.color))
+			}
+		}
+	}
+	for _, item := range entry.ErrorStacks {
+		if item.Stack != "" {
+			buffer.Write(formatStackBlockWithHeader(item.Key, item.Message, item.Stack, output.color))
+		}
+	}
 	buffer.WriteByte('\n')
 	return buffer.Bytes()
 }
@@ -492,16 +576,38 @@ func appendAttrsText(buffer *bytes.Buffer, attrs []flatAttr, color bool) {
 	}
 }
 
-func appendStack(buffer *bytes.Buffer, stack string, color bool) {
+// formatStackBlockWithHeader 返回带堆栈头的堆栈块：[字段名] message：\n 再每行缩进输出堆栈。message 为空时头为 [key]:。
+func formatStackBlockWithHeader(key, message, stack string, color bool) []byte {
 	if stack == "" {
-		return
+		return nil
 	}
-	buffer.WriteByte(' ')
-	content := "error_stack=" + stack
+	var header string
+	if message != "" {
+		headerMsg := strings.ReplaceAll(message, "\n", " ")
+		header = "[" + key + "] " + headerMsg + ":"
+	} else {
+		header = "[" + key + "]:"
+	}
 	if color {
-		content = colorizeText(colorBrightRed, content)
+		header = colorizeText(colorBrightRed, header)
 	}
-	buffer.WriteString(content)
+	stack = strings.ReplaceAll(stack, "\\n", "\n")
+	stack = strings.TrimSuffix(stack, "\n")
+	lines := strings.Split(stack, "\n")
+	var b bytes.Buffer
+	b.WriteByte('\n')
+	b.WriteString(header)
+	b.WriteByte('\n')
+	const indent = "    "
+	for _, line := range lines {
+		b.WriteString(indent)
+		if color {
+			line = colorizeText(colorBrightRed, line)
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.Bytes()
 }
 
 func formatValue(value any) string {
@@ -550,9 +656,6 @@ func formatJSON(entry logEntry, output outputWriter) ([]byte, error) {
 	if entry.Source != "" {
 		payload["source"] = entry.Source
 	}
-	if entry.ErrorStack != "" {
-		payload["error_stack"] = entry.ErrorStack
-	}
 
 	for _, attr := range entry.Attrs {
 		setNestedValue(payload, attr.keyPath, normalizeJSONValue(attr.value, output.timeFormat))
@@ -563,6 +666,18 @@ func formatJSON(entry logEntry, output outputWriter) ([]byte, error) {
 		return nil, err
 	}
 	data = append(data, '\n')
+	for _, block := range entry.CustomStacks {
+		for _, stack := range block.Stacks {
+			if len(stack) > 0 {
+				data = append(data, formatStackBlockWithHeader(block.Key, "", string(stack), output.color)...)
+			}
+		}
+	}
+	for _, item := range entry.ErrorStacks {
+		if item.Stack != "" {
+			data = append(data, formatStackBlockWithHeader(item.Key, item.Message, item.Stack, output.color)...)
+		}
+	}
 	return data, nil
 }
 
