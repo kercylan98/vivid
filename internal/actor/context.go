@@ -1,7 +1,6 @@
 package actor
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"runtime/debug"
@@ -693,7 +692,7 @@ func (c *Context) failed(fault vivid.Message) {
 	// 记录第一现场，且挂起当前 Actor 的消息处理并且向父级 Actor 发送监督上下文以触发父级 Actor 的监督策略
 	c.mailbox.Pause()
 	supervisionContext := newSupervisionContext(c.ref, fault)
-	c.Logger().Error("supervision: actor failed", log.String("id", supervisionContext.ID()), log.String("path", c.ref.GetPath()), log.String("fault_type", fmt.Sprintf("%T", fault)), log.Any("fault", fault), log.Any("stack", errors.New(string(supervisionContext.FaultStack()))))
+	c.Logger().Error("supervision: actor failed", log.String("id", supervisionContext.ID()), log.String("path", c.ref.GetPath()), log.String("fault_type", fmt.Sprintf("%T", fault)), log.Any("fault", fault), log.Stack("stack", supervisionContext.FaultStack()))
 
 	c.tell(true, c.parent, supervisionContext)
 	// 通知事件流
