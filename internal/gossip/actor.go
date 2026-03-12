@@ -90,8 +90,6 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 		a.onStatusChanged(ctx, m)
 	case *vivid.OnKill:
 		a.onKill(ctx, m)
-	case *gossipmessages.LeaveCluster:
-		a.onLeaveCluster(ctx)
 	}
 }
 
@@ -147,6 +145,9 @@ func (a *Actor) onUp(ctx vivid.ActorContext) {
 func (a *Actor) onConverged(ctx vivid.ActorContext) {
 	ctx.Logger().Debug("cluster converged")
 
+	a.view.cleanRemovedMembers(a.info)
+
+	// 自身状态迁移
 	switch a.info.Status {
 	case endpoint.StatusLeaving:
 		changeStatus(ctx, a, EventExiting)
@@ -217,9 +218,6 @@ func (a *Actor) onRemoved(ctx vivid.ActorContext) {
 	// 已离开集群，结束多阶段流程
 	ctx.Logger().Debug("removed from cluster")
 	close(a.phaseKillCompleted)
-}
-func (a *Actor) onLeaveCluster(ctx vivid.ActorContext) {
-	// 处理其他节点离开集群
 }
 
 // onSpreadGossip 向 targets 发 Ping 并同步处理每个 Pong；targets 为空时从视图中取最多 GossipPeersLimit 个 Up 节点作为目标。

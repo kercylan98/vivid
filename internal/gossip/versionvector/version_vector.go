@@ -140,3 +140,8 @@ func (v *VersionVector) Fingerprint() string {
 	}
 	return b.String()
 }
+
+// Remove 从版本向量中移除指定 key。
+func (v *VersionVector) Remove(key string) {
+	delete(v.m, key)
+}

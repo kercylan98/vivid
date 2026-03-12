@@ -3,6 +3,7 @@ package gossip
 import (
 	"strings"
 
+	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/memberlist"
 	"github.com/kercylan98/vivid/internal/gossip/versionvector"
 	"github.com/kercylan98/vivid/pkg/log"
@@ -10,7 +11,7 @@ import (
 
 // ClusterView 本节点维护的集群视图：成员列表与版本向量，用于因果合并与 peer 选择。
 type ClusterView struct {
-	members *memberlist.MemberList   // 已知节点信息，key 为节点 ID（ActorRef.String()）
+	members *memberlist.MemberList       // 已知节点信息，key 为节点 ID（ActorRef.String()）
 	version *versionvector.VersionVector // 节点 ID -> 版本计数，用于判断视图新旧与合并
 }
 
@@ -34,4 +35,20 @@ func (v *ClusterView) Fingerprint() string {
 		return ""
 	}
 	return strings.Join([]string{v.version.Fingerprint(), v.members.Fingerprint()}, "|")
+}
+
+// cleanRemovedMembers 清理已移除的节点。
+func (v *ClusterView) cleanRemovedMembers(info *endpoint.Information) {
+	members := v.Members()
+	var removed bool
+	for _, member := range members.List() {
+		if member.Status == endpoint.StatusRemoved {
+			members.Remove(member.ActorRef)
+			v.Version().Remove(member.ActorRef.String())
+			removed = true
+		}
+	}
+	if removed {
+		v.Version().Increment(info.ID())
+	}
 }

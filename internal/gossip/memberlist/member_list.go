@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
@@ -123,4 +124,18 @@ func (m *MemberList) Fingerprint() string {
 		b.WriteString(m.members[k].Status.String())
 	}
 	return b.String()
+}
+
+// Remove 从成员列表中移除指定节点。
+func (m *MemberList) Remove(ref vivid.ActorRef) {
+	delete(m.members, ref.String())
+}
+
+// List 返回成员列表。
+func (m *MemberList) List() []*endpoint.Information {
+	list := make([]*endpoint.Information, 0, len(m.members))
+	for _, member := range m.members {
+		list = append(list, member)
+	}
+	return list
 }
