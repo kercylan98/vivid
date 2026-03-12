@@ -2,7 +2,9 @@
 package memberlist
 
 import (
-	"github.com/kercylan98/vivid"
+	"sort"
+	"strings"
+
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
@@ -39,37 +41,20 @@ func (m *MemberList) Encode(writer *serialization.Writer, message any) error {
 	return writer.Write(msg.members).Err()
 }
 
-// Add 将节点加入列表；若该节点已存在则返回 ErrorGossipMemberAlreadyExists，用于保证新成员唯一加入。
-func (m *MemberList) Add(info *endpoint.Information) error {
-	if info == nil {
-		return vivid.ErrorGossipInvalidMember.WithMessage("info is nil")
-	}
-
-	if _, ok := m.members[info.ActorRef.String()]; ok {
-		return vivid.ErrorGossipMemberAlreadyExists.WithMessage(info.ActorRef.String())
-	}
-
-	m.members[info.ActorRef.String()] = info
-	return nil
-}
-
 // Upsert 添加或覆盖指定节点信息（同一 ID 直接覆盖），用于本节点状态写回与 gossip 传播后的更新。
-func (m *MemberList) Upsert(info *endpoint.Information) {
-	if info == nil || m.members == nil {
-		return
-	}
+//
+// 如果节点信息不存在，则返回 true，否则返回 false。
+func (m *MemberList) Upsert(info *endpoint.Information) (isNew bool) {
 	key := info.ActorRef.String()
-	if local, ok := m.members[key]; !ok {
-		m.logger.Debug("upsert member", log.String("ref", key), log.String("status", info.Status.String()))
-	} else {
-		if local.Status != info.Status {
-			m.logger.Debug("member status changed", log.String("ref", key), log.String("before", local.Status.String()), log.String("current", info.Status.String()))
-		}
+	old, exists := m.members[key]
+	if exists && old.Status != info.Status {
+		m.logger.Debug("member status changed", log.String("ref", info.ActorRef.String()), log.String("before", old.Status.String()), log.String("current", info.Status.String()))
 	}
 	m.members[key] = info
+	return !exists
 }
 
-// Unseens 从列表中选取最多 limit 个 StatusUp 的节点（排除 local 自身），用于本轮 gossip 的 peer 选择。
+// Unseens 从列表中选取最多 limit 个 StatusUp 或 StatusLeaving 的节点（排除 local 自身），用于本轮 gossip 的 peer 选择。
 func (m *MemberList) Unseens(local *endpoint.Information, limit int) []*endpoint.Information {
 	if limit <= 0 || len(m.members) == 0 {
 		return nil
@@ -82,7 +67,8 @@ func (m *MemberList) Unseens(local *endpoint.Information, limit int) []*endpoint
 		}
 
 		switch member.Status {
-		case endpoint.StatusUp:
+		case endpoint.StatusJoining, endpoint.StatusRemoved:
+		default:
 			out = append(out, member)
 		}
 
@@ -104,13 +90,37 @@ func (m *MemberList) Merge(other *MemberList) {
 	}
 
 	for _, member := range other.members {
-		beforeStatus := endpoint.StatusNone
-		if localMember, ok := m.members[member.ActorRef.String()]; ok {
-			beforeStatus = localMember.Status
+		localMember, ok := m.members[member.ActorRef.String()]
+		if ok {
+			if localMember.Status != member.Status {
+				m.logger.Debug("member status changed", log.String("ref", member.ActorRef.String()), log.String("before", localMember.Status.String()), log.String("current", member.Status.String()))
+			}
+		} else {
+			m.logger.Debug("member added", log.String("ref", member.ActorRef.String()), log.String("status", member.Status.String()))
 		}
-
-		m.logger.Debug("member status changed", log.String("ref", member.ActorRef.String()), log.String("before", beforeStatus.String()), log.String("current", member.Status.String()))
 
 		m.members[member.ActorRef.String()] = member
 	}
+}
+
+// Fingerprint 返回确定性的成员列表指纹（按节点 ID 排序，每项为 id+status），用于收敛检测。
+func (m *MemberList) Fingerprint() string {
+	if m == nil || len(m.members) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(m.members))
+	for k := range m.members {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(k)
+		b.WriteByte(':')
+		b.WriteString(m.members[k].Status.String())
+	}
+	return b.String()
 }

@@ -424,6 +424,7 @@ func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSyste
 		ReconnectJitter:       true,
 		ReadTimeout:           30 * time.Second,
 		HeartbeatInterval:     10 * time.Second, // 默认启用心跳，避免空闲连接读超时
+		StopTimeout:           10 * time.Minute,
 	}
 	for _, opt := range opts {
 		opt(options)
@@ -461,6 +462,9 @@ type ActorSystemRemotingOptions struct {
 
 	// TLSConfig 可选；非空时 Remoting 服务端使用 TLS 监听，跨 DC/公网部署时建议启用以保证传输加密与身份校验（如 mTLS）。
 	TLSConfig *tls.Config
+
+	// StopTimeout 停止超时时间，用于配置远程通信组件的停止超时时间。
+	StopTimeout time.Duration
 }
 
 // WithActorSystemRemotingOptions 返回一个 ActorSystemOption，用于批量配置 ActorSystem 远程通信的高级选项。

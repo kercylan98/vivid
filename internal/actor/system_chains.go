@@ -17,6 +17,16 @@ import (
 	"github.com/kercylan98/vivid/pkg/metrics"
 )
 
+const (
+	remotingActorName = "@remoting"
+	metricsActorName  = "@metrics"
+)
+
+const (
+	remotingStopPriority = 100
+	metricsStopPriority  = 50
+)
+
 var systemChains = &_systemChains{}
 
 type _systemChains struct{}
@@ -77,8 +87,14 @@ func (c *_systemChains) initializeMetrics(system *System) chain.Chain {
 		}
 		if system.options.EnableMetrics {
 			ma := metricsActor.NewActor(system.options.EnableMetricsUpdatedNotify)
-			_, err = system.ActorOf(ma, vivid.WithActorName("@metrics"))
-			return err
+			ref, err := system.ActorOf(ma, vivid.WithActorName(metricsActorName))
+			if err != nil {
+				return err
+			}
+			system.TellSelf(&guard.RegisterStopPriority{
+				ActorRef: ref,
+				Priority: metricsStopPriority,
+			})
 		}
 		return nil
 	})
@@ -99,8 +115,15 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 			*system.options.RemotingOptions,
 		)
 		system.options.Logger = system.options.Logger.With("addr", system.options.RemotingAdvertiseAddress)
-		_, err = system.ActorOf(system.remotingServer, vivid.WithActorName("@remoting"))
-		return err
+		ref, err := system.ActorOf(system.remotingServer, vivid.WithActorName(remotingActorName))
+		if err != nil {
+			return err
+		}
+		system.TellSelf(&guard.RegisterStopPriority{
+			ActorRef: ref,
+			Priority: remotingStopPriority,
+		})
+		return nil
 	})
 }
 

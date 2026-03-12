@@ -32,9 +32,19 @@ func TestActor_Gossip(t *testing.T) {
 	assert.NoError(t, system3.Start())
 
 	defer func() {
-		assert.NoError(t, system1.Stop())
-		assert.NoError(t, system2.Stop())
-		assert.NoError(t, system3.Stop())
+		done := make(chan struct{})
+		go func() {
+			assert.NoError(t, system1.Stop())
+			assert.NoError(t, system2.Stop())
+			assert.NoError(t, system3.Stop())
+			close(done)
+		}()
+
+		select {
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout")
+		case <-done:
+		}
 	}()
 
 	gossipRef1, err := system1.ActorOf(gossip.New(system1.Logger()))
@@ -49,5 +59,5 @@ func TestActor_Gossip(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef3)
 
-	time.Sleep(100000 * time.Second)
+	time.Sleep(1 * time.Second)
 }

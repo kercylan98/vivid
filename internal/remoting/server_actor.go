@@ -216,6 +216,9 @@ func (s *ServerActor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
 }
 
 func (s *ServerActor) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
+	if ctx.Ref().Equals(message.Ref) {
+		ctx.Logger().Debug("Remoting closed")
+	}
 	switch {
 	case s.acceptConnections[message.Ref.GetPath()] != nil:
 		// 如果是维护的连接销毁，从集合中移除

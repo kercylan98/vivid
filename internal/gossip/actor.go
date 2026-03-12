@@ -2,7 +2,6 @@
 package gossip
 
 import (
-	"fmt"
 	"slices"
 	"time"
 
@@ -18,6 +17,12 @@ const (
 	GossipInterval = time.Second / 5
 	// GossipPeersLimit 单轮 gossip 最多选择的 peer 数量，用于控制扇出与负载。
 	GossipPeersLimit = 5
+	// PhaseKillTimeout 多阶段终止的等待超时，超时后仍执行 doKill。
+	PhaseKillTimeout = 10 * time.Second
+)
+
+const (
+	singleSchedulerReference = "single"
 )
 
 var (
@@ -46,12 +51,26 @@ type Actor struct {
 	view *ClusterView
 	// backoff Joining 阶段向种子发 Ping 失败时的退避策略，用于重试间隔。
 	backoff *utils.ExponentialBackoff
+	// 收敛检测：视图指纹连续不变时投递 Converged，视图变化后重置以便再次收敛时投递。
+	lastViewFingerprint string
+	// 是否已经投递过 Converged 消息
+	convergedEmitted bool
+	// 连续不变的轮次
+	stableRounds int
+	// 多阶段终止流程完成信号。
+	phaseKillCompleted chan struct{}
 }
 
 // OnPrelaunch 在 Actor 启动前执行：创建本节点 Information 并加入本地视图的成员列表。
 func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
+	a.phaseKillCompleted = make(chan struct{})
+	if err := ctx.WithPhaseKill(a.phaseKillCompleted, PhaseKillTimeout, a.OnReceive); err != nil {
+		return err
+	}
+
 	a.info = endpoint.NewInformation(ctx.Ref())
-	return a.view.Members().Add(a.info)
+	a.view.Members().Upsert(a.info)
+	return nil
 }
 
 // OnReceive 消息入口：分发 OnLaunch、Ping、Pong 及调度回调（func(vivid.ActorContext)）。
@@ -60,96 +79,160 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 	case *vivid.OnLaunch:
 		a.onLaunch(ctx)
 	case *gossipmessages.Ping:
-		a.handlePing(ctx, m)
+		a.onPing(ctx, m)
 	case *gossipmessages.Pong:
-		a.handlePong(ctx, m)
-	case func(vivid.ActorContext):
-		m(ctx)
+		a.onPong(ctx, m)
+	case *gossipmessages.SpreadGossip:
+		a.onSpreadGossip(ctx)
+	case *gossipmessages.Converged:
+		a.onConverged(ctx)
+	case endpoint.Status:
+		a.onStatusChanged(ctx, m)
+	case *vivid.OnKill:
+		a.onKill(ctx, m)
+	case *gossipmessages.LeaveCluster:
+		a.onLeaveCluster(ctx)
 	}
 }
 
-// onLaunch 根据是否有种子决定初始状态：无种子发 EventBootstrap 直接 Up，有种子发 EventJoinRequested 进入 Joining。
+func (a *Actor) onStatusChanged(ctx vivid.ActorContext, status endpoint.Status) {
+	switch status {
+	case endpoint.StatusJoining:
+		a.onJoining(ctx)
+	case endpoint.StatusUp:
+		a.onUp(ctx)
+	case endpoint.StatusLeaving:
+		a.onLeaving(ctx)
+	case endpoint.StatusExiting:
+		a.onExiting(ctx)
+	case endpoint.StatusRemoved:
+		a.onRemoved(ctx)
+	default:
+	}
+}
+
+// onLaunch 根据是否有种子决定初始状态：无种子发 EventBootstrap 直接 Up，有种子发 EventJoinRequested 进入 Joining；并注册多阶段终止以支持优雅退出。
 func (a *Actor) onLaunch(ctx vivid.ActorContext) {
-	if len(a.seeds) == 0 {
-		SendEvent(ctx, a, EventBootstrap)
-		return
-	}
-	SendEvent(ctx, a, EventJoinRequested)
+	changeStatusWithIf(ctx, a, len(a.seeds) == 0, EventBootstrap, EventJoining)
 }
 
-// handlePing 处理收到的 Ping：将发送方加入视图（新成员则合并其版本并触发一次 gossip）、若对方视图更新则合并，最后回 Pong。
-func (a *Actor) handlePing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
-	if a.view.Members().Add(ping.Info) == nil {
-		a.view.Version().Merge(ping.Version)
-		ctx.Tell(ctx.Ref(), func(ctx vivid.ActorContext) { a.SendPingTo(ctx) })
+func (a *Actor) onJoining(ctx vivid.ActorContext) {
+	if a.info.Status != endpoint.StatusJoining {
+		return // 如果当前状态不是 Joining，则不进行重试，虽然只是 gossip 同步，但是会增加不必要的开销
 	}
+
+	if a.backoff.GetAttempt() == 0 {
+		ctx.Logger().Debug("joining cluster", log.String("seeds", vivid.ActorRefs(a.seeds).String()))
+	}
+
+	ping := gossipmessages.NewPing(a.info, a.view.Members(), a.view.Version())
+	for _, seed := range a.seeds {
+		ctx.Tell(seed, ping)
+	}
+
+	if err := ctx.Scheduler().Once(ctx.Ref(), a.backoff.Next(), endpoint.StatusJoining); err != nil {
+		// 报告故障以可以支持监管者重启
+		ctx.Failed(vivid.ErrorGossipScheduleFailed.With(err).WithMessage("failed to schedule joining"))
+	}
+}
+
+func (a *Actor) onUp(ctx vivid.ActorContext) {
+	// 注册周期任务，按 [GossipInterval] 向视图中节点发起 gossip。
+	spreadGossipMessage := gossipmessages.NewSpreadGossip()
+	if err := ctx.Scheduler().Loop(ctx.Ref(), GossipInterval, spreadGossipMessage, vivid.WithSchedulerReference(singleSchedulerReference)); err != nil {
+		// 报告故障以可以支持监管者重启
+		ctx.Failed(vivid.ErrorGossipScheduleFailed.With(err).WithMessage("failed to schedule spread gossip"))
+	}
+}
+func (a *Actor) onConverged(ctx vivid.ActorContext) {
+	ctx.Logger().Debug("cluster converged")
+
+	switch a.info.Status {
+	case endpoint.StatusLeaving:
+		changeStatus(ctx, a, EventExiting)
+	case endpoint.StatusExiting:
+		changeStatus(ctx, a, EventRemoved)
+	}
+}
+
+// onPing 处理收到的 Ping 消息：
+//   - 仅当对方在该成员 key 上的版本不旧于本地时，才接受发送方的自描述（避免迟到 Ping 用旧状态覆盖已更新的视图）。
+//   - 若对方整体版本更新（IsBefore），则合并其整表成员与版本。
+//   - 最后回复 Pong，带上当前节点信息、成员列表和版本向量。
+func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
+	id := ping.Info.ID()
+	if ping.Version.Get(id) >= a.view.Version().Get(id) {
+		isNew := a.view.Members().Upsert(ping.Info)
+		a.view.Version().Merge(ping.Version)
+		if isNew {
+			ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip())
+		}
+	}
+
+	// 如果对方版本更新，则合并其成员与版本
 	if a.view.Version().IsBefore(ping.Version) {
 		a.view.Members().Merge(ping.MemberList)
 		a.view.Version().Merge(ping.Version)
 	}
+	// 合并后写回本节点信息，避免被对方视图中本节点的旧状态（如 JOINING）覆盖已迁移的 UP
+	a.view.Members().Upsert(a.info)
+	maybeEmitConverged(ctx, a)
+
 	ctx.Reply(gossipmessages.NewPong(a.info, a.view.Members(), a.view.Version()))
 }
 
-// handlePong 处理 Ask 得到的 Pong：若对方版本更新则合并其成员与版本；若本节点当前为 Joining 则发 EventJoined 迁到 Up。
-func (a *Actor) handlePong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
+// onPong 处理 Ask 得到的 Pong：若对方版本更新则合并其成员与版本；若本节点当前为 Joining 则发 EventJoined 迁到 Up。
+func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 	if a.view.Version().IsBefore(pong.Version) {
 		a.view.Members().Merge(pong.MemberList)
 		a.view.Version().Merge(pong.Version)
 	}
+	// 合并后写回本节点信息，避免被对方视图中本节点的旧状态（如 JOINING）覆盖已迁移的 UP
+	a.view.Members().Upsert(a.info)
 	if a.info.Status == endpoint.StatusJoining {
 		ctx.Logger().Debug("joined cluster")
-		SendEvent(ctx, a, EventJoined)
+		changeStatus(ctx, a, EventUp)
 	}
+	maybeEmitConverged(ctx, a)
 }
 
-// StartJoining 向种子节点发送 Ping 拉取视图；若仍处于 Joining 则按 backoff 安排一次重试。
-func (a *Actor) StartJoining(ctx vivid.ActorContext) {
-	ctx.Logger().Debug("joining cluster", log.String("seeds", vivid.ActorRefs(a.seeds).String()))
-	a.SendPingTo(ctx, a.seeds...)
-	if a.info.Status == endpoint.StatusJoining {
-		ctx.Scheduler().Once(ctx.Ref(), a.backoff.Next(), func(ctx vivid.ActorContext) { a.StartJoining(ctx) })
-	}
+func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
+	// 处理本节点告知即将离开集群
+	changeStatus(ctx, a, EventLeaving)
 }
 
-// StartGossipLoop 注册周期任务，按 GossipInterval 向视图中部分 Up 节点发起 gossip。
-func (a *Actor) StartGossipLoop(ctx vivid.ActorContext) {
-	ctx.Scheduler().Loop(ctx.Ref(), GossipInterval, func(ctx vivid.ActorContext) { a.SendPingTo(ctx) })
+func (a *Actor) onLeaving(ctx vivid.ActorContext) {
+	// 处理即将离开集群
+	// 目前无需任何处理，gossip 的触发已经在状态变更时被处理了
+	ctx.Logger().Debug("leaving cluster")
 }
 
-// SendPingTo 向 targets 发 Ping 并同步处理每个 Pong；targets 为空时从视图中取最多 GossipPeersLimit 个 Up 节点作为目标。
-func (a *Actor) SendPingTo(ctx vivid.ActorContext, targets ...vivid.ActorRef) {
-	var joiningMode bool
-	if joiningMode = len(targets) != 0; !joiningMode {
-		peers := a.view.Members().Unseens(a.info, GossipPeersLimit)
-		if len(peers) == 0 {
-			return
-		}
-		targets = make([]vivid.ActorRef, 0, len(peers))
-		for _, p := range peers {
-			targets = append(targets, p.ActorRef)
-		}
+func (a *Actor) onExiting(ctx vivid.ActorContext) {
+	// 处理即将离开集群
+	// 目前无需任何处理，gossip 的触发已经在状态变更时被处理了
+	ctx.Logger().Debug("exiting cluster")
+}
+
+func (a *Actor) onRemoved(ctx vivid.ActorContext) {
+	// 已离开集群，结束多阶段流程
+	ctx.Logger().Debug("removed from cluster")
+	close(a.phaseKillCompleted)
+}
+func (a *Actor) onLeaveCluster(ctx vivid.ActorContext) {
+	// 处理其他节点离开集群
+}
+
+// onSpreadGossip 向 targets 发 Ping 并同步处理每个 Pong；targets 为空时从视图中取最多 GossipPeersLimit 个 Up 节点作为目标。
+func (a *Actor) onSpreadGossip(ctx vivid.ActorContext) {
+	peers := a.view.Members().Unseens(a.info, GossipPeersLimit)
+	if len(peers) == 0 {
+		maybeEmitConverged(ctx, a)
+		return
 	}
+
 	ping := gossipmessages.NewPing(a.info, a.view.Members(), a.view.Version())
 
-	// 非加入时转为非阻塞模式
-	if joiningMode {
-		for _, ref := range targets {
-			result, err := ctx.Ask(ref, ping).Result()
-			if err != nil {
-				ctx.Logger().Error("gossip failed", log.String("ref", ref.String()), log.String("error", err.Error()))
-				continue
-			}
-			pong, ok := result.(*gossipmessages.Pong)
-			if !ok {
-				ctx.Logger().Error("gossip invalid pong", log.String("ref", ref.String()), log.String("type", fmt.Sprintf("%T", result)))
-				continue
-			}
-			a.handlePong(ctx, pong)
-		}
-	} else {
-		for _, ref := range targets {
-			ctx.Tell(ref, ping)
-		}
+	for _, peer := range peers {
+		ctx.Tell(peer.ActorRef, ping)
 	}
-
 }

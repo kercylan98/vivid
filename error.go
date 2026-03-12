@@ -87,8 +87,7 @@ var (
 
 // Gossip 相关错误。
 var (
-	ErrorGossipInvalidMember       = RegisterError(170000, "gossip invalid member", ErrorIllegalArgument)        // 成员信息非法
-	ErrorGossipMemberAlreadyExists = RegisterError(170001, "gossip member already exists", ErrorIllegalArgument) // 成员已存在
+	ErrorGossipScheduleFailed = RegisterError(170000, "gossip schedule failed") //  gossip 调度失败
 )
 
 var (

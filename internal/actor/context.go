@@ -345,19 +345,22 @@ func (c *Context) PipeTo(recipient vivid.ActorRef, message vivid.Message, forwar
 	return pipeId
 }
 
+func (c *Context) Active() bool {
+	return atomic.LoadInt32(&c.state) == running
+}
+
 func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// 非运行状态下：
 	// - 普通消息一律推入死信队列
 	// - 系统消息在 killing 阶段仍需要处理（例如子 Actor 的 OnKilled 事件），否则终止流程无法闭环
 	currentState := atomic.LoadInt32(&c.state)
-	killing := currentState == killing
-	shouldDie := !envelop.System() && currentState != running
-	if (killing || shouldDie) && !c.zombie { // 处于停止中或死亡状态且非僵尸状态
+	killingOrKilled := (currentState == killed) || (!envelop.System() && currentState != running) // 是否处于停止中或死亡状态
+	if killingOrKilled && !c.zombie {
 		// 如果是 killing 且多阶段终止流程，转由多阶段终止流程处理
-		if killing && c.phaseKill != nil {
-			c.handleEnvelopWithPhaseKill(envelop)
+		if currentState == killing && c.phaseKill != nil && !c.phaseKill.completed {
+			c.handleMessage(envelop, c.phaseKill.behavior)
 			return
-		}
+		} // 是否处于僵尸状态
 		c.system.TellSelf(ves.DeathLetterEvent{
 			Envelope: envelop,
 			Time:     time.Now(),
@@ -368,13 +371,17 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// 处理消息
 	// 对于僵尸状态，用户逻辑都是执行过的，不应该再继续执行，否则可能会导致异常状态扩散
 	// 僵尸状态的消息处理仅用作能正确的确保 Actor 被释放
-	c.envelop = envelop
 	behavior := c.behaviorStack.Peek()
 	if c.zombie {
 		behavior = emptyBehavior
 	}
 
-	switch message := c.envelop.Message().(type) {
+	c.handleMessage(envelop, behavior)
+}
+
+func (c *Context) handleMessage(envelop vivid.Envelop, behavior vivid.Behavior) {
+	c.envelop = envelop
+	switch message := c.Message().(type) {
 	case *vivid.OnLaunch:
 		c.executeBehaviorWithRecovery(behavior)
 		// 通知事件流
@@ -400,6 +407,8 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 		c.onUnwatch(message)
 	case *SchedulerMessage:
 		c.onScheduler(message, behavior)
+	case *phaseKill:
+		c.onPhaseKill()
 	default:
 		if c.MetricsEnabled() {
 			c.Metrics().Counter(metrics.NameCounterMessagesProcessedTotal).Inc()
@@ -408,21 +417,11 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	}
 }
 
-func (c *Context) handleEnvelopWithPhaseKill(envelop vivid.Envelop) {
-	c.envelop = envelop
-
-	switch c.envelop.Message().(type) {
-	case *vivid.OnKill: // 对于 OnKill 则忽略，因为已经执行过了
-		return
-	case *phaseKill:
-		// 多阶段终止流程结束
-		c.envelop = c.phaseKill.envelope // 恢复 OnKill 消息
-		c.phaseKill = nil
-		c.doKill(c.Message().(*vivid.OnKill), c.behaviorStack.Peek())
-	default:
-		c.executeBehaviorWithRecovery(c.phaseKill.behavior)
-	}
-
+func (c *Context) onPhaseKill() {
+	// 多阶段终止流程结束
+	c.envelop = c.phaseKill.envelope // 恢复 OnKill 消息
+	c.phaseKill.completed = true
+	c.doKill(c.Message().(*vivid.OnKill), c.behaviorStack.Peek())
 }
 
 func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
@@ -620,8 +619,10 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 	// )
 
 	// 检查是否存在多阶段终止流程，如果存在，此刻状态已为 killing，创建超时定时器后直接返回
-	if c.phaseKill != nil {
+	if c.phaseKill != nil && !c.phaseKill.completed {
 		c.phaseKill.apply(c, c.envelop)
+		c.executeBehaviorWithRecovery(behavior)
+		c.Logger().Debug("phase kill applied", log.String("path", c.ref.GetPath()), log.Duration("timeout", c.phaseKill.timeout))
 		return
 	}
 
@@ -645,7 +646,7 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 		}) {
 			logger.Warn("restart kill failed; resources may not have been properly released", log.String("path", c.ref.GetPath()), log.String("reason", c.restarting.Reason), log.Any("fault", c.restarting.Fault), log.String("stack", string(c.restarting.Stack)))
 		}
-	} else {
+	} else if c.phaseKill == nil {
 		c.executeBehaviorWithRecovery(behavior)
 	}
 

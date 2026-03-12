@@ -13,6 +13,12 @@ import (
 	"github.com/reugn/go-quartz/quartz"
 )
 
+// uniqueJobKey 使用 Context.instanceID 保证按 Actor 实例隔离，避免跨 ActorSystem/同 Ref 时同一 reference 导致任务互相覆盖。
+func uniqueJobKey(ctx *Context, reference string) *quartz.JobKey {
+	jobKey := fmt.Sprintf("%s:%s", ctx.ref.GetPath(), reference)
+	return quartz.NewJobKey(jobKey)
+}
+
 var (
 	_ vivid.Scheduler = (*Scheduler)(nil)
 )
@@ -47,7 +53,7 @@ func newScheduler(ctx *Context) *Scheduler {
 type Scheduler struct {
 	ctx       *Context
 	scheduler *scheduler.Scheduler
-	jobKeys   map[string]*quartz.JobKey // reference -> job key
+	jobKeys   map[string]*quartz.JobKey // actor reference -> job key
 }
 
 func (s *Scheduler) Clear() {
@@ -55,11 +61,6 @@ func (s *Scheduler) Clear() {
 		_ = s.scheduler.DeleteJob(jobKey)
 		delete(s.jobKeys, reference)
 	}
-}
-
-func uniqueJobKey(ctx vivid.ActorContext, reference string) *quartz.JobKey {
-	jobKey := ctx.Ref().GetPath() + ":" + reference
-	return quartz.NewJobKey(jobKey)
 }
 
 func schedulerErrorConvert(err error) error {
@@ -96,7 +97,10 @@ func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, 
 		s.tell(receiver, message, opts)
 		return nil, nil
 	})
-	_ = s.scheduler.Schedule(quartz.NewJobDetail(fn, jobKey), trigger)
+	if err := s.scheduler.Schedule(quartz.NewJobDetail(fn, jobKey), trigger); err != nil {
+		return schedulerErrorConvert(err)
+	}
+
 	base := []any{log.String("ref", s.ctx.Ref().GetPath()), log.String("receiver", receiver.GetPath()), log.String("messageType", fmt.Sprintf("%T", message))}
 	logKindStr := fmt.Sprintf("scheduler %s scheduled", logKind)
 	s.ctx.Logger().Debug(logKindStr, append(base, logFields...)...)

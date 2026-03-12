@@ -16,10 +16,11 @@ func newPhaseKill(c <-chan struct{}, timeout time.Duration, behavior vivid.Behav
 }
 
 type phaseKill struct {
-	c        <-chan struct{}
-	timeout  time.Duration
-	behavior vivid.Behavior
-	envelope vivid.Envelop
+	c         <-chan struct{}
+	timeout   time.Duration
+	behavior  vivid.Behavior
+	envelope  vivid.Envelop
+	completed bool
 }
 
 func (p *phaseKill) apply(ctx *Context, envelope vivid.Envelop) {

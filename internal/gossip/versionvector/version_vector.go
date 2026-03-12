@@ -4,6 +4,8 @@ package versionvector
 import (
 	"fmt"
 	"maps"
+	"sort"
+	"strings"
 
 	"github.com/kercylan98/vivid/internal/serialization"
 )
@@ -46,6 +48,14 @@ func (v *VersionVector) Clone() *VersionVector {
 // Increment 将指定 key 的计数加一，状态迁移或本节点视图更新时调用。
 func (v *VersionVector) Increment(key string) {
 	v.m[key]++
+}
+
+// Get 返回指定 key 的版本计数，不存在则返回 0。用于按 key 判断是否接受对方对该成员的更新。
+func (v *VersionVector) Get(key string) uint64 {
+	if v == nil || v.m == nil {
+		return 0
+	}
+	return v.m[key]
 }
 
 // IsBefore 判断当前向量是否严格因果早于 other：对所有 key 有 v[key] <= other[key]，且至少一个 key 严格小于。
@@ -107,4 +117,26 @@ func (v *VersionVector) Merge(other *VersionVector) {
 // String 返回 map 的字符串表示，便于日志与调试。
 func (v *VersionVector) String() string {
 	return fmt.Sprintf("%v", v.m)
+}
+
+// Fingerprint 返回确定性的视图指纹（按 key 排序），用于收敛检测。
+func (v *VersionVector) Fingerprint() string {
+	if v == nil || len(v.m) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(v.m))
+	for k := range v.m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(k)
+		b.WriteByte(':')
+		b.WriteString(fmt.Sprintf("%d", v.m[k]))
+	}
+	return b.String()
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/kercylan98/vivid/internal/bridge"
 	"github.com/kercylan98/vivid/internal/chain"
 	"github.com/kercylan98/vivid/internal/future"
+	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/internal/scheduler"
@@ -207,10 +208,10 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
 
 	if s.Context != nil {
-		s.Context.Kill(s.Context.Ref(), true, "actor system stop")
-		s.cancel()
+		s.TellSelf(&guard.Stop{})
 		select {
 		case <-s.guardClosedSignal:
+			s.cancel()
 			break
 		case <-func() <-chan time.Time {
 			if stopTimeout > 0 {
@@ -219,9 +220,12 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 			// 如果永不超时，则返回一个永不关闭的通道
 			return make(chan time.Time)
 		}():
+			s.cancel()
 			s.Logger().Error("actor system stop failed", log.Duration("timeout", stopTimeout))
 			return vivid.ErrorActorSystemStopFailed.With(context.DeadlineExceeded)
 		}
+	} else {
+		s.cancel()
 	}
 
 	// 清理调度器

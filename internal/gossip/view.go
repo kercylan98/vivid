@@ -1,6 +1,8 @@
 package gossip
 
 import (
+	"strings"
+
 	"github.com/kercylan98/vivid/internal/gossip/memberlist"
 	"github.com/kercylan98/vivid/internal/gossip/versionvector"
 	"github.com/kercylan98/vivid/pkg/log"
@@ -25,3 +27,11 @@ func (v *ClusterView) Members() *memberlist.MemberList { return v.members }
 
 // Version 返回版本向量，供调用方进行 Increment/IsBefore/Merge 等操作。
 func (v *ClusterView) Version() *versionvector.VersionVector { return v.version }
+
+// Fingerprint 返回当前视图的确定性指纹（版本向量 + 成员列表），用于收敛检测。
+func (v *ClusterView) Fingerprint() string {
+	if v == nil {
+		return ""
+	}
+	return strings.Join([]string{v.version.Fingerprint(), v.members.Fingerprint()}, "|")
+}
