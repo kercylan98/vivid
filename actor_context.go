@@ -641,6 +641,25 @@ type PrelaunchContext interface {
 	// 返回值：
 	//   - ActorRef：当前 Actor 的引用实例，保证非 nil。
 	Ref() ActorRef
+
+	// WithPhaseKill 为当前 Actor 注册多阶段终止：收到 [OnKill] 后先进入“等待阶段”，再执行真正终止。
+	//
+	// 功能说明：
+	//   - 调用后，当本 Actor 收到 [OnKill] 时不会立即执行终止（不杀子、不执行 OnKill 行为、不进入 [OnKilled]）。
+	//   - 进入等待阶段：仅当 completed 被关闭或经过 timeout 后，框架会向自身投递内部信号，随后执行真正的终止流程（杀子、执行 OnKill 行为、[OnKilled] 等）。
+	//   - 在等待阶段内，本 Actor 处于“正在终止”状态，期间收到的所有消息（除重复的 [OnKill] 被忽略外）均由传入的 behavior 处理，便于做优雅收尾（如排空队列、回复 Ask、通知集群离开等）。
+	//
+	// 参数说明：
+	//   - completed：只读 channel。由调用方在“优雅收尾完成”时关闭；若不关闭，则依赖 timeout 触发后续终止。
+	//   - timeout：等待阶段的最长时长，超时后同样会进入真正终止；必须大于 0。
+	//   - behavior：在等待阶段内用于处理每条消息的函数；可在此逻辑中决定何时关闭 completed，或仅做收尾处理。
+	//
+	// 典型应用场景：
+	//   - 下线前先向集群发送“离开”并等待收敛，再执行终止。
+	//   - 终止前排空内部队列或完成未完成的请求后再退出。
+	//
+	// 返回值：参数非法时返回错误（completed 为 nil、timeout <= 0、behavior 为 nil）。
+	WithPhaseKill(completed <-chan struct{}, timeout time.Duration, behavior Behavior) error
 }
 
 // RestartContext 定义了 Actor 重启（Restart）阶段的上下文接口，用于在 Actor 重启过程中进行必要的清理和恢复操作。

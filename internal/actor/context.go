@@ -89,6 +89,21 @@ type Context struct {
 	watchers      map[string]vivid.ActorRef          // 正在监听该 Actor 终止事件的 ActorRef，其中 key 为 ActorRef 的完整路径
 	stash         []vivid.Envelop                    // 暂存区
 	scheduler     *Scheduler                         // 调度器
+	phaseKill     *phaseKill                         // 多阶段终止流程
+}
+
+func (c *Context) WithPhaseKill(completed <-chan struct{}, timeout time.Duration, behavior vivid.Behavior) error {
+	if completed == nil {
+		return vivid.ErrorIllegalArgument.WithMessage("completed channel is required")
+	}
+	if timeout <= 0 {
+		return vivid.ErrorIllegalArgument.WithMessage("timeout is required and must be greater than 0")
+	}
+	if behavior == nil {
+		return vivid.ErrorIllegalArgument.WithMessage("behavior is required")
+	}
+	c.phaseKill = newPhaseKill(completed, timeout, behavior)
+	return nil
 }
 
 func (c *Context) Stash() {
@@ -335,8 +350,14 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// - 普通消息一律推入死信队列
 	// - 系统消息在 killing 阶段仍需要处理（例如子 Actor 的 OnKilled 事件），否则终止流程无法闭环
 	currentState := atomic.LoadInt32(&c.state)
-	killingOrKilled := (currentState == killed) || (!envelop.System() && currentState != running) // 是否处于停止中或死亡状态
-	if killingOrKilled && !c.zombie {                                                             // 是否处于僵尸状态
+	killing := currentState == killing
+	shouldDie := !envelop.System() && currentState != running
+	if (killing || shouldDie) && !c.zombie { // 处于停止中或死亡状态且非僵尸状态
+		// 如果是 killing 且多阶段终止流程，转由多阶段终止流程处理
+		if killing && c.phaseKill != nil {
+			c.handleEnvelopWithPhaseKill(envelop)
+			return
+		}
 		c.system.TellSelf(ves.DeathLetterEvent{
 			Envelope: envelop,
 			Time:     time.Now(),
@@ -385,6 +406,23 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 		}
 		c.executeBehaviorWithRecovery(behavior)
 	}
+}
+
+func (c *Context) handleEnvelopWithPhaseKill(envelop vivid.Envelop) {
+	c.envelop = envelop
+
+	switch c.envelop.Message().(type) {
+	case *vivid.OnKill: // 对于 OnKill 则忽略，因为已经执行过了
+		return
+	case *phaseKill:
+		// 多阶段终止流程结束
+		c.envelop = c.phaseKill.envelope // 恢复 OnKill 消息
+		c.phaseKill = nil
+		c.doKill(c.Message().(*vivid.OnKill), c.behaviorStack.Peek())
+	default:
+		c.executeBehaviorWithRecovery(c.phaseKill.behavior)
+	}
+
 }
 
 func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
@@ -574,19 +612,25 @@ func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
 }
 
 func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
-	c.Logger().Debug("receive kill",
-		log.String("path", c.ref.GetPath()),
-		log.Bool("restarting", c.restarting != nil),
-		log.Bool("zombie", c.zombie),
-		log.String("reason", message.Reason),
-	)
+	// c.Logger().Debug("receive kill",
+	// 	log.String("path", c.ref.GetPath()),
+	// 	log.Bool("restarting", c.restarting != nil),
+	// 	log.Bool("zombie", c.zombie),
+	// 	log.String("reason", message.Reason),
+	// )
+
+	// 检查是否存在多阶段终止流程，如果存在，此刻状态已为 killing，创建超时定时器后直接返回
+	if c.phaseKill != nil {
+		c.phaseKill.apply(c, c.envelop)
+		return
+	}
 
 	// 清理所有正在等待自身的 Future
 	c.system.removeFuturesByAgentPath(c.ref.GetPath(), vivid.ErrorActorDeaded)
 
 	// 等待所有子 Actor 结束，假设是重启，子 Actor 不应该跟随重启，应该由父节点决定是否重启
 	for _, child := range c.children {
-		c.Logger().Debug("notify child kill", log.String("path", child.GetPath()))
+		// c.Logger().Debug("notify child kill", log.String("path", child.GetPath()))
 		c.Kill(child, message.Poison, message.Reason)
 	}
 
