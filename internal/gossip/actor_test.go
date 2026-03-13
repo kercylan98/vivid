@@ -59,13 +59,11 @@ func TestActor_Gossip(t *testing.T) {
 	gossipRef3, err := system3.ActorOf(gossip.New(system3.Logger(), gossip.WithSeeds(gossipRef1.Clone())))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef3)
-
-	time.Sleep(111111 * time.Second)
 }
 
 func TestMultiple_Gossip(t *testing.T) {
-	var seedNodeCount = 3
-	var nodeCount = 10
+	var seedNodeCount = 3 // 种子节点数量
+	var nodeCount = 10    // 节点数量（不建议过高，单机网络风暴容易导致操作系统整体的崩溃）
 	var basePort = 8080
 
 	systems := make([]vivid.PrimaryActorSystem, nodeCount)
@@ -90,12 +88,10 @@ func TestMultiple_Gossip(t *testing.T) {
 	var seeds []vivid.ActorRef
 	for i := 0; i < nodeCount; i++ {
 		system := systems[i]
-		gossipActor := gossip.New(system.Logger(), gossip.WithSeeds(seeds...), gossip.WithLaunchDelay(0))
+		gossipActor := gossip.New(system.Logger(), gossip.WithSeeds(seeds...))
 		gossipRef, err := system.ActorOf(gossipActor)
 		if assert.NoError(t, err) && assert.NotNil(t, gossipRef) && len(seeds) < seedNodeCount {
 			seeds = append(seeds, gossipRef.Clone())
 		}
 	}
-
-	time.Sleep(time.Hour)
 }

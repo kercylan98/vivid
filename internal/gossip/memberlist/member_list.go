@@ -117,8 +117,8 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 			continue
 		}
 
-		// 如果成员是种子节点，则加入 peerSeeds
-		if slices.ContainsFunc(seeds, func(seed vivid.ActorRef) bool { return seed.Equals(member.ActorRef) }) {
+		// 如果成员是种子节点，并且不是本地节点，则加入 peerSeeds
+		if slices.ContainsFunc(seeds, func(seed vivid.ActorRef) bool { return seed.Equals(member.ActorRef) }) && !member.ActorRef.Equals(local.ActorRef) {
 			peerSeeds[member.ID()] = struct{}{}
 		}
 

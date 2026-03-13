@@ -170,17 +170,8 @@ func (a *Actor) onConverged(ctx vivid.ActorContext) {
 
 	ctx.Logger().Debug("cluster converged",
 		log.String("coordinator", a.coordinatorNodeID),
-		log.String("view", a.view.Fingerprint()),
 		log.Duration("convergence_duration", time.Since(a.convergenceStartedAt)),
 	)
-
-	for _, member := range a.view.Members().List() {
-		ctx.Logger().Info("cluster_view",
-			log.String("id", member.ID()),
-			log.String("status", member.Status.String()),
-			log.Int64("created_at", member.CreatedAt.UnixNano()),
-		)
-	}
 
 	// 自身状态迁移
 	switch a.info.Status {
