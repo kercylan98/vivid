@@ -3,7 +3,6 @@ package gossip
 
 import (
 	"fmt"
-	"math/rand/v2"
 	"slices"
 	"sort"
 	"time"
@@ -50,11 +49,6 @@ type Actor struct {
 
 // OnPrelaunch 在 Actor 启动前执行：创建本节点 Information 并加入本地视图的成员列表。
 func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
-	// 打乱 seeds 顺序
-	rand.Shuffle(len(a.opts.Seeds), func(i, j int) {
-		a.opts.Seeds[i], a.opts.Seeds[j] = a.opts.Seeds[j], a.opts.Seeds[i]
-	})
-
 	// 注册多阶段终止以支持优雅退出
 	a.phaseKillCompleted = make(chan struct{})
 	if err := ctx.WithPhaseKill(a.phaseKillCompleted, a.opts.GracefulShutdownTimeout, a.OnReceive); err != nil {
