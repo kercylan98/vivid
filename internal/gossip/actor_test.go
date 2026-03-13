@@ -59,5 +59,5 @@ func TestActor_Gossip(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef3)
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(111111 * time.Second)
 }

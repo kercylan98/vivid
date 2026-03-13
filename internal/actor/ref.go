@@ -53,9 +53,10 @@ func ParseRef(value string) (*Ref, error) {
 }
 
 type Ref struct {
-	address string
-	path    string
-	cache   atomic.Pointer[vivid.Mailbox]
+	address     string
+	path        string
+	cache       atomic.Pointer[vivid.Mailbox]
+	stringCache atomic.Pointer[string]
 }
 
 func (r *Ref) GetPath() string {
@@ -83,7 +84,13 @@ func (r *Ref) ToActorRefs() vivid.ActorRefs {
 }
 
 func (r *Ref) String() string {
-	return utils.FormatRefString(r.GetAddress(), r.GetPath())
+	ptr := r.stringCache.Load()
+	if ptr == nil {
+		ptr = new(string)
+		*ptr = utils.FormatRefString(r.GetAddress(), r.GetPath())
+		r.stringCache.CompareAndSwap(nil, ptr)
+	}
+	return *ptr
 }
 
 func (r *Ref) IsVirtual() bool {

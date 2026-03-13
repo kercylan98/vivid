@@ -22,6 +22,7 @@ const (
 )
 
 const (
+	// singleSchedulerReference 单个调度器的引用，用于周期 gossip。
 	singleSchedulerReference = "single"
 )
 
@@ -41,24 +42,17 @@ func New(logger log.Logger, seeds ...vivid.ActorRef) *Actor {
 }
 
 // Actor 实现基于 gossip 的集群发现与视图同步：维护本节点 Information、集群视图（成员列表+版本向量），
-// 通过状态机事件驱动生命周期（StatusNone -> Joining -> Up），处理 Ping/Pong 与周期 gossip。
+// 通过状态机事件驱动生命周期，处理 Ping/Pong 与周期 gossip。
 type Actor struct {
-	// seeds 加入集群时使用的种子节点 ActorRef 列表，仅在 Joining 阶段使用。
-	seeds []vivid.ActorRef
-	// info 本节点的端点信息（Ref、Status、LastSeen），状态迁移与 Ping/Pong 时写回视图。
-	info *endpoint.Information
-	// view 本节点维护的集群视图：成员列表 + 版本向量，用于因果合并与 peer 选择。
-	view *ClusterView
-	// backoff Joining 阶段向种子发 Ping 失败时的退避策略，用于重试间隔。
-	backoff *utils.ExponentialBackoff
-	// 收敛检测：视图指纹连续不变时投递 Converged，视图变化后重置以便再次收敛时投递。
-	lastViewFingerprint string
-	// 是否已经投递过 Converged 消息
-	convergedEmitted bool
-	// 连续不变的轮次
-	stableRounds int
-	// 多阶段终止流程完成信号。
-	phaseKillCompleted chan struct{}
+	seeds               []vivid.ActorRef          // 加入集群时使用的种子节点 ActorRef 列表，仅在 Joining 阶段使用。
+	info                *endpoint.Information     // 本节点的端点信息（Ref、Status、LastSeen），状态迁移与 Ping/Pong 时写回视图。
+	view                *ClusterView              // 本节点维护的集群视图：成员列表 + 版本向量，用于因果合并与 peer 选择。
+	backoff             *utils.ExponentialBackoff // Joining 阶段向种子发 Ping 失败时的退避策略，用于重试间隔。
+	lastViewFingerprint string                    // 收敛检测：视图指纹连续不变时投递 Converged，视图变化后重置以便再次收敛时投递。
+	convergedEmitted    bool                      // 是否已经投递过 Converged 消息
+	stableRounds        int                       // 连续不变的轮次
+	phaseKillCompleted  chan struct{}             // 多阶段终止流程完成信号。
+	coordinatorNodeID   string                    // 当前的协调者节点 ID
 }
 
 // OnPrelaunch 在 Actor 启动前执行：创建本节点 Information 并加入本地视图的成员列表。
@@ -68,8 +62,12 @@ func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 		return err
 	}
 
-	a.info = endpoint.NewInformation(ctx.Ref())
-	a.view.Members().Upsert(a.info)
+	a.info = endpoint.NewInformation(ctx.Ref(), time.Now())
+	if !a.view.Members().Upsert(a.info) {
+		return vivid.ErrorException.WithMessage("prelaunch failed, unexpected error")
+	}
+
+	a.coordinatorNodeID = a.view.Members().GetCoordinatorNodeID()
 	return nil
 }
 
@@ -143,16 +141,19 @@ func (a *Actor) onUp(ctx vivid.ActorContext) {
 	}
 }
 func (a *Actor) onConverged(ctx vivid.ActorContext) {
-	ctx.Logger().Debug("cluster converged")
-
 	a.view.cleanRemovedMembers(a.info)
 
+	// 计算新的协调者节点 ID
+	a.coordinatorNodeID = a.view.Members().GetCoordinatorNodeID()
+
+	ctx.Logger().Debug("cluster converged", log.String("coordinator", a.coordinatorNodeID))
 	// 自身状态迁移
 	switch a.info.Status {
 	case endpoint.StatusLeaving:
 		changeStatus(ctx, a, EventExiting)
 	case endpoint.StatusExiting:
 		changeStatus(ctx, a, EventRemoved)
+	default:
 	}
 }
 
