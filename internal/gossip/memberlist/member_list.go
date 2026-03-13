@@ -2,6 +2,8 @@
 package memberlist
 
 import (
+	"math/rand/v2"
+	"slices"
 	"sort"
 	"strings"
 
@@ -101,27 +103,54 @@ func (m *MemberList) Upsert(info *endpoint.Information) (isNew bool) {
 }
 
 // Unseens 从列表中选取最多 limit 个 StatusUp 或 StatusLeaving 的节点（排除 local 自身），用于本轮 gossip 的 peer 选择。
-func (m *MemberList) Unseens(local *endpoint.Information, limit int) []*endpoint.Information {
-	if limit <= 0 || len(m.members) == 0 {
-		return nil
-	}
+func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef, limit int) []vivid.ActorRef {
+	// 随机打乱成员列表，避免每次选取的 peer 都相同
+	rand.Shuffle(len(m.members), func(i, j int) {
+		m.members[i], m.members[j] = m.members[j], m.members[i]
+	})
 
-	out := make([]*endpoint.Information, 0, limit)
+	// 检查 peers 是否种子节点，如果不包含，需要将种子节点加入 peers，并且作为优先联络的节点，避免集群分裂
+	var out = make([]vivid.ActorRef, 0, len(m.members))
+	var peerSeeds = make(map[string]struct{})
 	for _, member := range m.members {
 		if member.ActorRef.Equals(local.ActorRef) {
 			continue
 		}
 
+		// 如果成员是种子节点，则加入 peerSeeds
+		if slices.ContainsFunc(seeds, func(seed vivid.ActorRef) bool { return seed.Equals(member.ActorRef) }) {
+			peerSeeds[member.ID()] = struct{}{}
+		}
+
 		switch member.Status {
 		case endpoint.StatusJoining, endpoint.StatusRemoved:
 		default:
-			out = append(out, member)
-		}
-
-		if len(out) >= limit {
-			break
+			out = append(out, member.ActorRef)
 		}
 	}
+
+	// 获取未加入 peerSeeds 的种子节点
+	var notInPeerSeeds []vivid.ActorRef
+	for _, seed := range seeds {
+		if seed == nil {
+			continue
+		}
+		_, ok := peerSeeds[seed.String()]
+		if !ok {
+			notInPeerSeeds = append(notInPeerSeeds, seed)
+		}
+	}
+
+	// 如果 notInPeerSeeds 的长度大于 0，则将 notInPeerSeeds 添加到 out 的末尾
+	if len(notInPeerSeeds) > 0 {
+		out = append(notInPeerSeeds, out...)
+	}
+
+	// 如果 out 的长度大于等于 limit，则返回前 limit 个元素
+	if len(out) >= limit {
+		return out[:limit]
+	}
+
 	return out
 }
 

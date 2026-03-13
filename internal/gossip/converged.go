@@ -1,6 +1,8 @@
 package gossip
 
 import (
+	"time"
+
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
 )
@@ -18,5 +20,6 @@ func maybeEmitConverged(ctx vivid.ActorContext, a *Actor) {
 		a.lastViewFingerprint = fp
 		a.stableRounds = 0
 		a.convergedEmitted = false
+		a.convergenceStartedAt = time.Now() // 视图变化，重新计时收敛耗时
 	}
 }

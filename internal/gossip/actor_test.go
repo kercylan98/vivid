@@ -1,6 +1,7 @@
 package gossip_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -51,13 +52,50 @@ func TestActor_Gossip(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef1)
 
-	gossipRef2, err := system2.ActorOf(gossip.New(system2.Logger(), gossipRef1.Clone()))
+	gossipRef2, err := system2.ActorOf(gossip.New(system2.Logger(), gossip.WithSeeds(gossipRef1.Clone())))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef2)
 
-	gossipRef3, err := system3.ActorOf(gossip.New(system3.Logger(), gossipRef1.Clone()))
+	gossipRef3, err := system3.ActorOf(gossip.New(system3.Logger(), gossip.WithSeeds(gossipRef1.Clone())))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef3)
 
 	time.Sleep(111111 * time.Second)
+}
+
+func TestMultiple_Gossip(t *testing.T) {
+	var seedNodeCount = 3
+	var nodeCount = 10
+	var basePort = 8080
+
+	systems := make([]vivid.PrimaryActorSystem, nodeCount)
+
+	for i := 0; i < nodeCount; i++ {
+		systems[i] = bootstrap.NewActorSystem(
+			vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
+			vivid.WithActorSystemRemoting(fmt.Sprintf("127.0.0.1:%d", basePort+i)),
+		)
+	}
+
+	for _, system := range systems {
+		assert.NoError(t, system.Start())
+	}
+
+	defer func() {
+		for _, system := range systems {
+			assert.NoError(t, system.Stop())
+		}
+	}()
+
+	var seeds []vivid.ActorRef
+	for i := 0; i < nodeCount; i++ {
+		system := systems[i]
+		gossipActor := gossip.New(system.Logger(), gossip.WithSeeds(seeds...), gossip.WithLaunchDelay(0))
+		gossipRef, err := system.ActorOf(gossipActor)
+		if assert.NoError(t, err) && assert.NotNil(t, gossipRef) && len(seeds) < seedNodeCount {
+			seeds = append(seeds, gossipRef.Clone())
+		}
+	}
+
+	time.Sleep(time.Hour)
 }

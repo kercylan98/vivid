@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -67,10 +66,14 @@ func initContextOptions(ctx *Context, actor vivid.Actor, userOptions []vivid.Act
 	if fixedOptionActor, ok := actor.(vivid.FixedOptionActor); ok {
 		userOptions = append(userOptions, fixedOptionActor.FixedOptions(ctx)...)
 	}
-	userOptions = slices.DeleteFunc(userOptions, func(option vivid.ActorOption) bool {
-		return option == nil
-	})
-	return userOptions
+	var newUserOptions []vivid.ActorOption
+	for _, option := range userOptions {
+		if option == nil {
+			continue
+		}
+		newUserOptions = append(newUserOptions, option)
+	}
+	return newUserOptions
 }
 
 type Context struct {

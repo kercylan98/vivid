@@ -68,10 +68,3 @@ func changeStatus(ctx vivid.ActorContext, a *Actor, e Event) bool {
 	}
 	return true
 }
-
-func changeStatusWithIf(ctx vivid.ActorContext, a *Actor, expr bool, true Event, false Event) bool {
-	if expr {
-		return changeStatus(ctx, a, true)
-	}
-	return changeStatus(ctx, a, false)
-}
