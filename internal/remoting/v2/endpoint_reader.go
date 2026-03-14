@@ -52,12 +52,13 @@ func (e *endpointReader) OnReceive(ctx vivid.ActorContext) {
 func (e *endpointReader) onLaunch(ctx vivid.ActorContext) {
 	conn := e.session.Conn()
 	if conn == nil {
-		ctx.Tell(e.parentRef, endpointReaderStopped{
-			associationID: e.associationID,
-			reader:        ctx.Ref(),
-			err:           io.ErrClosedPipe,
-		})
-		ctx.Kill(ctx.Ref(), false, "reader connection missing")
+		if !e.session.isClosed() {
+			ctx.Tell(e.parentRef, endpointReaderStopped{
+				associationID: e.associationID,
+				reader:        ctx.Ref(),
+				err:           io.ErrClosedPipe,
+			})
+		}
 		return
 	}
 	e.reader = bufio.NewReader(conn)
@@ -68,22 +69,24 @@ func (e *endpointReader) onLaunch(ctx vivid.ActorContext) {
 func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 	conn := e.session.Conn()
 	if conn == nil {
-		ctx.Tell(e.parentRef, endpointReaderStopped{
-			associationID: e.associationID,
-			reader:        ctx.Ref(),
-			err:           io.ErrClosedPipe,
-		})
-		ctx.Kill(ctx.Ref(), false, "reader connection missing")
+		if !e.session.isClosed() {
+			ctx.Tell(e.parentRef, endpointReaderStopped{
+				associationID: e.associationID,
+				reader:        ctx.Ref(),
+				err:           io.ErrClosedPipe,
+			})
+		}
 		return
 	}
 	if e.readTimeout > 0 {
 		if err := conn.SetReadDeadline(time.Now().Add(e.readTimeout)); err != nil {
-			ctx.Tell(e.parentRef, endpointReaderStopped{
-				associationID: e.associationID,
-				reader:        ctx.Ref(),
-				err:           err,
-			})
-			ctx.Kill(ctx.Ref(), false, "set read deadline failed")
+			if !e.session.isClosed() {
+				ctx.Tell(e.parentRef, endpointReaderStopped{
+					associationID: e.associationID,
+					reader:        ctx.Ref(),
+					err:           err,
+				})
+			}
 			return
 		}
 	}
@@ -92,18 +95,28 @@ func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 		MaxDataLen:    maxFrameDataLen,
 	})
 	if err != nil {
-		if err != io.EOF && e.readFailedHandler != nil {
+		// 如果 session 已被父 Actor 主动关闭，无需通知父 Actor（它已在关闭流程中），
+		// 也无需自杀（框架会通过 Kill 消息处理）。
+		if e.session.isClosed() {
+			return
+		}
+		if err == io.EOF {
+			ctx.Tell(e.parentRef, endpointReaderStopped{
+				associationID: e.associationID,
+				reader:        ctx.Ref(),
+				peerClosed:    true,
+			})
+			return
+		}
+		if e.readFailedHandler != nil {
 			e.readFailedHandler.HandleRemotingConnectionReadFailed(true, err)
 		}
-		if err != io.EOF && !e.session.isClosed() {
-			ctx.Logger().Warn("endpoint read frame failed", log.String("address", e.session.address), log.Any("error", err))
-		}
+		ctx.Logger().Warn("endpoint read frame failed", log.String("address", e.session.address), log.Any("error", err))
 		ctx.Tell(e.parentRef, endpointReaderStopped{
 			associationID: e.associationID,
 			reader:        ctx.Ref(),
 			err:           err,
 		})
-		ctx.Kill(ctx.Ref(), false, "reader closed")
 		return
 	}
 
@@ -121,19 +134,19 @@ func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 				reader:        ctx.Ref(),
 				err:           decodeErr,
 			})
-			ctx.Kill(ctx.Ref(), false, "decode failed")
 			return
 		}
 		if handleErr := e.envelopHandler.HandleRemotingEnvelop(system, sender, receiver, messageInstance); handleErr != nil {
 			ctx.Logger().Warn("handle remoting envelop failed", log.String("address", e.session.address), log.Any("error", handleErr))
 		}
 	case FrameCtrlClose:
-		ctx.Tell(e.parentRef, endpointReaderStopped{
-			associationID: e.associationID,
-			reader:        ctx.Ref(),
-			peerClosed:    true,
-		})
-		ctx.Kill(ctx.Ref(), false, "peer closed")
+		if !e.session.isClosed() {
+			ctx.Tell(e.parentRef, endpointReaderStopped{
+				associationID: e.associationID,
+				reader:        ctx.Ref(),
+				peerClosed:    true,
+			})
+		}
 		return
 	case FrameCtrlHeartbeat, FrameCtrlHandshake:
 	default:

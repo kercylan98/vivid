@@ -146,10 +146,6 @@ func (a *acceptor) onAcceptCompleted(ctx vivid.ActorContext, message *acceptComp
 	}
 	if message.err != nil {
 		if errors.Is(message.err, net.ErrClosed) {
-			if a.stopping {
-				return
-			}
-			ctx.Kill(ctx.Ref(), false, "acceptor stop")
 			return
 		}
 		ctx.Failed(vivid.ErrorRemotingListenerAcceptFailed.With(message.err))

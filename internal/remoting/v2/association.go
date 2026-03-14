@@ -65,6 +65,14 @@ func (a *endpointAssociation) close(ctx vivid.ActorContext, address string, grac
 	if a == nil {
 		return
 	}
+	a.killChildren(ctx, reason)
+	a.closeSession(ctx, address, graceful, reason)
+}
+
+func (a *endpointAssociation) killChildren(ctx vivid.ActorContext, reason string) {
+	if a == nil {
+		return
+	}
 	if a.reader != nil {
 		ctx.Kill(a.reader, false, reason)
 	}
@@ -74,7 +82,10 @@ func (a *endpointAssociation) close(ctx vivid.ActorContext, address string, grac
 	if a.heartbeat != nil {
 		ctx.Kill(a.heartbeat, false, reason)
 	}
-	if a.session == nil {
+}
+
+func (a *endpointAssociation) closeSession(ctx vivid.ActorContext, address string, graceful bool, reason string) {
+	if a == nil || a.session == nil {
 		return
 	}
 	closeEndpointSession(ctx, address, a.session, graceful, reason)

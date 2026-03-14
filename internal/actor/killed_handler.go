@@ -39,6 +39,11 @@ func (h *killedHandler) handleChildDeath() {
 
 // checkAndMarkKilled 检查并标记为 killed
 func (h *killedHandler) checkAndMarkKilled() {
+	// 多阶段终止尚未完成时，不标记为 killed，等待 phaseKill 消息触发最终死亡流程
+	if h.ctx.phaseKill != nil && !h.ctx.phaseKill.completed {
+		h.shouldContinue = false
+		return
+	}
 	// 如果还有子 Actor，则不处理自身死亡
 	if len(h.ctx.children) != 0 || !atomic.CompareAndSwapInt32(&h.ctx.state, killing, killed) {
 		h.shouldContinue = false

@@ -380,6 +380,7 @@ func (e *endpoint) onReaderStopped(ctx vivid.ActorContext, message endpointReade
 			log.Any("error", message.err))
 	}
 
+	e.association.reader = nil
 	e.closeCurrentSession(ctx, false, "reader stopped")
 	e.ensureSession(ctx)
 }
@@ -452,16 +453,19 @@ func (e *endpoint) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
 	}
 	if e.association != nil && e.association.ownsReader(message.Ref) {
 		e.writing = false
+		e.association.reader = nil
 		e.closeCurrentSession(ctx, false, "reader actor killed")
 		e.ensureSession(ctx)
 	}
 	if e.association != nil && e.association.ownsWriter(message.Ref) {
 		e.writing = false
+		e.association.writer = nil
 		e.closeCurrentSession(ctx, false, "writer actor killed")
 		e.ensureSession(ctx)
 	}
 	if e.association != nil && e.association.ownsHeartbeat(message.Ref) {
 		e.writing = false
+		e.association.heartbeat = nil
 		e.closeCurrentSession(ctx, false, "heartbeat actor killed")
 		e.ensureSession(ctx)
 	}
@@ -471,7 +475,12 @@ func (e *endpoint) onKill(ctx vivid.ActorContext) {
 	e.stopping = true
 	e.cancelRetry(ctx)
 	e.failPending(ctx)
-	e.closeCurrentSession(ctx, false, "endpoint closing")
+	// 仅关闭 TCP 会话，不再 Kill 子 Actor。
+	// 框架的 doKill 在调用此行为之前已向所有子 Actor 发送了 Kill 消息。
+	if e.association != nil {
+		e.association.closeSession(ctx, e.address, true, "endpoint closing")
+		e.association = nil
+	}
 	e.endpointManager.unregisterEndpoint(e.address, ctx.Ref())
 	ctx.Logger().Debug("endpoint closing", log.String("address", e.address))
 }
