@@ -11,7 +11,7 @@ import (
 	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/internal/messages/messagecodecs"
 	metricsActor "github.com/kercylan98/vivid/internal/metrics"
-	"github.com/kercylan98/vivid/internal/remoting"
+	remotingv2 "github.com/kercylan98/vivid/internal/remoting/v2"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/virtual"
 	"github.com/kercylan98/vivid/pkg/metrics"
@@ -106,19 +106,22 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 			return nil
 		}
 
-		system.remotingServer = remoting.NewServerActor(
-			system.options.Context,
+		remotingOptions := *system.options.RemotingOptions
+		if system.options.StopTimeout > 0 && (remotingOptions.StopTimeout <= 0 || remotingOptions.StopTimeout > system.options.StopTimeout) {
+			remotingOptions.StopTimeout = system.options.StopTimeout
+		}
+		system.options.Logger = system.options.Logger.With("addr", system.options.RemotingAdvertiseAddress)
+		ref, err := system.ActorOf(remotingv2.New(
 			system.options.RemotingBindAddress,
 			system.options.RemotingAdvertiseAddress,
 			system.codec,
-			system, // NetworkEnvelopHandler 实现
-			*system.options.RemotingOptions,
-		)
-		system.options.Logger = system.options.Logger.With("addr", system.options.RemotingAdvertiseAddress)
-		ref, err := system.ActorOf(system.remotingServer, vivid.WithActorName(remotingActorName))
+			system.remotingEnvelopHandler,
+			remotingOptions,
+		), vivid.WithActorName(remotingActorName))
 		if err != nil {
 			return err
 		}
+		system.remotingRef = ref
 		system.TellSelf(&guard.RegisterStopPriority{
 			ActorRef: ref,
 			Priority: remotingStopPriority,

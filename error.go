@@ -66,6 +66,13 @@ var (
 	ErrorRemotingHandshakeFailed     = RegisterError(140004, "remote handshake failed")      // 握手失败
 )
 
+// Remoting V2 相关错误。
+var (
+	ErrorRemotingListenerCreateFailed = RegisterError(140010, "listener create failed", ErrorException) // 监听器创建失败
+	ErrorRemotingListenerAcceptFailed = RegisterError(140011, "listener accept failed", ErrorException) // 监听器接受连接失败
+	ErrorRemotingSessionSpawnFailed   = RegisterError(140012, "session spawn failed", ErrorException)   // Session 创建失败
+)
+
 // Cluster 相关错误。
 var (
 	ErrorClusterNameMismatch            = RegisterError(150000, "cluster name mismatch")             // 集群名称不匹配

@@ -2,7 +2,6 @@ package actor
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -11,8 +10,8 @@ import (
 	"github.com/kercylan98/vivid/internal/chain"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/guard"
-	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/remoting"
+	remotingv2 "github.com/kercylan98/vivid/internal/remoting/v2"
 	"github.com/kercylan98/vivid/internal/scheduler"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/sugar"
@@ -29,12 +28,13 @@ const (
 )
 
 var (
-	_ vivid.ActorSystem              = (*System)(nil)
-	_ vivid.EnvelopHandler           = (*System)(nil)
-	_ remoting.NetworkEnvelopHandler = (*System)(nil)
-	_ vivid.SystemStateProvider      = (*System)(nil)
-	_ vivid.MetricsProvider          = (*System)(nil)
-	_ bridge.VirtualActorSystem      = (*System)(nil)
+	_ vivid.ActorSystem                   = (*System)(nil)
+	_ vivid.EnvelopHandler                = (*System)(nil)
+	_ remoting.NetworkEnvelopHandler      = (*System)(nil)
+	_ remotingv2.ActorSystemEnvelopTarget = (*System)(nil)
+	_ vivid.SystemStateProvider           = (*System)(nil)
+	_ vivid.MetricsProvider               = (*System)(nil)
+	_ bridge.VirtualActorSystem           = (*System)(nil)
 )
 
 func NewSystem(options ...vivid.ActorSystemOption) *System {
@@ -51,27 +51,29 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 	system.options.Context, system.cancel = context.WithCancel(system.options.Context)
 
 	system.eventStream = newEventStream(system)
+	system.remotingEnvelopHandler = remotingv2.NewActorSystemEnvelopHandler(system, system)
 	return system
 }
 
 type System struct {
-	*Context                                                             // ActorSystem 本身就表示了根 Actor
-	codec              *serialization.VividCodec                         // 内部消息编解码器
-	actorOfLock        sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
-	options            *vivid.ActorSystemOptions                         // 系统选项
-	actorContexts      sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
-	futureAgents       map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
-	futureLock         sync.Mutex                                        // Future 的锁，保证 Future 的并发安全
-	guardClosedSignal  chan struct{}                                     // 用于通知系统关闭的信号
-	remotingServer     *remoting.ServerActor                             // 远程服务器
-	eventStream        vivid.EventStream                                 // 事件流
-	metrics            metrics.Metrics                                   // 指标收集器
-	scheduler          *scheduler.Scheduler                              // 调度器
-	status             int32                                             // 系统状态
-	statusLock         sync.Mutex                                        // 系统状态锁
-	cancel             context.CancelFunc                                // 上下文停止函数
-	startTime          time.Time                                         // 启动时间，Start() 时记录
-	virtualCoordinator bridge.VirtualCoordinator                         // 虚拟协调器
+	*Context                                                                 // ActorSystem 本身就表示了根 Actor
+	codec                  *serialization.VividCodec                         // 内部消息编解码器
+	actorOfLock            sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
+	options                *vivid.ActorSystemOptions                         // 系统选项
+	actorContexts          sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
+	futureAgents           map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
+	futureLock             sync.Mutex                                        // Future 的锁，保证 Future 的并发安全
+	guardClosedSignal      chan struct{}                                     // 用于通知系统关闭的信号
+	remotingRef            vivid.ActorRef                                    // 远程服务器引用
+	remotingEnvelopHandler remotingv2.NetworkEnvelopHandler                  // 远程信封处理器
+	eventStream            vivid.EventStream                                 // 事件流
+	metrics                metrics.Metrics                                   // 指标收集器
+	scheduler              *scheduler.Scheduler                              // 调度器
+	status                 int32                                             // 系统状态
+	statusLock             sync.Mutex                                        // 系统状态锁
+	cancel                 context.CancelFunc                                // 上下文停止函数
+	startTime              time.Time                                         // 启动时间，Start() 时记录
+	virtualCoordinator     bridge.VirtualCoordinator                         // 虚拟协调器
 }
 
 func (s *System) GetSystemBasicState() vivid.SystemBasicState {
@@ -93,22 +95,10 @@ func (s *System) GetSystemBasicState() vivid.SystemBasicState {
 }
 
 func (s *System) HandleRemotingEnvelop(system bool, sender, receiver string, messageInstance any) error {
-	var senderRef, receiverRef *Ref
-	var err error
-	senderRef, err = ParseRef(sender)
-	if err != nil {
-		s.Logger().Warn("invalid sender ref", log.String("ref", sender), log.Any("err", err))
-		return fmt.Errorf("%w: invalid sender ref, %s", err, sender)
+	if s.remotingEnvelopHandler == nil {
+		return vivid.ErrorIllegalArgument.WithMessage("remoting envelop handler not initialized")
 	}
-	receiverRef, err = ParseRef(receiver)
-	if err != nil {
-		s.Logger().Warn("invalid receiver ref", log.String("ref", receiver), log.Any("err", err))
-		return fmt.Errorf("%w: invalid receiver ref, %s", err, receiver)
-	}
-	receiverMailbox := s.findMailbox(receiverRef)
-	envelop := mailbox.NewEnvelop(system, senderRef, receiverRef, messageInstance)
-	receiverMailbox.Enqueue(envelop)
-	return nil
+	return s.remotingEnvelopHandler.HandleRemotingEnvelop(system, sender, receiver, messageInstance)
 }
 
 func (s *System) HandleFailedRemotingEnvelop(envelop vivid.Envelop) {
@@ -121,6 +111,14 @@ func (s *System) HandleFailedRemotingEnvelop(envelop vivid.Envelop) {
 
 func (s *System) Logger() log.Logger {
 	return s.options.Logger
+}
+
+func (s *System) ResolveMailbox(receiver vivid.ActorRef) vivid.Mailbox {
+	ref, ok := receiver.(*Ref)
+	if !ok {
+		return s.Mailbox()
+	}
+	return s.findMailbox(ref)
 }
 
 func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {
@@ -331,42 +329,56 @@ func (s *System) MetricsEnabled() bool {
 // findMailbox 负责根据给定的 ActorRef 查找并返回对应的邮箱（Mailbox）。
 func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 	if ref == nil {
-		// 若传入的引用为 nil，直接返回系统根 Actor 的邮箱作为兜底。
 		return s.Mailbox()
 	}
 
+	isRemoteRef := ref.GetAddress() != s.Ref().GetAddress()
+
 	// 尝试优先从 Ref 的 cache 字段中读取 Mailbox 指针，如果存在则直接返回，减少 map 查找的开销。
 	if ptr := ref.cache.Load(); ptr != nil {
-		return *ptr
+		cached := *ptr
+		cacheRemote := isRemoteMailbox(cached)
+		if cacheRemote == isRemoteRef {
+			return cached
+		}
 	}
 
 	// 检查是否为远程地址，使用远程邮箱
-	if ref.GetAddress() != s.Ref().GetAddress() {
+	if isRemoteRef {
 		// 当系统上下文已关闭，直接返回系统根 Actor 的 Mailbox 作为兜底
 		if s.options.Context.Err() != nil {
 			return s.Mailbox()
 		}
-		if s.remotingServer == nil {
+		if s.remotingRef == nil {
 			s.Logger().Warn("remote disabled, remote actor ref not allowed", log.String("ref", ref.String()))
 			return s.Mailbox()
 		}
-		return s.remotingServer.GetRemotingMailboxCentral().GetOrCreate(ref.address, s)
+		return vivid.Mailbox(remotingv2.NewMailbox(s.options.Context, s, s.remotingRef, s))
 	}
 
 	// 在 actorContexts 中查找指定路径（GetPath）对应的 Context，并尝试获取其邮箱（Mailbox）。
 	if value, ok := s.actorContexts.Load(ref.GetPath()); ok {
 		switch v := value.(type) {
 		case *Context:
-			// 利用 CompareAndSwap 保证仅存储一次 Mailbox 指针到 cache，提升后续命中率，防止多线程下的闭包问题。
 			m := v.Mailbox()
-			ref.cache.CompareAndSwap(nil, &m)
+			ref.cache.Store(&m)
 			return m
 		case *future.Future[vivid.Message]:
 			return v
 		}
 	}
-	// 若上述皆未命中，返回系统根 Actor 的 Mailbox 作为默认兜底方案，保证 Mailbox 一定可用。
-	return s.Mailbox()
+	m := s.Mailbox()
+	ref.cache.Store(&m)
+	return m
+}
+
+func isRemoteMailbox(m vivid.Mailbox) bool {
+	switch m.(type) {
+	case *remoting.Mailbox, *remotingv2.Mailbox:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *System) GetVirtualActorProvider(kind string) vivid.ActorProvider {

@@ -2,8 +2,11 @@ package remoting
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 )
+
+var errFrameTooLarge = errors.New("remoting: frame data length exceeds limit")
 
 // 控制帧类型：0=握手，1=心跳，2=关闭，3=常规数据
 const (
@@ -55,6 +58,11 @@ func dataFrameBytes(data []byte) []byte {
 
 // readFrame 从 reader 读完整一帧，返回控制类型、控制数据、常规数据
 func readFrame(reader io.Reader, header []byte) (ctrlType uint32, ctrlData, data []byte, err error) {
+	return readFrameWithMaxDataLen(reader, header, 0)
+}
+
+// readFrameWithMaxDataLen 与 readFrame 相同，但限制 data 长度不超过 maxDataLen（0 表示不限制）。
+func readFrameWithMaxDataLen(reader io.Reader, header []byte, maxDataLen uint32) (ctrlType uint32, ctrlData, data []byte, err error) {
 	if len(header) < frameHeaderSize {
 		header = make([]byte, frameHeaderSize)
 	}
@@ -64,6 +72,9 @@ func readFrame(reader io.Reader, header []byte) (ctrlType uint32, ctrlData, data
 	ctrlType = binary.BigEndian.Uint32(header[0:4])
 	ctrlLen := binary.BigEndian.Uint32(header[4:8])
 	dataLen := binary.BigEndian.Uint32(header[8:12])
+	if maxDataLen > 0 && dataLen > maxDataLen {
+		return 0, nil, nil, errFrameTooLarge
+	}
 	if ctrlLen > 0 {
 		ctrlData = make([]byte, ctrlLen)
 		if _, err = io.ReadFull(reader, ctrlData); err != nil {

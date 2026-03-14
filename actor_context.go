@@ -659,7 +659,7 @@ type PrelaunchContext interface {
 	// WithPhaseKill 为当前 Actor 注册多阶段终止：收到 [OnKill] 后先进入“等待阶段”，再执行真正终止。
 	//
 	// 功能说明：
-	//   - 调用后，当本 Actor 收到 [OnKill] 时不会立即执行终止（不杀子、不执行 OnKill 行为、不进入 [OnKilled]）。
+	//   - 调用后，当本 Actor 收到 [OnKill] 时不会立即执行终止（不停止子 Actor、不执行任何后续终止行为、不进入 [OnKilled]）。
 	//   - 进入等待阶段：仅当 completed 被关闭或经过 timeout 后，框架会向自身投递内部信号，随后执行真正的终止流程（杀子、执行 OnKill 行为、[OnKilled] 等）。
 	//   - 在等待阶段内，本 Actor 处于“正在终止”状态，期间收到的所有消息（除重复的 [OnKill] 被忽略外）均由传入的 behavior 处理，便于做优雅收尾（如排空队列、回复 Ask、通知集群离开等）。
 	//

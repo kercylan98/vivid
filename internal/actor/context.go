@@ -14,7 +14,6 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/messages"
-	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/ves"
@@ -127,7 +126,10 @@ func (c *Context) Unstash(num ...int) {
 	}
 
 	// 批量恢复
-	popCount := sugar.Max(sugar.Min(num[0], stashCount), 0)
+	popCount := num[0]
+	if popCount <= 0 || popCount > stashCount {
+		popCount = stashCount
+	}
 
 	for i := 0; i < popCount; i++ {
 		c.mailbox.Enqueue(c.stash[i])
@@ -364,6 +366,10 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 			c.handleMessage(envelop, c.phaseKill.behavior)
 			return
 		} // 是否处于僵尸状态
+		if _, ok := envelop.Message().(ves.DeathLetterEvent); ok {
+			// 避免在已终止阶段将死信再次投递给自己，形成无限递归的死信风暴。
+			return
+		}
 		c.system.TellSelf(ves.DeathLetterEvent{
 			Envelope: envelop,
 			Time:     time.Now(),
@@ -632,9 +638,11 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 	c.system.removeFuturesByAgentPath(c.ref.GetPath(), vivid.ErrorActorDeaded)
 
 	// 等待所有子 Actor 结束，假设是重启，子 Actor 不应该跟随重启，应该由父节点决定是否重启
-	for _, child := range c.children {
-		// c.Logger().Debug("notify child kill", log.String("path", child.GetPath()))
-		c.Kill(child, message.Poison, message.Reason)
+	// 多阶段终止时，子节点已在 apply 阶段通过 behavior（OnKill）通知过，此处不再重复发送 OnKill，避免死信
+	if c.phaseKill == nil || !c.phaseKill.completed {
+		for _, child := range c.children {
+			c.Kill(child, message.Poison, message.Reason)
+		}
 	}
 
 	// 宣告自己进入死亡中

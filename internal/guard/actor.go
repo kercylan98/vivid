@@ -77,9 +77,13 @@ func (a *Actor) onStop(ctx vivid.ActorContext) {
 		ctx.Kill(child, true, stopReason)
 	}
 
-	// 如果仅剩余已注册的 Actor 或没有子 Actor，则关闭自己
-	if ctx.Children().Len() == 0 || onlyRegistered {
+	// 如果没有子 Actor，则关闭自己；如果仅剩余已注册的 Actor，则按优先级逐个关闭
+	if ctx.Children().Len() == 0 {
 		ctx.Kill(ctx.Ref(), true, stopReason)
+		return
+	}
+	if onlyRegistered {
+		a.killNextRegistered(ctx)
 	}
 }
 
@@ -88,6 +92,7 @@ func (a *Actor) onKilled(ctx vivid.ActorContext, msg *vivid.OnKilled) {
 		close(a.guardClosedSignal)
 		return
 	}
+	a.removeRegisteredStopPriority(msg.Ref)
 
 	if a.stopping {
 		// 如果剩余 Actor 仅包含已注册的，那么关闭已注册的
@@ -105,16 +110,38 @@ func (a *Actor) onKilled(ctx vivid.ActorContext, msg *vivid.OnKilled) {
 			}
 		}
 
-		// 关闭自己
-		if len(a.registerStopPriorities) == 0 {
-			ctx.Kill(ctx.Ref(), true, stopReason)
-			return
-		}
+		a.killNextRegistered(ctx)
+	}
+}
 
+func (a *Actor) killNextRegistered(ctx vivid.ActorContext) {
+	for len(a.registerStopPriorities) > 0 {
 		next := a.registerStopPriorities[0]
 		a.registerStopPriorities = a.registerStopPriorities[1:]
-		ctx.Kill(next.ActorRef, true, stopReason)
+		if ctx.Children().Contains(next.ActorRef) {
+			ctx.Kill(next.ActorRef, true, stopReason)
+			return
+		}
 	}
+	ctx.Kill(ctx.Ref(), true, stopReason)
+}
+
+func (a *Actor) removeRegisteredStopPriority(ref vivid.ActorRef) {
+	if ref == nil || len(a.registerStopPriorities) == 0 {
+		return
+	}
+	filtered := a.registerStopPriorities[:0]
+	for _, item := range a.registerStopPriorities {
+		if item == nil || item.ActorRef == nil || item.ActorRef.Equals(ref) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if len(filtered) == 0 {
+		a.registerStopPriorities = nil
+		return
+	}
+	a.registerStopPriorities = filtered
 }
 
 func (a *Actor) onRegisterStopPriority(_ vivid.ActorContext, msg *RegisterStopPriority) {

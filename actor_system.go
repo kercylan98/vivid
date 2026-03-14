@@ -419,6 +419,7 @@ func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSyste
 		ReconnectMaxDelay:     10 * time.Second,
 		ReconnectFactor:       2.5,
 		ReconnectJitter:       true,
+		MaxPendingEnvelops:    1024,
 		ReadTimeout:           30 * time.Second,
 		HeartbeatInterval:     10 * time.Second, // 默认启用心跳，避免空闲连接读超时
 		StopTimeout:           10 * time.Minute,
@@ -450,6 +451,9 @@ type ActorSystemRemotingOptions struct {
 
 	// ReconnectJitter 用于配置远程连接的重试退避抖动。
 	ReconnectJitter bool
+
+	// MaxPendingEnvelops 单个远程地址的最大待发送信封数；超过后新消息将直接失败。
+	MaxPendingEnvelops int
 
 	// ReadTimeout 读超时时长，用于 SetReadDeadline；每次成功读完整帧后刷新。
 	ReadTimeout time.Duration
@@ -595,6 +599,15 @@ func WithActorSystemRemotingReconnect(limit int, initialDelay, maxDelay time.Dur
 			opts.ReconnectFactor = factor
 		}
 		opts.ReconnectJitter = jitter
+	}
+}
+
+// WithActorSystemRemotingMaxPendingEnvelops 返回一个 ActorSystemRemotingOption，用于配置单远程地址的最大待发送信封数。
+func WithActorSystemRemotingMaxPendingEnvelops(limit int) ActorSystemRemotingOption {
+	return func(opts *ActorSystemRemotingOptions) {
+		if limit > 0 {
+			opts.MaxPendingEnvelops = limit
+		}
 	}
 }
 
