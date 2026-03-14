@@ -11,3 +11,14 @@ func FirstOrDefault[T any](slice []T, defaultValue T) T {
 	}
 	return slice[0]
 }
+
+// Filter 过滤切片中的元素，返回符合条件的元素。
+func Filter[T any](slice []T, predicate func(T) bool) []T {
+	var result []T
+	for _, item := range slice {
+		if predicate(item) {
+			result = append(result, item)
+		}
+	}
+	return result
+}

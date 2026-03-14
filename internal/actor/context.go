@@ -460,7 +460,6 @@ func (c *Context) onScheduler(message *SchedulerMessage, behavior vivid.Behavior
 }
 
 func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
-	c.Logger().Debug("receive command", log.String("path", c.ref.GetPath()), log.String("command", message.Command.String()))
 	switch message.Command {
 	case messages.CommandPauseMailbox:
 		c.mailbox.Pause()

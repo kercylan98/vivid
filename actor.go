@@ -28,15 +28,9 @@ type complexCombinationActor struct {
 // NewComplexCombinationActor 将多个 Actor 组合为一个，按顺序调用各扩展接口与 OnReceive；nil 元素被忽略。
 func NewComplexCombinationActor(actors ...Actor) Actor {
 	return &complexCombinationActor{
-		actors: func() []Actor {
-			var actors []Actor
-			for _, actor := range actors {
-				if actor == nil {
-					continue
-				}
-			}
-			return actors
-		}(),
+		actors: sugar.Filter(actors, func(actor Actor) bool {
+			return actor != nil
+		}),
 	}
 }
 

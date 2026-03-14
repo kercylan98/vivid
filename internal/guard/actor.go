@@ -58,22 +58,28 @@ func (a *Actor) onStop(ctx vivid.ActorContext) {
 	if a.stopping {
 		return
 	}
-
 	a.stopping = true
+
 	// 先关闭未注册的 Actor
 	// 已注册的在 [Actor.onKilled] 中关闭
+	var onlyRegistered = true
 	for _, child := range ctx.Children() {
 		var registered = false
 		for _, v := range a.registerStopPriorities {
-			if v.ActorRef.Equals(child) {
-				registered = true
+			if registered = v.ActorRef.Equals(child); registered {
 				break
 			}
 		}
 		if registered {
 			continue
 		}
+		onlyRegistered = false
 		ctx.Kill(child, true, stopReason)
+	}
+
+	// 如果仅剩余已注册的 Actor 或没有子 Actor，则关闭自己
+	if ctx.Children().Len() == 0 || onlyRegistered {
+		ctx.Kill(ctx.Ref(), true, stopReason)
 	}
 }
 

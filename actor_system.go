@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
@@ -358,11 +359,7 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 func WithActorSystemRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		opts.RemotingBindAddress = bindAddr
-		if len(advertiseAddr) > 0 {
-			opts.RemotingAdvertiseAddress = advertiseAddr[0]
-		} else {
-			opts.RemotingAdvertiseAddress = bindAddr
-		}
+		opts.RemotingAdvertiseAddress = sugar.FirstOrDefault(advertiseAddr, bindAddr)
 		if utils.IsAddrMissingPort(opts.RemotingAdvertiseAddress) && !utils.IsDomainName(opts.RemotingAdvertiseAddress) {
 			panic("ActorSystem advertise address must be a domain when missing port")
 		}

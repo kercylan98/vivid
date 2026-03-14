@@ -403,6 +403,9 @@ func TestContext_Restart(t *testing.T) {
 	})
 
 	t.Run("restart on killed panic, and prelaunch", func(t *testing.T) {
+		// 该用例目的在于测试，当actor被杀死时，如果actor的prelaunch函数抛出错误，则actor不会被重启
+		// 而是会等待actor的prelaunch函数返回后，再重启actor
+
 		system := actor.NewTestSystem(t)
 		defer func() {
 			assert.NoError(t, system.Stop())
@@ -416,9 +419,11 @@ func TestContext_Restart(t *testing.T) {
 			case *vivid.OnLaunch:
 				childActor := vivid.NewComplexCombinationActor(
 					vivid.NewPrelaunchActor(func(ctx vivid.PrelaunchContext) error {
+						ctx.Logger().Info("prelaunch")
 						return nil
 					}),
 					vivid.NewPreRestartActor(func(ctx vivid.RestartContext) error {
+						ctx.Logger().Info("prerestart")
 						close(wait)
 						return nil
 					}, vivid.ActorFN(func(ctx vivid.ActorContext) {
