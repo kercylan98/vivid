@@ -129,7 +129,8 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 		}
 	}
 
-	// 获取未加入 peerSeeds 的种子节点
+	// 获取未加入 peerSeeds 的种子节点。排除已从成员列表移除的种子（REMOVED 且已被 cleanRemovedMembers 清理），
+	// 避免重复向死节点发送 Ping 导致 peers 永不为空、无法触发 maybeEmitConverged 进而卡住 phaseKill。
 	var notInPeerSeeds []vivid.ActorRef
 	for _, seed := range seeds {
 		if seed == nil {
@@ -137,6 +138,10 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 		}
 		_, ok := peerSeeds[seed.String()]
 		if !ok {
+			// 若种子不在成员列表中，说明从未见过或已被移除，不再尝试联络
+			if m.Get(seed.String()) == nil {
+				continue
+			}
 			notInPeerSeeds = append(notInPeerSeeds, seed)
 		}
 	}

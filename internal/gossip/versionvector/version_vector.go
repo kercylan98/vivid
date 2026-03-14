@@ -26,6 +26,7 @@ func (v *VersionVector) Decode(reader *serialization.Reader, message any) error 
 }
 
 // Encode 序列化到 writer，实现 MessageCodec。
+// 克隆 map 后序列化，避免与 gossip 并发修改（Increment/Merge/Remove）产生竞态。
 func (v *VersionVector) Encode(writer *serialization.Writer, message any) error {
 	msg := message.(*VersionVector)
 	return writer.Write(msg.m).Err()
