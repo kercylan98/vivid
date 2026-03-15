@@ -331,7 +331,9 @@ func (e *endpoint) onConnectCompleted(ctx vivid.ActorContext, completed *endpoin
 		return
 	}
 	if completed.err != nil {
-		e.logConnectFailed(ctx, "endpoint connect failed", completed.err)
+		ctx.Logger().Warn("endpoint connect failed",
+			log.String("address", e.address),
+			log.Any("error", completed.err))
 		e.scheduleRetry(ctx, completed.err)
 		return
 	}
