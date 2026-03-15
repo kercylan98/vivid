@@ -8,6 +8,7 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 var (
@@ -90,6 +91,10 @@ func (r *Remoting) onLaunch(ctx vivid.ActorContext) {
 
 func (r *Remoting) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
 	if r.stopping {
+		ctx.EventStream().Publish(ctx, ves.RemotingEnvelopSendFailedEvent{
+			TargetAddress: ensureEnvelopReceiverAddress(envelop),
+			Error:         vivid.ErrorRemotingStopped,
+		})
 		r.envelopHandler.HandleFailedRemotingEnvelop(envelop)
 		return
 	}
@@ -100,6 +105,10 @@ func (r *Remoting) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
 		}
 		return endpointRef, nil
 	}); err != nil {
+		ctx.EventStream().Publish(ctx, ves.RemotingEnvelopSendFailedEvent{
+			TargetAddress: ensureEnvelopReceiverAddress(envelop),
+			Error:         err,
+		})
 		ctx.Failed(vivid.ErrorRemotingEndpointSendData.With(err))
 	}
 }

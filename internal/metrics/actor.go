@@ -15,23 +15,14 @@ var (
 // NewActor 创建一个新的指标收集 Actor。
 func NewActor(updatedNotify time.Duration) *Actor {
 	return &Actor{
-		actorSpawnedTimes: make(map[string]time.Time),
-		actorLaunchTimes:  make(map[string]time.Time),
-		actorRestartTimes: make(map[string]time.Time),
-		mailboxPauseTimes: make(map[string]time.Time),
-		updatedNotify:     updatedNotify,
-		lastUpdatedTime:   time.Now(),
+		updatedNotify:   updatedNotify,
+		lastUpdatedTime: time.Now(),
 	}
 }
 
 type Actor struct {
-	updatedNotify     time.Duration        // 指标更新通知间隔
-	lastUpdatedTime   time.Time            // 上次更新时间
-	actorSpawnedTimes map[string]time.Time // Actor 创建时间，用于计算启动耗时
-	actorLaunchTimes  map[string]time.Time // Actor 启动时间，用于计算生命周期
-	actorRestartTimes map[string]time.Time // Actor 重启开始时间，用于计算重启耗时
-	mailboxPauseTimes map[string]time.Time // 邮箱暂停时间，用于计算暂停时长
-	metrics           metrics.Metrics      // 指标收集器
+	updatedNotify   time.Duration // 指标更新通知间隔
+	lastUpdatedTime time.Time     // 上次更新时间
 }
 
 func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
@@ -47,43 +38,58 @@ func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 	eventStream.Subscribe(ctx, ves.ActorMailboxPausedEvent{})
 	eventStream.Subscribe(ctx, ves.ActorMailboxResumedEvent{})
 	eventStream.Subscribe(ctx, ves.DeathLetterEvent{})
+	eventStream.Subscribe(ctx, ves.RemotingInboundConnectionEstablishedEvent{})
+	eventStream.Subscribe(ctx, ves.RemotingOutboundConnectionEstablishedEvent{})
+	eventStream.Subscribe(ctx, ves.RemotingConnectionFailedEvent{})
+	eventStream.Subscribe(ctx, ves.RemotingConnectionClosedEvent{})
+	eventStream.Subscribe(ctx, ves.RemotingEnvelopSendFailedEvent{})
 	return nil
 }
 
 func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 	switch msg := ctx.Message().(type) {
 	case *vivid.OnLaunch:
-		a.metrics = ctx.Metrics()
 	case vivid.StreamEvent:
 		a.onStreamEvent(ctx, msg)
 	}
 }
 
 func (a *Actor) onStreamEvent(ctx vivid.ActorContext, event vivid.StreamEvent) {
-	a.metrics.Counter(metrics.NameCounterStreamEventsTotal).Inc()
+	m := ctx.Metrics()
+	m.Counter(metrics.StreamEventsTotalCounter).Inc()
 	switch e := event.(type) {
 	case ves.ActorSpawnedEvent:
-		a.onActorSpawned(e)
+		a.onActorSpawned(ctx, m, e)
 	case ves.ActorLaunchedEvent:
-		a.onActorLaunched(e)
+		a.onActorLaunched(ctx, m, e)
 	case ves.ActorKilledEvent:
-		a.onActorKilled(e)
+		a.onActorKilled(ctx, m, e)
 	case ves.ActorRestartingEvent:
-		a.onActorRestarting(e)
+		a.onActorRestarting(ctx, m, e)
 	case ves.ActorRestartedEvent:
-		a.onActorRestarted(e)
+		a.onActorRestarted(ctx, m, e)
 	case ves.ActorFailedEvent:
-		a.onActorFailed(e)
+		a.onActorFailed(ctx, m, e)
 	case ves.ActorWatchedEvent:
-		a.onActorWatched(e)
+		a.onActorWatched(ctx, m, e)
 	case ves.ActorUnwatchedEvent:
-		a.onActorUnwatched(e)
+		a.onActorUnwatched(ctx, m, e)
 	case ves.ActorMailboxPausedEvent:
-		a.onMailboxPaused(e)
+		a.onMailboxPaused(ctx, m, e)
 	case ves.ActorMailboxResumedEvent:
-		a.onMailboxResumed(e)
+		a.onMailboxResumed(ctx, m, e)
 	case ves.DeathLetterEvent:
-		a.onDeathLetter(e)
+		a.onDeathLetter(ctx, m, e)
+	case ves.RemotingInboundConnectionEstablishedEvent:
+		a.onRemotingInboundConnectionEstablished(ctx, m, e)
+	case ves.RemotingOutboundConnectionEstablishedEvent:
+		a.onRemotingOutboundConnectionEstablished(ctx, m, e)
+	case ves.RemotingConnectionFailedEvent:
+		a.onRemotingConnectionFailed(ctx, m, e)
+	case ves.RemotingConnectionClosedEvent:
+		a.onRemotingConnectionClosed(ctx, m, e)
+	case ves.RemotingEnvelopSendFailedEvent:
+		a.onRemotingEnvelopSendFailed(ctx, m, e)
 	}
 	a.onUpdatedNotify(ctx)
 }
@@ -99,121 +105,75 @@ func (a *Actor) onUpdatedNotify(ctx vivid.ActorContext) {
 	ctx.EventStream().Publish(ctx, ctx.Metrics().Snapshot())
 }
 
-func (a *Actor) onActorSpawned(event ves.ActorSpawnedEvent) {
-	path := event.ActorRef.GetPath()
-	now := time.Now()
-	a.actorSpawnedTimes[path] = now
-
+func (a *Actor) onActorSpawned(_ vivid.ActorContext, m metrics.Metrics, _ ves.ActorSpawnedEvent) {
 	// 更新指标
-	a.metrics.Counter(metrics.NameCounterActorSpawnedTotal).Inc()
-	a.metrics.Gauge(metrics.NameGaugeActorCount).Inc()
-	a.metrics.Counter(metrics.NameCounterActorSpawnedTotalByType).Add(1)
+	m.Counter(metrics.SpawnedActorTotalCounter).Inc()
+	m.Gauge(metrics.AliveActorCountGauge).Inc()
 }
 
-func (a *Actor) onActorLaunched(event ves.ActorLaunchedEvent) {
-	path := event.ActorRef.GetPath()
-	now := time.Now()
-	a.actorLaunchTimes[path] = now
-
-	// 计算启动耗时
-	if spawnedTime, ok := a.actorSpawnedTimes[path]; ok {
-		duration := now.Sub(spawnedTime).Seconds()
-		a.metrics.Histogram(metrics.NameHistogramActorLaunchDurationSeconds).Observe(duration)
-		delete(a.actorSpawnedTimes, path)
-	}
+func (a *Actor) onActorLaunched(_ vivid.ActorContext, m metrics.Metrics, event ves.ActorLaunchedEvent) {
+	m.Histogram(metrics.ActorLaunchDurationHistogram).Observe(event.Duration.Seconds())
 }
 
-func (a *Actor) onActorKilled(event ves.ActorKilledEvent) {
-	path := event.ActorRef.GetPath()
+func (a *Actor) onActorKilled(_ vivid.ActorContext, m metrics.Metrics, event ves.ActorKilledEvent) {
+	m.Histogram(metrics.ActorLifetimeHistogram).Observe(event.Duration.Seconds())
+	m.Counter(metrics.KilledActorTotalCounter).Inc()
+	m.Gauge(metrics.AliveActorCountGauge).Dec()
+}
 
-	// 计算生命周期时长
-	if launchTime, ok := a.actorLaunchTimes[path]; ok {
-		duration := time.Since(launchTime).Seconds()
-		a.metrics.Histogram(metrics.NameHistogramActorLifetimeSeconds).Observe(duration)
-		delete(a.actorLaunchTimes, path)
-	}
+func (a *Actor) onActorRestarting(_ vivid.ActorContext, m metrics.Metrics, _ ves.ActorRestartingEvent) {
+	m.Counter(metrics.RestartedActorTotalCounter).Inc()
+}
 
-	// 清理相关时间记录
-	delete(a.actorSpawnedTimes, path)
-	delete(a.actorRestartTimes, path)
-	delete(a.mailboxPauseTimes, path)
+func (a *Actor) onActorRestarted(_ vivid.ActorContext, m metrics.Metrics, _ ves.ActorRestartedEvent) {
+	m.Counter(metrics.ActorRestartSucceededTotalCounter).Inc()
+}
 
+func (a *Actor) onActorFailed(_ vivid.ActorContext, m metrics.Metrics, _ ves.ActorFailedEvent) {
+	m.Counter(metrics.ActorFailedTotalCounter).Inc()
+}
+
+func (a *Actor) onActorWatched(_ vivid.ActorContext, m metrics.Metrics, _ ves.ActorWatchedEvent) {
+	m.Counter(metrics.ActorWatchTotalCounter).Inc()
+	m.Gauge(metrics.ActorWatchCountGauge).Inc()
+}
+
+func (a *Actor) onActorUnwatched(_ vivid.ActorContext, m metrics.Metrics, _ ves.ActorUnwatchedEvent) {
+	m.Counter(metrics.ActorUnwatchTotalCounter).Inc()
+	m.Gauge(metrics.ActorWatchCountGauge).Dec()
+}
+
+func (a *Actor) onMailboxPaused(_ vivid.ActorContext, m metrics.Metrics, _ ves.ActorMailboxPausedEvent) {
+	m.Counter(metrics.MailboxPausedTotalCounter).Inc()
+	m.Gauge(metrics.MailboxPausedCountGauge).Inc()
+}
+
+func (a *Actor) onMailboxResumed(_ vivid.ActorContext, m metrics.Metrics, _ ves.ActorMailboxResumedEvent) {
+	m.Counter(metrics.MailboxResumedTotalCounter).Inc()
+	m.Gauge(metrics.MailboxPausedCountGauge).Dec()
+}
+
+func (a *Actor) onDeathLetter(_ vivid.ActorContext, m metrics.Metrics, _ ves.DeathLetterEvent) {
 	// 更新指标
-	a.metrics.Counter(metrics.NameCounterActorKilledTotal).Inc()
-	a.metrics.Gauge(metrics.NameGaugeActorCount).Dec()
+	m.Counter(metrics.DeathLetterTotalCounter).Inc()
 }
 
-func (a *Actor) onActorRestarting(event ves.ActorRestartingEvent) {
-	path := event.ActorRef.GetPath()
-	a.actorRestartTimes[path] = time.Now()
-
-	// 更新指标
-	a.metrics.Counter(metrics.NameCounterActorRestartTotal).Inc()
-	a.metrics.Counter(metrics.NameCounterActorRestartTotalByType).Add(1)
+func (a *Actor) onRemotingInboundConnectionEstablished(_ vivid.ActorContext, m metrics.Metrics, _ ves.RemotingInboundConnectionEstablishedEvent) {
+	m.Counter(metrics.RemotingInboundConnectionsTotalCounter).Inc()
 }
 
-func (a *Actor) onActorRestarted(event ves.ActorRestartedEvent) {
-	path := event.ActorRef.GetPath()
-
-	// 计算重启耗时
-	if restartTime, ok := a.actorRestartTimes[path]; ok {
-		duration := time.Since(restartTime).Seconds()
-		a.metrics.Histogram(metrics.NameHistogramActorRestartDurationSeconds).Observe(duration)
-		delete(a.actorRestartTimes, path)
-	}
-
-	// 更新指标
-	a.metrics.Counter(metrics.NameCounterActorRestartSuccessTotal).Inc()
+func (a *Actor) onRemotingOutboundConnectionEstablished(_ vivid.ActorContext, m metrics.Metrics, _ ves.RemotingOutboundConnectionEstablishedEvent) {
+	m.Counter(metrics.RemotingOutboundConnectionsTotalCounter).Inc()
 }
 
-func (a *Actor) onActorFailed(_ ves.ActorFailedEvent) {
-	// 更新指标
-	a.metrics.Counter(metrics.NameCounterActorFailedTotal).Inc()
-	a.metrics.Counter(metrics.NameCounterActorFailedTotalByType).Add(1)
+func (a *Actor) onRemotingConnectionFailed(_ vivid.ActorContext, m metrics.Metrics, _ ves.RemotingConnectionFailedEvent) {
+	m.Counter(metrics.RemotingConnectionFailedTotalCounter).Inc()
 }
 
-func (a *Actor) onActorWatched(_ ves.ActorWatchedEvent) {
-	// 更新指标
-	a.metrics.Counter(metrics.NameCounterActorWatchTotal).Inc()
-	a.metrics.Gauge(metrics.NameGaugeActorWatchCount).Inc()
+func (a *Actor) onRemotingConnectionClosed(_ vivid.ActorContext, m metrics.Metrics, _ ves.RemotingConnectionClosedEvent) {
+	m.Counter(metrics.RemotingConnectionClosedTotalCounter).Inc()
 }
 
-func (a *Actor) onActorUnwatched(_ ves.ActorUnwatchedEvent) {
-	// 更新指标
-	a.metrics.Counter(metrics.NameCounterActorUnwatchTotal).Inc()
-	a.metrics.Gauge(metrics.NameGaugeActorWatchCount).Dec()
-}
-
-func (a *Actor) onMailboxPaused(event ves.ActorMailboxPausedEvent) {
-	path := event.ActorRef.GetPath()
-	a.mailboxPauseTimes[path] = time.Now()
-
-	// 更新指标
-	a.metrics.Counter(metrics.NameCounterMailboxPausedTotal).Inc()
-	a.metrics.Gauge(metrics.NameGaugeMailboxPausedCount).Inc()
-}
-
-func (a *Actor) onMailboxResumed(event ves.ActorMailboxResumedEvent) {
-	path := event.ActorRef.GetPath()
-
-	// 计算暂停时长
-	if pauseTime, ok := a.mailboxPauseTimes[path]; ok {
-		duration := time.Since(pauseTime).Seconds()
-		a.metrics.Histogram(metrics.NameHistogramMailboxPausedDurationSeconds).Observe(duration)
-		delete(a.mailboxPauseTimes, path)
-	}
-
-	// 更新指标
-	a.metrics.Counter(metrics.NameCounterMailboxResumedTotal).Inc()
-	a.metrics.Gauge(metrics.NameGaugeMailboxPausedCount).Dec()
-}
-
-func (a *Actor) onDeathLetter(_ ves.DeathLetterEvent) {
-	// 更新指标
-	a.metrics.Counter(metrics.NameCounterDeathLetterTotal).Inc()
-}
-
-// GetMetrics 返回指标收集器实例。
-func (a *Actor) GetMetrics() metrics.Metrics {
-	return a.metrics
+func (a *Actor) onRemotingEnvelopSendFailed(_ vivid.ActorContext, m metrics.Metrics, _ ves.RemotingEnvelopSendFailedEvent) {
+	m.Counter(metrics.RemotingEnvelopSendFailedTotalCounter).Inc()
 }

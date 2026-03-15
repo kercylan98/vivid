@@ -3,6 +3,7 @@ package actor
 import (
 	"reflect"
 	"sync/atomic"
+	"time"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/mailbox"
@@ -110,6 +111,7 @@ func (h *killedHandler) cleanupIfNotRestarting() {
 	h.ctx.EventStream().Publish(h.ctx, ves.ActorKilledEvent{
 		ActorRef: h.ctx.ref,
 		Type:     reflect.TypeOf(h.ctx.actor),
+		Duration: time.Since(h.ctx.launchTime),
 	})
 }
 

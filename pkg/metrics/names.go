@@ -1,114 +1,101 @@
 package metrics
 
-// 以下常量为 Vivid 指标收集器使用的指标名称，供 internal/metrics、internal/cluster 等统一引用，
-// 避免魔法字符串分散在代码中，便于控制台、监控系统按名称消费指标。
+// 系统
+const (
+	// MessagesProcessedTotalCounter 已投递并进入 Actor OnReceive 的消息总数（不含系统消息如 OnLaunch/OnKill）。
+	MessagesProcessedTotalCounter = "messages_processed_total"
+	// StreamEventsTotalCounter 通过 EventStream.Publish 发布的事件总数（生命周期、Watch、Mailbox 等）。
+	StreamEventsTotalCounter = "stream_events_total"
+	// DeathLetterTotalCounter 投递到死信队列的消息总数。
+	DeathLetterTotalCounter = "death_letter_total"
+)
 
-// ---- Actor 生命周期与数量 ----
+// Actor
+const (
+	// SpawnedActorTotalCounter Actor 创建总次数（每次创建 +1）。
+	SpawnedActorTotalCounter = "spawned_actor_total"
 
-// NameCounterActorSpawnedTotal 计数器：系统启动以来通过 ActorOf 创建的 Actor 总次数（每次创建 +1）。
-const NameCounterActorSpawnedTotal = "vivid_actor_spawned_total"
+	// AliveActorCountGauge 当前存活的 Actor 数量（创建 +1，Kill -1）。
+	AliveActorCountGauge = "alive_actor_count"
 
-// NameGaugeActorCount 仪表盘：当前存活的 Actor 数量（创建 +1，Kill -1）。
-const NameGaugeActorCount = "vivid_actor_count"
+	// ActorLaunchDurationHistogram 从 Spawned 到 Launched 的耗时（秒），反映 Actor 启动耗时。
+	ActorLaunchDurationHistogram = "actor_launch_duration_seconds"
 
-// NameCounterActorSpawnedTotalByType 计数器：按类型细分的 Actor 创建次数（可扩展为按类型打点）。
-const NameCounterActorSpawnedTotalByType = "vivid_actor_spawned_total_by_type"
+	// ActorLifetimeHistogram Actor 从 Launched 到 Killed 的存活时长（秒）。
+	ActorLifetimeHistogram = "actor_lifetime_seconds"
 
-// NameHistogramActorLaunchDurationSeconds 直方图：从 Spawned 到 Launched 的耗时（秒），反映 Actor 启动耗时。
-const NameHistogramActorLaunchDurationSeconds = "vivid_actor_launch_duration_seconds"
+	// KilledActorTotalCounter 系统启动以来被 Kill 的 Actor 总次数。
+	KilledActorTotalCounter = "killed_actor_total"
 
-// NameHistogramActorLifetimeSeconds 直方图：Actor 从 Launched 到 Killed 的存活时长（秒）。
-const NameHistogramActorLifetimeSeconds = "vivid_actor_lifetime_seconds"
+	// RestartedActorTotalCounter 进入重启流程的总次数（含 Restarting 事件）。
+	RestartedActorTotalCounter = "restarted_actor_total"
 
-// NameCounterActorKilledTotal 计数器：系统启动以来被 Kill 的 Actor 总次数。
-const NameCounterActorKilledTotal = "vivid_actor_killed_total"
+	// ActorRestartSucceededTotalCounter 成功完成重启（Restarted）的次数。
+	ActorRestartSucceededTotalCounter = "actor_restart_succeeded_total"
 
-// ---- Actor 重启 ----
+	// ActorFailedTotalCounter Actor 进入 Failed 状态的总次数（监督策略决定后的失败）。
+	ActorFailedTotalCounter = "actor_failed_total"
 
-// NameCounterActorRestartTotal 计数器：进入重启流程的总次数（含 Restarting 事件）。
-const NameCounterActorRestartTotal = "vivid_actor_restart_total"
+	// ActorWatchTotalCounter Watch 调用总次数。
+	ActorWatchTotalCounter = "actor_watch_total"
 
-// NameCounterActorRestartTotalByType 计数器：按类型细分的重启次数。
-const NameCounterActorRestartTotalByType = "vivid_actor_restart_total_by_type"
+	// ActorWatchCountGauge 当前被 Watch 的 Actor 数量（Watch +1，Unwatch -1）。
+	ActorWatchCountGauge = "actor_watch_count"
 
-// NameHistogramActorRestartDurationSeconds 直方图：从 Restarting 到 Restarted 的重启耗时（秒）。
-const NameHistogramActorRestartDurationSeconds = "vivid_actor_restart_duration_seconds"
+	// ActorUnwatchTotalCounter Unwatch 调用总次数。
+	ActorUnwatchTotalCounter = "actor_unwatch_total"
+)
 
-// NameCounterActorRestartSuccessTotal 计数器：成功完成重启（Restarted）的次数。
-const NameCounterActorRestartSuccessTotal = "vivid_actor_restart_success_total"
+// 邮箱暂停
+const (
+	// MailboxPausedTotalCounter 邮箱进入暂停状态的总次数。
+	MailboxPausedTotalCounter = "mailbox_paused_total"
 
-// ---- Actor 失败 ----
+	// MailboxPausedCountGauge 当前处于暂停状态的邮箱数量（Paused +1，Resumed -1）。
+	MailboxPausedCountGauge = "mailbox_paused_count"
 
-// NameCounterActorFailedTotal 计数器：Actor 进入 Failed 状态的总次数（监督策略决定后的失败）。
-const NameCounterActorFailedTotal = "vivid_actor_failed_total"
+	// MailboxPausedDurationSecondsHistogram 邮箱从 Paused 到 Resumed 的暂停时长（秒）。
+	MailboxPausedDurationSecondsHistogram = "mailbox_paused_duration_seconds"
 
-// NameCounterActorFailedTotalByType 计数器：按类型细分的失败次数。
-const NameCounterActorFailedTotalByType = "vivid_actor_failed_total_by_type"
+	// MailboxResumedTotalCounter 邮箱从暂停恢复的总次数。
+	MailboxResumedTotalCounter = "mailbox_resumed_total"
+)
 
-// ---- Watch / Unwatch ----
+// 网络
+const (
+	// RemotingInboundConnectionsTotalCounter 入站连接建立成功总次数。
+	RemotingInboundConnectionsTotalCounter = "remoting_inbound_connections_total"
 
-// NameCounterActorWatchTotal 计数器：Watch 调用总次数。
-const NameCounterActorWatchTotal = "vivid_actor_watch_total"
+	// RemotingOutboundConnectionsTotalCounter 出站连接建立成功总次数。
+	RemotingOutboundConnectionsTotalCounter = "remoting_outbound_connections_total"
 
-// NameGaugeActorWatchCount 仪表盘：当前被 Watch 的 Actor 数量（Watch +1，Unwatch -1）。
-const NameGaugeActorWatchCount = "vivid_actor_watch_count"
+	// RemotingConnectionFailedTotalCounter 连接失败总次数（Dial/握手/激活失败或重试用尽）。
+	RemotingConnectionFailedTotalCounter = "remoting_connection_failed_total"
 
-// NameCounterActorUnwatchTotal 计数器：Unwatch 调用总次数。
-const NameCounterActorUnwatchTotal = "vivid_actor_unwatch_total"
+	// RemotingConnectionClosedTotalCounter 连接关闭总次数（读端异常、对端关闭、写/心跳失败等）。
+	RemotingConnectionClosedTotalCounter = "remoting_connection_closed_total"
 
-// ---- 邮箱暂停 / 恢复 ----
+	// RemotingEnvelopSendFailedTotalCounter 向远程发送 Envelop 失败总次数。
+	RemotingEnvelopSendFailedTotalCounter = "remoting_envelop_send_failed_total"
 
-// NameCounterMailboxPausedTotal 计数器：邮箱进入暂停状态的总次数。
-const NameCounterMailboxPausedTotal = "vivid_mailbox_paused_total"
+	// RemotingEnvelopSentTotalCounter 成功发送到远程的 Envelop 总条数（写完成并 ack）。
+	RemotingEnvelopSentTotalCounter = "remoting_envelop_sent_total"
 
-// NameGaugeMailboxPausedCount 仪表盘：当前处于暂停状态的邮箱数量（Paused +1，Resumed -1）。
-const NameGaugeMailboxPausedCount = "vivid_mailbox_paused_count"
+	// RemotingEnvelopReceivedTotalCounter 成功从远程接收并投递的 Envelop 总条数。
+	RemotingEnvelopReceivedTotalCounter = "remoting_envelop_received_total"
 
-// NameHistogramMailboxPausedDurationSeconds 直方图：邮箱从 Paused 到 Resumed 的暂停时长（秒）。
-const NameHistogramMailboxPausedDurationSeconds = "vivid_mailbox_paused_duration_seconds"
+	// RemotingBytesSentTotalCounter Remoting 发送的字节总数（含帧头），用于流量与速率统计。
+	RemotingBytesSentTotalCounter = "remoting_bytes_sent_total"
 
-// NameCounterMailboxResumedTotal 计数器：邮箱从暂停恢复的总次数。
-const NameCounterMailboxResumedTotal = "vivid_mailbox_resumed_total"
+	// RemotingBytesReceivedTotalCounter Remoting 接收的字节总数（含帧头），用于流量与速率统计。
+	RemotingBytesReceivedTotalCounter = "remoting_bytes_received_total"
 
-// ---- 死信 ----
+	// RemotingOutboundEndpointsGauge 当前出站 Endpoint 数量（每个远程地址一个 Endpoint，Launch +1、Kill -1）。
+	RemotingOutboundEndpointsGauge = "remoting_outbound_endpoints"
 
-// NameCounterDeathLetterTotal 计数器：投递到死信队列的消息总数。
-const NameCounterDeathLetterTotal = "vivid_death_letter_total"
+	// RemotingPendingEnvelopsGauge 当前待发送的 Envelop 总数（各 Endpoint 出站队列之和）。
+	RemotingPendingEnvelopsGauge = "remoting_pending_envelops"
 
-// ---- 消息与事件 ----
-
-// NameCounterMessagesProcessedTotal 计数器：已投递并进入 Actor OnReceive 的消息总数（不含系统消息如 OnLaunch/OnKill）。
-const NameCounterMessagesProcessedTotal = "vivid_messages_processed_total"
-
-// NameCounterStreamEventsTotal 计数器：通过 EventStream.Publish 发布的事件总数（生命周期、Watch、Mailbox 等）。
-const NameCounterStreamEventsTotal = "vivid_stream_events_total"
-
-// ---- 集群（cluster.*）----
-
-// NameGaugeClusterMembers 仪表盘：当前视图中的集群成员总数。
-const NameGaugeClusterMembers = "cluster.members"
-
-// NameGaugeClusterHealthy 仪表盘：当前视图中状态为健康的成员数量。
-const NameGaugeClusterHealthy = "cluster.healthy"
-
-// NameGaugeClusterUnhealthy 仪表盘：当前视图中不健康的成员数量。
-const NameGaugeClusterUnhealthy = "cluster.unhealthy"
-
-// NameGaugeClusterQuorumSize 仪表盘：当前视图的法定人数（Quorum）大小。
-const NameGaugeClusterQuorumSize = "cluster.quorum_size"
-
-// NameGaugeClusterInQuorum 仪表盘：本节点是否在法定人数内（1=是，0=否）。
-const NameGaugeClusterInQuorum = "cluster.in_quorum"
-
-// NameGaugeClusterViewDivergence 仪表盘：本地视图与对比视图的成员差异数（用于检测视图分歧）。
-const NameGaugeClusterViewDivergence = "cluster.view_divergence"
-
-// NamePrefixClusterDC 集群按数据中心（DC）细分的指标名前缀，完整名为 NamePrefixClusterDC + dc + NameSuffixClusterDCMembers 或 NameSuffixClusterDCHealthy。
-// 例如：cluster.dc._default.members、cluster.dc.AsiaChina.healthy。
-const NamePrefixClusterDC = "cluster.dc."
-
-// NameSuffixClusterDCMembers 数据中心维度成员数指标后缀，全名：NamePrefixClusterDC + dc + NameSuffixClusterDCMembers。
-const NameSuffixClusterDCMembers = ".members"
-
-// NameSuffixClusterDCHealthy 数据中心维度健康数指标后缀，全名：NamePrefixClusterDC + dc + NameSuffixClusterDCHealthy。
-const NameSuffixClusterDCHealthy = ".healthy"
+	// RemotingEnvelopSizeBytesHistogram 单条 Envelop 载荷大小（字节）分布，用于观察消息体积。
+	RemotingEnvelopSizeBytesHistogram = "remoting_envelop_size_bytes"
+)

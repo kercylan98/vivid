@@ -617,9 +617,9 @@ func TestContext_Failed(t *testing.T) {
 			case *vivid.OnKilled:
 				if !m.Ref.Equals(ctx.Ref()) {
 					panic("child killed not self")
-				} else {
-					close(wait)
 				}
+
+				close(wait)
 			}
 		}))
 		assert.NoError(t, err)

@@ -43,6 +43,7 @@ func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, option
 		system:        system,
 		parent:        parent,
 		behaviorStack: NewBehaviorStack(),
+		launchTime:    time.Now(),
 	}
 	ctx.scheduler = newScheduler(ctx)
 
@@ -85,6 +86,7 @@ type Context struct {
 	mailbox       vivid.Mailbox                      // 邮箱
 	children      map[vivid.ActorPath]vivid.ActorRef // 懒加载的子 Actor 引用
 	envelop       vivid.Envelop                      // 当前 ActorContext 的消息
+	launchTime    time.Time                          // Actor 启动时间
 	state         int32                              // 状态
 	zombie        bool                               // 是否为僵尸状态
 	restarting    *RestartMessage                    // 正在重启的消息
@@ -150,8 +152,8 @@ func (c *Context) Metrics() metrics.Metrics {
 	return c.system.Metrics()
 }
 
-func (c *Context) MetricsEnabled() bool {
-	return c.system.MetricsEnabled()
+func (c *Context) IsMetricsEnabled() bool {
+	return c.system.IsMetricsEnabled()
 }
 
 func (c *Context) Logger() log.Logger {
@@ -350,7 +352,7 @@ func (c *Context) PipeTo(recipient vivid.ActorRef, message vivid.Message, forwar
 	return pipeId
 }
 
-func (c *Context) Active() bool {
+func (c *Context) Alive() bool {
 	return atomic.LoadInt32(&c.state) == running
 }
 
@@ -392,12 +394,7 @@ func (c *Context) handleMessage(envelop vivid.Envelop, behavior vivid.Behavior) 
 	c.envelop = envelop
 	switch message := c.Message().(type) {
 	case *vivid.OnLaunch:
-		c.executeBehaviorWithRecovery(behavior)
-		// 通知事件流
-		c.EventStream().Publish(c, ves.ActorLaunchedEvent{
-			ActorRef: c.ref,
-			Type:     reflect.TypeOf(c.actor),
-		})
+		c.onLaunch(message, behavior)
 	case *vivid.OnKill:
 		c.onKill(message, behavior)
 	case *vivid.OnKilled:
@@ -419,8 +416,8 @@ func (c *Context) handleMessage(envelop vivid.Envelop, behavior vivid.Behavior) 
 	case *phaseKill:
 		c.onPhaseKill()
 	default:
-		if c.MetricsEnabled() {
-			c.Metrics().Counter(metrics.NameCounterMessagesProcessedTotal).Inc()
+		if c.IsMetricsEnabled() {
+			c.Metrics().Counter(metrics.MessagesProcessedTotalCounter).Inc()
 		}
 		c.executeBehaviorWithRecovery(behavior)
 	}
@@ -459,8 +456,8 @@ func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 func (c *Context) onScheduler(message *SchedulerMessage, behavior vivid.Behavior) {
 	// 消息替换
 	c.envelop = newReplacedEnvelop(c.envelop, message.Message)
-	if c.MetricsEnabled() {
-		c.Metrics().Counter(metrics.NameCounterMessagesProcessedTotal).Inc()
+	if c.IsMetricsEnabled() {
+		c.Metrics().Counter(metrics.MessagesProcessedTotalCounter).Inc()
 	}
 	c.executeBehaviorWithRecovery(behavior)
 }
@@ -803,4 +800,14 @@ var unwatchMessage = new(messages.UnwatchMessage)
 
 func (c *Context) Unwatch(ref vivid.ActorRef) {
 	c.tell(true, ref, unwatchMessage)
+}
+
+func (c *Context) onLaunch(_ *vivid.OnLaunch, behavior vivid.Behavior) {
+	c.executeBehaviorWithRecovery(behavior)
+	// 通知事件流
+	c.EventStream().Publish(c, ves.ActorLaunchedEvent{
+		ActorRef: c.ref,
+		Type:     reflect.TypeOf(c.actor),
+		Duration: time.Since(c.launchTime),
+	})
 }

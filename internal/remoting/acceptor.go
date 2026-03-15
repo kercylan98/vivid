@@ -7,6 +7,7 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 var (
@@ -152,13 +153,13 @@ func (a *acceptor) onAcceptCompleted(ctx vivid.ActorContext, message *acceptComp
 		return
 	}
 	if message.conn == nil {
-		if !a.stopping && ctx.Active() {
+		if !a.stopping && ctx.Alive() {
 			ctx.Tell(ctx.Ref(), acceptConnection{})
 		}
 		return
 	}
 	a.startHandshake(ctx, message.conn)
-	if !a.stopping && ctx.Active() {
+	if !a.stopping && ctx.Alive() {
 		ctx.Tell(ctx.Ref(), acceptConnection{})
 	}
 }
@@ -233,6 +234,10 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 		ctx.Logger().Error("failed to ensure endpoint", log.Any("error", spawnErr))
 		return
 	}
+	ctx.EventStream().Publish(ctx, ves.RemotingInboundConnectionEstablishedEvent{
+		PeerAddress:  message.peerAddr,
+		LocalAddress: localAddr,
+	})
 	ctx.Tell(endpointRef, endpointAttachSession{session: session})
 }
 

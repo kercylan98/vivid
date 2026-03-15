@@ -9,6 +9,8 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/metrics"
+	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 var (
@@ -157,6 +159,7 @@ func (e *endpoint) onLaunch(ctx vivid.ActorContext) {
 		ctx.Failed(vivid.ErrorIllegalArgument.WithMessage("endpoint address is empty"))
 		return
 	}
+	ctx.Metrics().Gauge(metrics.RemotingOutboundEndpointsGauge).Inc()
 }
 
 func (e *endpoint) onAttachSession(ctx vivid.ActorContext, message endpointAttachSession) {
@@ -262,9 +265,14 @@ func (e *endpoint) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
 		ctx.Logger().Warn("endpoint outbound buffer full",
 			log.String("address", e.address),
 			log.Any("error", err))
+		ctx.EventStream().Publish(ctx, ves.RemotingEnvelopSendFailedEvent{
+			TargetAddress: e.address,
+			Error:         err,
+		})
 		e.envelopHandler.HandleFailedRemotingEnvelop(envelop)
 		return
 	}
+	ctx.Metrics().Gauge(metrics.RemotingPendingEnvelopsGauge).Inc()
 	e.trySend(ctx)
 }
 
@@ -361,6 +369,7 @@ func (e *endpoint) onConnectCompleted(ctx vivid.ActorContext, completed *endpoin
 		e.scheduleRetry(ctx, err)
 		return
 	}
+	ctx.EventStream().Publish(ctx, ves.RemotingOutboundConnectionEstablishedEvent{Address: e.address})
 	e.trySend(ctx)
 }
 
@@ -379,7 +388,11 @@ func (e *endpoint) onReaderStopped(ctx vivid.ActorContext, message endpointReade
 			log.String("address", e.address),
 			log.Any("error", message.err))
 	}
-
+	ctx.EventStream().Publish(ctx, ves.RemotingConnectionClosedEvent{
+		Address:    e.address,
+		PeerClosed: message.peerClosed,
+		Error:      message.err,
+	})
 	e.association.reader = nil
 	e.closeCurrentSession(ctx, false, "reader stopped")
 	e.ensureSession(ctx)
@@ -397,6 +410,7 @@ func (e *endpoint) onWriterAck(ctx vivid.ActorContext, message endpointWriterAck
 		return
 	}
 	e.outboundBuffer.Pop()
+	ctx.Metrics().Gauge(metrics.RemotingPendingEnvelopsGauge).Dec()
 	e.writing = false
 	e.retryCount = 0
 	e.trySend(ctx)
@@ -413,6 +427,11 @@ func (e *endpoint) onWriterFailed(ctx vivid.ActorContext, message endpointWriter
 	e.writing = false
 	if !e.outboundBuffer.Empty() && message.dropCurrent {
 		if current := e.outboundBuffer.Pop(); current != nil {
+			ctx.Metrics().Gauge(metrics.RemotingPendingEnvelopsGauge).Dec()
+			ctx.EventStream().Publish(ctx, ves.RemotingEnvelopSendFailedEvent{
+				TargetAddress: e.address,
+				Error:         message.err,
+			})
 			e.envelopHandler.HandleFailedRemotingEnvelop(current)
 		}
 		e.trySend(ctx)
@@ -424,6 +443,11 @@ func (e *endpoint) onWriterFailed(ctx vivid.ActorContext, message endpointWriter
 			log.String("address", e.address),
 			log.Any("error", message.err))
 	}
+	ctx.EventStream().Publish(ctx, ves.RemotingConnectionClosedEvent{
+		Address:    e.address,
+		PeerClosed: false,
+		Error:      message.err,
+	})
 	e.closeCurrentSession(ctx, false, "writer failed")
 	e.scheduleRetry(ctx, message.err)
 }
@@ -440,6 +464,11 @@ func (e *endpoint) onHeartbeatFailed(ctx vivid.ActorContext, message endpointHea
 			log.String("address", e.address),
 			log.Any("error", message.err))
 	}
+	ctx.EventStream().Publish(ctx, ves.RemotingConnectionClosedEvent{
+		Address:    e.address,
+		PeerClosed: false,
+		Error:      message.err,
+	})
 	e.closeCurrentSession(ctx, false, "heartbeat failed")
 	e.scheduleRetry(ctx, message.err)
 }
@@ -473,6 +502,7 @@ func (e *endpoint) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
 
 func (e *endpoint) onKill(ctx vivid.ActorContext) {
 	e.stopping = true
+	ctx.Metrics().Gauge(metrics.RemotingOutboundEndpointsGauge).Dec()
 	e.cancelRetry(ctx)
 	e.failPending(ctx)
 	// 仅关闭 TCP 会话，不再 Kill 子 Actor。
@@ -561,6 +591,10 @@ func (e *endpoint) scheduleRetry(ctx vivid.ActorContext, cause error) {
 	if e.retryScheduled {
 		return
 	}
+	ctx.EventStream().Publish(ctx, ves.RemotingConnectionFailedEvent{
+		Address: e.address,
+		Error:   cause,
+	})
 	if e.retryCount >= e.retryPolicy.limit {
 		ctx.Logger().Warn("endpoint retries exhausted",
 			log.String("address", e.address),
@@ -600,9 +634,13 @@ func (e *endpoint) retryScheduleReference() string {
 	return fmt.Sprintf("endpoint-retry:%s", e.address)
 }
 
-func (e *endpoint) failPending(_ vivid.ActorContext) {
+func (e *endpoint) failPending(ctx vivid.ActorContext) {
 	if e.outboundBuffer.Empty() {
 		return
+	}
+	n := e.outboundBuffer.Len()
+	if n > 0 {
+		ctx.Metrics().Gauge(metrics.RemotingPendingEnvelopsGauge).Add(-int64(n))
 	}
 	e.outboundBuffer.FailAll(e.envelopHandler)
 	e.connecting = false

@@ -315,13 +315,12 @@ func (s *System) CreateRef(address string, path string) (vivid.ActorRef, error) 
 
 func (s *System) Metrics() metrics.Metrics {
 	if !s.options.EnableMetrics {
-		s.Logger().Warn("metrics not enabled, returning temporary metrics collector, should use vivid.WithActorSystemEnableMetrics to enable metrics")
-		return metrics.NewDefaultMetrics()
+		return getDiscordMetrics()
 	}
 	return s.metrics
 }
 
-func (s *System) MetricsEnabled() bool {
+func (s *System) IsMetricsEnabled() bool {
 	return s.options.EnableMetrics
 }
 

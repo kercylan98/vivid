@@ -5,6 +5,13 @@ import (
 	"github.com/kercylan98/vivid/internal/serialization"
 )
 
+func ensureEnvelopReceiverAddress(envelop vivid.Envelop) string {
+	if r := envelop.Receiver(); r != nil {
+		return r.GetAddress()
+	}
+	return ""
+}
+
 func encodeEnvelop(codec *serialization.VividCodec, envelop vivid.Envelop) ([]byte, error) {
 	var writer = serialization.GetWriter(codec)
 	defer serialization.PutWriter(writer)

@@ -189,7 +189,7 @@ type SystemStateProvider interface {
 
 // MetricsProvider 可由 ActorSystem 实现，用于提供指标收集器；配合 EnableMetricsUpdatedNotify 实现指标展示。
 type MetricsProvider interface {
-	MetricsEnabled() bool
+	IsMetricsEnabled() bool
 	Metrics() metrics.Metrics
 }
 

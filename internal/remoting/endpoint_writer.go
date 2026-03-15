@@ -3,6 +3,7 @@ package remoting
 import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/serialization"
+	"github.com/kercylan98/vivid/pkg/metrics"
 )
 
 var (
@@ -60,7 +61,8 @@ func (e *endpointWriter) onSend(ctx vivid.ActorContext, message endpointWriterSe
 		return
 	}
 
-	if err := e.session.WriteFrame(NewDataFrame(data)); err != nil {
+	frame := NewDataFrame(data)
+	if err := e.session.WriteFrame(frame); err != nil {
 		ctx.Tell(e.parentRef, endpointWriterFailed{
 			associationID: e.associationID,
 			writer:        ctx.Ref(),
@@ -68,6 +70,10 @@ func (e *endpointWriter) onSend(ctx vivid.ActorContext, message endpointWriterSe
 		})
 		return
 	}
-
 	ctx.Tell(e.parentRef, endpointWriterAck{associationID: e.associationID, writer: ctx.Ref()})
+
+	bytesLen := uint64(len(frame.Bytes()))
+	ctx.Metrics().Counter(metrics.RemotingBytesSentTotalCounter).Add(bytesLen)
+	ctx.Metrics().Counter(metrics.RemotingEnvelopSentTotalCounter).Inc()
+	ctx.Metrics().Histogram(metrics.RemotingEnvelopSizeBytesHistogram).Observe(float64(len(data)))
 }

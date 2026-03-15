@@ -8,6 +8,7 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/metrics"
 )
 
 var (
@@ -131,6 +132,10 @@ func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 			})
 			return
 		}
+		frameBytes := uint64(frameHeaderSize + len(frame.ControlData) + len(frame.Data))
+		ctx.Metrics().Counter(metrics.RemotingBytesReceivedTotalCounter).Add(frameBytes)
+		ctx.Metrics().Counter(metrics.RemotingEnvelopReceivedTotalCounter).Inc()
+		ctx.Metrics().Histogram(metrics.RemotingEnvelopSizeBytesHistogram).Observe(float64(len(frame.Data)))
 		if handleErr := e.envelopHandler.HandleRemotingEnvelop(system, sender, receiver, messageInstance); handleErr != nil {
 			ctx.Logger().Warn("handle remoting envelop failed", log.String("address", e.session.address), log.Any("error", handleErr))
 		}
@@ -148,7 +153,7 @@ func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 		ctx.Logger().Warn("endpoint received unknown frame type", log.String("address", e.session.address), log.Any("ctrl_type", frame.Type))
 	}
 
-	if ctx.Active() {
+	if ctx.Alive() {
 		ctx.Tell(ctx.Ref(), endpointReadFrame{})
 	}
 }

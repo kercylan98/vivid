@@ -28,10 +28,50 @@ type Metrics interface {
 }
 
 // MetricsSnapshot 表示指标的快照，包含所有指标的当前值。
+// 可通过 Counters/Gauges/Histograms 直接访问 map，也可使用 Counter/Gauge/Histogram 等按名查询方法。
 type MetricsSnapshot struct {
 	Counters   map[string]uint64            // 计数器指标
 	Gauges     map[string]int64             // 仪表盘指标
 	Histograms map[string]HistogramSnapshot // 直方图指标
+}
+
+// Counter 按名称查询计数器值，存在返回 (值, true)，否则返回 (0, false)。建议使用 names 包常量作为 name。
+func (s MetricsSnapshot) Counter(name string) (uint64, bool) {
+	if s.Counters == nil {
+		return 0, false
+	}
+	v, ok := s.Counters[name]
+	return v, ok
+}
+
+// CounterOrZero 按名称查询计数器值，不存在则返回 0。
+func (s MetricsSnapshot) CounterOrZero(name string) uint64 {
+	v, _ := s.Counter(name)
+	return v
+}
+
+// Gauge 按名称查询仪表盘值，存在返回 (值, true)，否则返回 (0, false)。
+func (s MetricsSnapshot) Gauge(name string) (int64, bool) {
+	if s.Gauges == nil {
+		return 0, false
+	}
+	v, ok := s.Gauges[name]
+	return v, ok
+}
+
+// GaugeOrZero 按名称查询仪表盘值，不存在则返回 0。
+func (s MetricsSnapshot) GaugeOrZero(name string) int64 {
+	v, _ := s.Gauge(name)
+	return v
+}
+
+// Histogram 按名称查询直方图快照，存在返回 (快照, true)，否则返回 (零值, false)。
+func (s MetricsSnapshot) Histogram(name string) (HistogramSnapshot, bool) {
+	if s.Histograms == nil {
+		return HistogramSnapshot{}, false
+	}
+	v, ok := s.Histograms[name]
+	return v, ok
 }
 
 // DefaultMetrics 是 Metrics 接口的默认实现。

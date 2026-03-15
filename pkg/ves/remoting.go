@@ -1,177 +1,76 @@
 package ves
 
-import (
-	"github.com/kercylan98/vivid"
-)
-
-// RemotingServerStoppedEvent 表示远程服务器停止的事件。
+// RemotingInboundConnectionEstablishedEvent 表示入站连接建立完成的事件。
 //
-// 该事件在 ServerActor 被终止并完全关闭所有连接和监听器后发布。
-// 此时服务器已不再接受新的连接请求，所有现有连接也已关闭。
+// 该事件在 Acceptor 完成握手并为对端地址创建或关联 Endpoint、挂上 Session 后发布。
 //
 // 使用场景：
-//   - 监控远程服务器的停止状态
-//   - 实现服务注销机制
-//   - 记录服务器停止日志和指标
-type RemotingServerStoppedEvent struct {
-	// BindAddr 服务器绑定的本地监听地址
-	BindAddr string
-	// AdvertiseAddr 对外宣称的服务地址
-	AdvertiseAddr string
-	// ServerRef 远程服务器 Actor 的引用
-	ServerRef vivid.ActorRef
+//   - 统计入站连接数、连接来源
+//   - 审计/安全：记录谁连入了本节点
+//   - 与负载、限流等策略联动
+type RemotingInboundConnectionEstablishedEvent struct {
+	// PeerAddress 对端广告地址（或 RemoteAddr）
+	PeerAddress string
+	// LocalAddress 本端广告地址（或 LocalAddr）
+	LocalAddress string
 }
 
-// RemotingConnectionEstablishedEvent 表示远程连接建立成功的事件。
+// RemotingOutboundConnectionEstablishedEvent 表示出站连接建立完成的事件。
 //
-// 该事件在 TCP 连接成功建立并完成握手后发布。
-// 此时连接已准备好进行消息传输，无论是作为客户端主动连接还是作为服务器接受连接。
+// 该事件在向某远程地址发起连接并完成握手、Session 激活后发布。
 //
 // 使用场景：
-//   - 监控远程连接的数量和状态
-//   - 实现连接池管理和统计
-//   - 记录连接建立日志和指标
-//   - 实现连接级别的监控和告警
-type RemotingConnectionEstablishedEvent struct {
-	// ConnectionRef 连接 Actor 的引用
-	ConnectionRef vivid.ActorRef
-	// RemoteAddr 远程节点的地址（连接的远程端地址）
-	RemoteAddr string
-	// LocalAddr 本地节点的地址（连接的本地端地址）
-	LocalAddr string
-	// AdvertiseAddr 远程节点对外宣称的服务地址
-	AdvertiseAddr string
-	// IsClient 是否为客户端主动建立的连接（true 表示客户端连接，false 表示服务器接受的连接）
-	IsClient bool
+//   - 确认到某节点的出站通道已可用
+//   - 统计出站连接、重连成功次数
+//   - 与集群成员状态、健康检查联动
+type RemotingOutboundConnectionEstablishedEvent struct {
+	// Address 远程节点广告地址
+	Address string
 }
 
-// RemotingConnectionClosedEvent 表示远程连接关闭的事件。
+// RemotingConnectionFailedEvent 表示连接失败的事件。
 //
-// 该事件在 TCP 连接被关闭时发布，无论是正常关闭还是异常断开。
-// 连接关闭可能由多种原因导致：网络故障、远程节点关闭、主动断开等。
-//
-// 使用场景：
-//   - 监控连接的生命周期和关闭原因
-//   - 实现连接重连机制
-//   - 记录连接关闭日志和指标
-//   - 分析连接稳定性和故障模式
-type RemotingConnectionClosedEvent struct {
-	// ConnectionRef 已关闭的连接 Actor 的引用
-	ConnectionRef vivid.ActorRef
-	// RemoteAddr 远程节点的地址
-	RemoteAddr string
-	// LocalAddr 本地节点的地址
-	LocalAddr string
-	// AdvertiseAddr 远程节点对外宣称的服务地址
-	AdvertiseAddr string
-	// IsClient 是否为客户端连接
-	IsClient bool
-	// Reason 连接关闭的原因描述
-	Reason string
-}
-
-// RemotingConnectionFailedEvent 表示远程连接建立失败的事件。
-//
-// 该事件在尝试建立 TCP 连接失败时发布，通常发生在客户端主动连接远程节点时。
-// 连接失败可能由多种原因导致：网络不可达、远程节点未启动、防火墙阻止等。
+// 该事件在出站连接失败（Dial 失败、握手失败、Session 激活失败等）或重试耗尽时发布。
+// 可通过 EventStream.Subscribe(ctx, ves.RemotingConnectionFailedEvent{}) 订阅。
 //
 // 使用场景：
-//   - 监控连接失败率和失败原因
-//   - 实现连接重试机制和退避策略
-//   - 记录连接失败日志和指标
-//   - 实现故障告警和通知机制
+//   - 监控远程不可达、网络分区
+//   - 告警与运维诊断
+//   - 测试中验证向无效地址发送会收到此事件
 type RemotingConnectionFailedEvent struct {
-	// RemoteAddr 尝试连接的远程节点地址
-	RemoteAddr string
-	// AdvertiseAddr 远程节点对外宣称的服务地址
-	AdvertiseAddr string
-	// Error 连接失败的错误信息
-	Error error
-	// RetryCount 当前重试次数（如果适用）
-	RetryCount int
-}
-
-// RemotingMessageSentEvent 表示远程消息发送成功的事件。
-//
-// 该事件在消息成功序列化并写入到远程连接后发布。
-// 注意：此事件仅表示消息已发送到网络层，不保证远程节点已接收或处理。
-//
-// 使用场景：
-//   - 监控远程消息的发送量和频率
-//   - 实现消息发送的统计和指标收集
-//   - 记录消息发送日志用于调试和追踪
-type RemotingMessageSentEvent struct {
-	// ConnectionRef 发送消息使用的连接 Actor 的引用
-	ConnectionRef vivid.ActorRef
-	// RemoteAddr 目标远程节点的地址
-	RemoteAddr string
-	// MessageType 发送的消息类型名称
-	MessageType string
-	// MessageSize 消息的字节大小
-	MessageSize int
-}
-
-// RemotingMessageReceivedEvent 表示远程消息接收成功的事件。
-//
-// 该事件在从远程连接成功接收并反序列化消息后发布。
-// 此时消息已从网络层读取并准备投递到目标 Actor 的邮箱。
-//
-// 使用场景：
-//   - 监控远程消息的接收量和频率
-//   - 实现消息接收的统计和指标收集
-//   - 记录消息接收日志用于调试和追踪
-//   - 实现消息路由和分发监控
-type RemotingMessageReceivedEvent struct {
-	// ConnectionRef 接收消息使用的连接 Actor 的引用
-	ConnectionRef vivid.ActorRef
-	// RemoteAddr 发送消息的远程节点地址
-	RemoteAddr string
-	// MessageType 接收的消息类型名称
-	MessageType string
-	// MessageSize 消息的字节大小
-	MessageSize int
-	// Receiver 目标接收者 Actor 的路径
-	Receiver string
-}
-
-// RemotingMessageSendFailedEvent 表示远程消息发送失败的事件。
-//
-// 该事件在消息发送过程中发生错误时发布，可能的原因包括：
-// 序列化失败、网络写入错误、连接已关闭等。
-//
-// 使用场景：
-//   - 监控消息发送失败率和失败原因
-//   - 实现消息发送重试机制
-//   - 记录发送失败日志和指标
-//   - 实现故障告警和通知机制
-type RemotingMessageSendFailedEvent struct {
-	// ConnectionRef 发送消息使用的连接 Actor 的引用（如果连接存在）
-	ConnectionRef vivid.ActorRef
-	// RemoteAddr 目标远程节点的地址
-	RemoteAddr string
-	// MessageType 发送失败的消息类型名称
-	MessageType string
-	// Error 发送失败的错误信息
+	// Address 目标远程地址
+	Address string
+	// Error 失败原因
 	Error error
 }
 
-// RemotingMessageDecodeFailedEvent 表示远程消息解码失败的事件。
+// RemotingConnectionClosedEvent 表示连接关闭的事件。
 //
-// 该事件在从远程连接接收消息但反序列化失败时发布。
-// 解码失败可能由多种原因导致：消息格式不匹配、编解码器错误、数据损坏等。
+// 该事件在 Session 关闭时发布（读端异常、对端关闭、写失败导致关闭等）。
 //
 // 使用场景：
-//   - 监控消息解码失败率和失败原因
-//   - 诊断编解码器兼容性问题
-//   - 记录解码失败日志和指标
-//   - 实现数据完整性监控和告警
-type RemotingMessageDecodeFailedEvent struct {
-	// ConnectionRef 接收消息使用的连接 Actor 的引用
-	ConnectionRef vivid.ActorRef
-	// RemoteAddr 发送消息的远程节点地址
-	RemoteAddr string
-	// MessageSize 尝试解码的消息字节大小
-	MessageSize int
-	// Error 解码失败的错误信息
+//   - 区分正常关闭与异常断开
+//   - 统计连接存活时间、断开原因
+//   - 触发重连或从集群剔除
+type RemotingConnectionClosedEvent struct {
+	// Address 对端地址（入站时为 PeerAddress，出站时为目标 Address）
+	Address string
+	// PeerClosed 是否由对端主动关闭（如读到 EOF/Close 帧）
+	PeerClosed bool
+	// Error 若因错误关闭，记录错误；否则为 nil
+	Error error
+}
+
+// RemotingEnvelopSendFailedEvent 表示向远程发送 Envelop 失败的事件。
+//
+// 该事件在 Remoting 已停止、Endpoint 发送失败（如缓冲区满、写失败导致 HandleFailedRemotingEnvelop）时发布。
+//
+// 使用场景：
+//   - 监控消息投递失败、做死信或重试
+//   - 与背压、限流策略配合
+type RemotingEnvelopSendFailedEvent struct {
+	// TargetAddress 目标远程地址
+	TargetAddress string
+	// Error 失败原因
 	Error error
 }

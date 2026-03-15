@@ -313,7 +313,7 @@ type ActorContext interface {
 	//   - int：stash 区中当前暂存的消息数量，若没有暂存消息则返回 0。
 	StashCount() int
 
-	// Active 方法用于判断当前 Actor 是否处于活跃状态。
+	// Alive 方法用于判断当前 Actor 是否处于存活状态。
 	//
 	// 功能说明：
 	//   - 返回 true 表示 Actor 仍在运行，能够正常处理消息；
@@ -324,8 +324,8 @@ type ActorContext interface {
 	//   - 用于资源管理与状态监控，识别失活 Actor 避免发送无效消息。
 	//
 	// 返回值：
-	//   - bool：当前 Actor 是否活跃。
-	Active() bool
+	//   - bool：当前 Actor 是否存活。
+	Alive() bool
 }
 
 // actorRace 抽象出 Actor 的子 Actor 创建能力，为 ActorContext 内部复用。
@@ -430,11 +430,11 @@ type actorBasic interface {
 	//   - 如果你在未启用（未配置）全局指标采集时调用本方法，采集到的数据不会被纳入集中观察与管理，建议只在开发或测试场景下采用。
 	Metrics() metrics.Metrics
 
-	// MetricsEnabled 方法用于判断当前 ActorContext 是否启用指标收集功能。
+	// IsMetricsEnabled 方法用于判断当前 ActorContext 是否启用指标收集功能。
 	//
 	// 返回值：
 	//   - bool: 若启用指标收集则返回 true，否则返回 false。
-	MetricsEnabled() bool
+	IsMetricsEnabled() bool
 
 	// Ping 向目标 ActorRef 发送系统级 Ping 消息，并同步等待返回其 Pong 响应，用于可达性检测与时延评估。
 	//
