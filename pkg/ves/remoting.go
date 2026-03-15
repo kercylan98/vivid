@@ -4,24 +4,6 @@ import (
 	"github.com/kercylan98/vivid"
 )
 
-// RemotingServerStartedEvent 表示远程服务器启动成功的事件。
-//
-// 该事件在 ServerActor 成功启动 TCP 监听并开始接受连接时发布。
-// 此时服务器已准备好接受来自远程节点的连接请求。
-//
-// 使用场景：
-//   - 监控远程服务器的启动状态
-//   - 实现服务注册和发现机制
-//   - 记录服务器启动日志和指标
-type RemotingServerStartedEvent struct {
-	// BindAddr 服务器绑定的本地监听地址（如 "0.0.0.0:8080"）
-	BindAddr string
-	// AdvertiseAddr 对外宣称的服务地址（如 "public.ip:port"），用于服务注册和远程节点发现
-	AdvertiseAddr string
-	// ServerRef 远程服务器 Actor 的引用
-	ServerRef vivid.ActorRef
-}
-
 // RemotingServerStoppedEvent 表示远程服务器停止的事件。
 //
 // 该事件在 ServerActor 被终止并完全关闭所有连接和监听器后发布。
