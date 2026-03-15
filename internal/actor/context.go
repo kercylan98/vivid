@@ -307,9 +307,9 @@ func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.F
 			if r := recover(); r != nil {
 				switch r := r.(type) {
 				case error:
-					futureIns.Close(vivid.ErrorFutureUnexpectedError.With(r))
+					futureIns.Close(vivid.ErrorFutureUnexpected.With(r))
 				default:
-					futureIns.Close(vivid.ErrorFutureUnexpectedError.With(fmt.Errorf("unexpected error: %v", r)))
+					futureIns.Close(vivid.ErrorFutureUnexpected.With(fmt.Errorf("unexpected error: %v", r)))
 				}
 			}
 		}()

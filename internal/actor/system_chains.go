@@ -11,7 +11,7 @@ import (
 	"github.com/kercylan98/vivid/internal/messages"
 	"github.com/kercylan98/vivid/internal/messages/messagecodecs"
 	metricsActor "github.com/kercylan98/vivid/internal/metrics"
-	remotingv2 "github.com/kercylan98/vivid/internal/remoting/v2"
+	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/virtual"
 	"github.com/kercylan98/vivid/pkg/metrics"
@@ -111,7 +111,7 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 			remotingOptions.StopTimeout = system.options.StopTimeout
 		}
 		system.options.Logger = system.options.Logger.With("addr", system.options.RemotingAdvertiseAddress)
-		ref, err := system.ActorOf(remotingv2.New(
+		ref, err := system.ActorOf(remoting.New(
 			system.options.RemotingBindAddress,
 			system.options.RemotingAdvertiseAddress,
 			system.codec,

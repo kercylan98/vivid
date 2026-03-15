@@ -14,28 +14,26 @@ var (
 	_ vivid.Actor = (*endpointReader)(nil)
 )
 
-func newEndpointReader(associationID uint64, session *session, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, parentRef vivid.ActorRef, readTimeout time.Duration, readFailedHandler vivid.ActorSystemRemotingConnectionReadFailedHandler) *endpointReader {
+func newEndpointReader(associationID uint64, session *session, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, parentRef vivid.ActorRef, readTimeout time.Duration) *endpointReader {
 	return &endpointReader{
-		associationID:     associationID,
-		session:           session,
-		codec:             codec,
-		envelopHandler:    envelopHandler,
-		parentRef:         parentRef,
-		readTimeout:       readTimeout,
-		readFailedHandler: readFailedHandler,
+		associationID:  associationID,
+		session:        session,
+		codec:          codec,
+		envelopHandler: envelopHandler,
+		parentRef:      parentRef,
+		readTimeout:    readTimeout,
 	}
 }
 
 type endpointReader struct {
-	associationID     uint64
-	session           *session
-	codec             *serialization.VividCodec
-	envelopHandler    NetworkEnvelopHandler
-	parentRef         vivid.ActorRef
-	reader            *bufio.Reader
-	header            []byte
-	readTimeout       time.Duration
-	readFailedHandler vivid.ActorSystemRemotingConnectionReadFailedHandler
+	associationID  uint64
+	session        *session
+	codec          *serialization.VividCodec
+	envelopHandler NetworkEnvelopHandler
+	parentRef      vivid.ActorRef
+	reader         *bufio.Reader
+	header         []byte
+	readTimeout    time.Duration
 }
 
 type endpointReadFrame struct{}
@@ -107,9 +105,6 @@ func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 				peerClosed:    true,
 			})
 			return
-		}
-		if e.readFailedHandler != nil {
-			e.readFailedHandler.HandleRemotingConnectionReadFailed(true, err)
 		}
 		ctx.Logger().Warn("endpoint read frame failed", log.String("address", e.session.address), log.Any("error", err))
 		ctx.Tell(e.parentRef, endpointReaderStopped{

@@ -507,7 +507,6 @@ func TestContext_Restart(t *testing.T) {
 
 		select {
 		case <-wait:
-			time.Sleep(time.Second)
 		case <-time.After(time.Second):
 			assert.Fail(t, "timeout")
 		}
@@ -1608,7 +1607,7 @@ func TestContext_Entrust(t *testing.T) {
 		assert.NotNil(t, err)
 		assert.Nil(t, result)
 		assert.True(t, errors.Is(err, err))
-		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpectedError))
+		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpected))
 	})
 
 	t.Run("task recover panic", func(t *testing.T) {
@@ -1617,7 +1616,7 @@ func TestContext_Entrust(t *testing.T) {
 		})).Result()
 		assert.NotNil(t, err)
 		assert.Nil(t, result)
-		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpectedError))
+		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpected))
 	})
 
 	t.Run("async task forward to onReceive", func(t *testing.T) {
@@ -1817,7 +1816,7 @@ func TestContext_Ping(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, ref)
 
-		pong, err := system.Ping(ref)
+		pong, err := system.Ping(ref, time.Millisecond)
 		assert.ErrorIs(t, err, vivid.ErrorFutureTimeout)
 		assert.Nil(t, pong)
 		close(wake)

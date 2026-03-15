@@ -433,10 +433,6 @@ func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSyste
 // ActorSystemRemotingOptions 封装了 ActorSystem 远程通信组件在运行时的选项参数。
 // 新增远程相关的可扩展参数时，建议集中在本结构体内按需扩展，以实现更好的向前兼容和配置集中管理。
 type ActorSystemRemotingOptions struct {
-	// ConnectionReadFailedHandler 用于处理系统级的远程连接读取失败事件。
-	// 可设置为自定义实现，或使用 ActorSystemRemotingConnectionReadFailedHandlerFN。
-	ConnectionReadFailedHandler ActorSystemRemotingConnectionReadFailedHandler
-
 	// ReconnectLimit 用于配置远程连接的重试次数。小于 1 则不进行重试。
 	ReconnectLimit int
 

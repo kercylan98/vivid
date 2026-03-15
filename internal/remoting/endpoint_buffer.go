@@ -6,7 +6,7 @@ import (
 	"github.com/kercylan98/vivid"
 )
 
-var errEndpointOutboundBufferFull = errors.New("remoting: endpoint outbound buffer full")
+var errEndpointOutboundBufferFull = errors.New("remote endpoint outbound buffer full")
 
 const defaultEndpointMaxPendingEnvelops = 1024
 

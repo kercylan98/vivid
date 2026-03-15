@@ -6,86 +6,121 @@ import (
 	"io"
 )
 
-var errFrameTooLarge = errors.New("remoting: frame data length exceeds limit")
+var (
+	errFrameTooLarge        = errors.New("frame data length exceeds limit")
+	errFrameControlTooLarge = errors.New("frame control length exceeds limit")
+	errFrameShortWrite      = errors.New("short frame write")
+)
+
+type FrameType uint32
 
 // 控制帧类型：0=握手，1=心跳，2=关闭，3=常规数据
 const (
-	FrameCtrlHandshake uint32 = 0
-	FrameCtrlHeartbeat uint32 = 1
-	FrameCtrlClose     uint32 = 2
-	FrameCtrlData      uint32 = 3
+	FrameCtrlHandshake FrameType = iota
+	FrameCtrlHeartbeat
+	FrameCtrlClose
+	FrameCtrlData
 )
 
 const frameHeaderSize = 12
 
-// writeFrame 向 conn 写入一帧：4B 控制类型 + 4B 控制数据长度 + 4B 常规数据长度 + 控制数据 + 常规数据
-func writeFrame(conn io.Writer, ctrlType uint32, ctrlData, data []byte) error {
-	ctrlLen := uint32(len(ctrlData))
-	dataLen := uint32(len(data))
-	buf := make([]byte, frameHeaderSize+len(ctrlData)+len(data))
-	binary.BigEndian.PutUint32(buf[0:4], ctrlType)
-	binary.BigEndian.PutUint32(buf[4:8], ctrlLen)
-	binary.BigEndian.PutUint32(buf[8:12], dataLen)
-	copy(buf[frameHeaderSize:frameHeaderSize+ctrlLen], ctrlData)
-	copy(buf[frameHeaderSize+ctrlLen:], data)
-	_, err := conn.Write(buf)
-	return err
+const (
+	maxFrameControlLen  = 4 * 1024        // 4KB
+	maxFrameDataLen     = 4 * 1024 * 1024 // 4MB
+	maxHandshakeDataLen = 1024
+)
+
+type Frame struct {
+	Type        FrameType
+	ControlData []byte
+	Data        []byte
+}
+
+type FrameReadLimits struct {
+	MaxControlLen uint32
+	MaxDataLen    uint32
 }
 
 var (
-	heartbeatFrameBytes = func() []byte {
-		b := make([]byte, frameHeaderSize)
-		binary.BigEndian.PutUint32(b[0:4], FrameCtrlHeartbeat)
-		return b
-	}()
-	closeFrameBytes = func() []byte {
-		b := make([]byte, frameHeaderSize)
-		binary.BigEndian.PutUint32(b[0:4], FrameCtrlClose)
-		return b
-	}()
+	heartbeatFrameBytes = NewHeartbeatFrame().Bytes()
+	closeFrameBytes     = NewCloseFrame().Bytes()
 )
 
-// dataFrameBytes 构造类型 3（常规数据）帧的完整字节：12 字节头 + data
-func dataFrameBytes(data []byte) []byte {
-	dataLen := uint32(len(data))
-	buf := make([]byte, frameHeaderSize+len(data))
-	binary.BigEndian.PutUint32(buf[0:4], FrameCtrlData)
-	binary.BigEndian.PutUint32(buf[4:8], 0)
+func NewHandshakeFrame(advertiseAddr string) Frame {
+	return Frame{Type: FrameCtrlHandshake, Data: []byte(advertiseAddr)}
+}
+
+func NewHeartbeatFrame() Frame {
+	return Frame{Type: FrameCtrlHeartbeat}
+}
+
+func NewCloseFrame() Frame {
+	return Frame{Type: FrameCtrlClose}
+}
+
+func NewDataFrame(data []byte) Frame {
+	return Frame{Type: FrameCtrlData, Data: data}
+}
+
+func (f Frame) Bytes() []byte {
+	dataLen := uint32(len(f.Data))
+	ctrlLen := uint32(len(f.ControlData))
+	buf := make([]byte, frameHeaderSize+len(f.ControlData)+len(f.Data))
+	binary.BigEndian.PutUint32(buf[0:4], uint32(f.Type))
+	binary.BigEndian.PutUint32(buf[4:8], ctrlLen)
 	binary.BigEndian.PutUint32(buf[8:12], dataLen)
-	copy(buf[frameHeaderSize:], data)
+	copy(buf[frameHeaderSize:frameHeaderSize+ctrlLen], f.ControlData)
+	copy(buf[frameHeaderSize+ctrlLen:], f.Data)
 	return buf
 }
 
-// readFrame 从 reader 读完整一帧，返回控制类型、控制数据、常规数据
-func readFrame(reader io.Reader, header []byte) (ctrlType uint32, ctrlData, data []byte, err error) {
-	return readFrameWithMaxDataLen(reader, header, 0)
+func (f Frame) WriteTo(writer io.Writer) (int64, error) {
+	_, err := writeFull(writer, f.Bytes())
+	return 0, err
 }
 
-// readFrameWithMaxDataLen 与 readFrame 相同，但限制 data 长度不超过 maxDataLen（0 表示不限制）。
-func readFrameWithMaxDataLen(reader io.Reader, header []byte, maxDataLen uint32) (ctrlType uint32, ctrlData, data []byte, err error) {
+func ReadFrame(reader io.Reader, header []byte, limits FrameReadLimits) (frame Frame, err error) {
 	if len(header) < frameHeaderSize {
 		header = make([]byte, frameHeaderSize)
 	}
 	if _, err = io.ReadFull(reader, header[:frameHeaderSize]); err != nil {
-		return 0, nil, nil, err
+		return Frame{}, err
 	}
-	ctrlType = binary.BigEndian.Uint32(header[0:4])
+	ctrlType := FrameType(binary.BigEndian.Uint32(header[0:4]))
 	ctrlLen := binary.BigEndian.Uint32(header[4:8])
 	dataLen := binary.BigEndian.Uint32(header[8:12])
-	if maxDataLen > 0 && dataLen > maxDataLen {
-		return 0, nil, nil, errFrameTooLarge
+	if limits.MaxControlLen > 0 && ctrlLen > limits.MaxControlLen {
+		return Frame{}, errFrameControlTooLarge
 	}
+	if limits.MaxDataLen > 0 && dataLen > limits.MaxDataLen {
+		return Frame{}, errFrameTooLarge
+	}
+	frame.Type = ctrlType
 	if ctrlLen > 0 {
-		ctrlData = make([]byte, ctrlLen)
-		if _, err = io.ReadFull(reader, ctrlData); err != nil {
-			return 0, nil, nil, err
+		frame.ControlData = make([]byte, ctrlLen)
+		if _, err = io.ReadFull(reader, frame.ControlData); err != nil {
+			return Frame{}, err
 		}
 	}
 	if dataLen > 0 {
-		data = make([]byte, dataLen)
-		if _, err = io.ReadFull(reader, data); err != nil {
-			return 0, nil, nil, err
+		frame.Data = make([]byte, dataLen)
+		if _, err = io.ReadFull(reader, frame.Data); err != nil {
+			return Frame{}, err
 		}
 	}
-	return ctrlType, ctrlData, data, nil
+	return frame, nil
+}
+
+func writeFull(writer io.Writer, data []byte) (written int, err error) {
+	for written < len(data) {
+		n, writeErr := writer.Write(data[written:])
+		written += n
+		if writeErr != nil {
+			return written, writeErr
+		}
+		if n == 0 {
+			return written, errFrameShortWrite
+		}
+	}
+	return written, nil
 }

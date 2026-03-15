@@ -52,7 +52,7 @@ func (e *EndpointManager) Stopped() bool {
 
 func (e *EndpointManager) ensureEndpoint(ctx vivid.ActorContext, address string, spawn func(address string) (vivid.ActorRef, error)) (vivid.ActorRef, error) {
 	if e.Stopped() {
-		return nil, vivid.ErrorActorSystemStopped
+		return nil, vivid.ErrorRemotingStopped
 	}
 	if endpoint := e.getEndpoint(address); endpoint != nil {
 		return endpoint, nil
@@ -67,7 +67,7 @@ func (e *EndpointManager) ensureEndpoint(ctx vivid.ActorContext, address string,
 	defer e.mu.Unlock()
 	if e.stopped {
 		ctx.Kill(endpoint, false, "endpoint manager stopped")
-		return nil, vivid.ErrorActorSystemStopped
+		return nil, vivid.ErrorRemotingStopped
 	}
 	if current := e.endpoints[address]; current != nil {
 		ctx.Kill(endpoint, false, "duplicate endpoint")

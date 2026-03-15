@@ -11,7 +11,6 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/remoting"
-	remotingv2 "github.com/kercylan98/vivid/internal/remoting/v2"
 	"github.com/kercylan98/vivid/internal/scheduler"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/sugar"
@@ -28,13 +27,13 @@ const (
 )
 
 var (
-	_ vivid.ActorSystem                   = (*System)(nil)
-	_ vivid.EnvelopHandler                = (*System)(nil)
-	_ remoting.NetworkEnvelopHandler      = (*System)(nil)
-	_ remotingv2.ActorSystemEnvelopTarget = (*System)(nil)
-	_ vivid.SystemStateProvider           = (*System)(nil)
-	_ vivid.MetricsProvider               = (*System)(nil)
-	_ bridge.VirtualActorSystem           = (*System)(nil)
+	_ vivid.ActorSystem                 = (*System)(nil)
+	_ vivid.EnvelopHandler              = (*System)(nil)
+	_ remoting.NetworkEnvelopHandler    = (*System)(nil)
+	_ remoting.ActorSystemEnvelopTarget = (*System)(nil)
+	_ vivid.SystemStateProvider         = (*System)(nil)
+	_ vivid.MetricsProvider             = (*System)(nil)
+	_ bridge.VirtualActorSystem         = (*System)(nil)
 )
 
 func NewSystem(options ...vivid.ActorSystemOption) *System {
@@ -51,7 +50,7 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 	system.options.Context, system.cancel = context.WithCancel(system.options.Context)
 
 	system.eventStream = newEventStream(system)
-	system.remotingEnvelopHandler = remotingv2.NewActorSystemEnvelopHandler(system, system)
+	system.remotingEnvelopHandler = remoting.NewActorSystemEnvelopHandler(system, system)
 	return system
 }
 
@@ -65,7 +64,7 @@ type System struct {
 	futureLock             sync.Mutex                                        // Future 的锁，保证 Future 的并发安全
 	guardClosedSignal      chan struct{}                                     // 用于通知系统关闭的信号
 	remotingRef            vivid.ActorRef                                    // 远程服务器引用
-	remotingEnvelopHandler remotingv2.NetworkEnvelopHandler                  // 远程信封处理器
+	remotingEnvelopHandler remoting.NetworkEnvelopHandler                    // 远程信封处理器
 	eventStream            vivid.EventStream                                 // 事件流
 	metrics                metrics.Metrics                                   // 指标收集器
 	scheduler              *scheduler.Scheduler                              // 调度器
@@ -353,7 +352,7 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 			s.Logger().Warn("remote disabled, remote actor ref not allowed", log.String("ref", ref.String()))
 			return s.Mailbox()
 		}
-		return vivid.Mailbox(remotingv2.NewMailbox(s.options.Context, s, s.remotingRef, s))
+		return vivid.Mailbox(remoting.NewMailbox(s.options.Context, s, s.remotingRef, s))
 	}
 
 	// 在 actorContexts 中查找指定路径（GetPath）对应的 Context，并尝试获取其邮箱（Mailbox）。
@@ -374,7 +373,7 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 
 func isRemoteMailbox(m vivid.Mailbox) bool {
 	switch m.(type) {
-	case *remoting.Mailbox, *remotingv2.Mailbox:
+	case *remoting.Mailbox:
 		return true
 	default:
 		return false

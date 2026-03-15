@@ -29,10 +29,10 @@ var (
 var (
 	ErrorFutureTimeout             = RegisterError(110000, "future timeout")                               // Result/Wait 超时未收到应答
 	ErrorFutureMessageTypeMismatch = RegisterError(110001, "future message type mismatch")                 // 应答类型与泛型声明不一致
-	ErrorFutureUnexpectedError     = RegisterError(110002, "future unexpected error")                      // 收到非预期错误
+	ErrorFutureUnexpected          = RegisterError(110002, "future unexpected error")                      // 收到非预期错误
 	ErrorFutureInvalid             = RegisterError(110003, "future invalid", ErrorIllegalArgument)         // 创建时 timeout 非法
 	ErrorInvalidMessageLength      = RegisterError(110004, "invalid message length", ErrorIllegalArgument) // 消息长度非法
-	ErrorReadMessageBufferFailed   = RegisterError(110005, "read message buffer failed")                   // 读消息缓冲失败
+	ErrorReadMessageBuffer         = RegisterError(110005, "read message buffer failed")                   // 读消息缓冲失败
 )
 
 // 参数、调度与状态相关错误。
@@ -59,31 +59,12 @@ var (
 
 // Remoting 相关错误。
 var (
-	ErrorRemotingMessageSendFailed   = RegisterError(140000, "remote message send failed")   // 消息发送失败
-	ErrorRemotingMessageEncodeFailed = RegisterError(140001, "remote message encode failed") // 消息编码失败
-	ErrorRemotingMessageDecodeFailed = RegisterError(140002, "remote message decode failed") // 消息解码失败
-	ErrorRemotingMessageHandleFailed = RegisterError(140003, "remote message handle failed") // 消息处理失败
-	ErrorRemotingHandshakeFailed     = RegisterError(140004, "remote handshake failed")      // 握手失败
-)
-
-// Remoting V2 相关错误。
-var (
-	ErrorRemotingListenerCreateFailed = RegisterError(140010, "listener create failed", ErrorException) // 监听器创建失败
-	ErrorRemotingListenerAcceptFailed = RegisterError(140011, "listener accept failed", ErrorException) // 监听器接受连接失败
-	ErrorRemotingSessionSpawnFailed   = RegisterError(140012, "session spawn failed", ErrorException)   // Session 创建失败
-)
-
-// Cluster 相关错误。
-var (
-	ErrorClusterNameMismatch            = RegisterError(150000, "cluster name mismatch")             // 集群名称不匹配
-	ErrorClusterDisabled                = RegisterError(150001, "cluster disabled")                  // 集群已禁用
-	ErrorClusterNodeStatusMismatch      = RegisterError(150002, "cluster node status mismatch")      // 节点状态不匹配
-	ErrorClusterNotInQuorum             = RegisterError(150003, "cluster not in quorum")             // 当前不在多数派，拒绝加入/决策
-	ErrorClusterJoinAuthFailed          = RegisterError(150004, "cluster join auth failed")          // Join 认证失败（Token 无效或缺失）
-	ErrorClusterJoinRateLimited         = RegisterError(150005, "cluster join rate limited")         // Join 请求被限流
-	ErrorClusterProtocolVersionMismatch = RegisterError(150006, "cluster protocol version mismatch") // 集群协议版本不兼容
-	ErrorClusterJoinNotAllowed          = RegisterError(150007, "cluster join not allowed")          // 地址或 DC 不在白名单
-	ErrorClusterAdminAuthFailed         = RegisterError(150008, "cluster admin auth failed")         // 管理操作 Token 无效
+	ErrorRemotingStopped                = RegisterError(140000, "remoting stopped")                                  // 远程通信已停止
+	ErrorRemotingListen                 = RegisterError(140001, "listen failed", ErrorException)                     // 监听失败
+	ErrorRemotingAccept                 = RegisterError(140002, "accept endpoint session failed", ErrorException)    // 接受连接失败
+	ErrorRemotingEndpointUnableToCreate = RegisterError(140003, "unable to create endpoint", ErrorActorSpawnFailed)  // 无法创建端点
+	ErrorRemotingEndpointSendData       = RegisterError(140004, "failed to send data to remote endpoint")            // 发送数据到远程端点失败
+	ErrorRemotingHandshake              = RegisterError(140005, "handshake negotiation with remote endpoint failed") // 与远程端点握手协商失败
 )
 
 // Virtual 相关错误。
@@ -248,4 +229,16 @@ func (e *Error) As(target any) bool {
 		return errors.As(e.err, target)
 	}
 	return false
+}
+
+// ParseError 解析错误，若 err 为 nil 则返回 nil。若 err 为 *Error 实例则返回该实例，否则返回 ErrorException 包装的实例。
+func ParseError(err error) *Error {
+	if err == nil {
+		return nil
+	}
+	var e *Error
+	if errors.As(err, &e) {
+		return e
+	}
+	return ErrorException.With(err)
 }

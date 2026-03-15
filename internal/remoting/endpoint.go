@@ -244,7 +244,7 @@ func (e *endpoint) dial() (net.Conn, error) {
 		return nil, err
 	}
 	if response.AdvertiseAddr != "" && response.AdvertiseAddr != addr {
-		mismatchErr := vivid.ErrorRemotingHandshakeFailed.WithMessage("remote advertise address mismatch")
+		mismatchErr := vivid.ErrorRemotingHandshake.WithMessage("remote advertise address mismatch")
 		if closeErr := conn.Close(); closeErr != nil {
 			return nil, errors.Join(mismatchErr, closeErr)
 		}
@@ -338,7 +338,7 @@ func (e *endpoint) onConnectCompleted(ctx vivid.ActorContext, completed *endpoin
 		return
 	}
 	if completed.session == nil {
-		nilSessionErr := vivid.ErrorRemotingHandshakeFailed.WithMessage("endpoint connect completed without session")
+		nilSessionErr := vivid.ErrorRemotingHandshake.WithMessage("endpoint connect completed without session")
 		ctx.Logger().Warn("endpoint connect returned nil session",
 			log.String("address", e.address),
 			log.Any("error", nilSessionErr))
@@ -494,10 +494,9 @@ func (e *endpoint) trySend(ctx vivid.ActorContext) {
 		return
 	}
 	if e.association.writer == nil {
-		ctx.Logger().Warn("endpoint has no writer",
-			log.String("address", e.address))
+		ctx.Logger().Warn("endpoint has no writer", log.String("address", e.address))
 		e.closeCurrentSession(ctx, false, "writer missing")
-		e.scheduleRetry(ctx, vivid.ErrorRemotingMessageSendFailed.WithMessage("endpoint writer missing"))
+		e.scheduleRetry(ctx, vivid.ErrorRemotingEndpointSendData.WithMessage("endpoint writer missing"))
 		return
 	}
 	if e.writing {
@@ -601,7 +600,7 @@ func (e *endpoint) retryScheduleReference() string {
 	return fmt.Sprintf("endpoint-retry:%s", e.address)
 }
 
-func (e *endpoint) failPending(ctx vivid.ActorContext) {
+func (e *endpoint) failPending(_ vivid.ActorContext) {
 	if e.outboundBuffer.Empty() {
 		return
 	}

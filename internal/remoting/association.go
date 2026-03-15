@@ -23,7 +23,6 @@ type endpointAssociation struct {
 type endpointAssociationPolicy struct {
 	readTimeout       time.Duration
 	heartbeatInterval time.Duration
-	readFailedHandler vivid.ActorSystemRemotingConnectionReadFailedHandler
 }
 
 const (
@@ -45,7 +44,6 @@ func newEndpointAssociationPolicy(opts *vivid.ActorSystemRemotingOptions) endpoi
 	if opts.HeartbeatInterval >= 0 {
 		policy.heartbeatInterval = opts.HeartbeatInterval
 	}
-	policy.readFailedHandler = opts.ConnectionReadFailedHandler
 	return policy
 }
 
@@ -96,7 +94,7 @@ func closeEndpointSession(ctx vivid.ActorContext, address string, target *sessio
 		return
 	}
 	if graceful {
-		if err := target.WriteFrame(NewCloseFrame()); err != nil &&
+		if err := target.Write(closeFrameBytes); err != nil &&
 			!errors.Is(err, net.ErrClosed) &&
 			!errors.Is(err, io.ErrClosedPipe) {
 			ctx.Logger().Warn("endpoint close frame write failed",
@@ -115,7 +113,7 @@ func closeEndpointSession(ctx vivid.ActorContext, address string, target *sessio
 
 func spawnEndpointAssociation(ctx vivid.ActorContext, id uint64, session *session, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, policy endpointAssociationPolicy) (*endpointAssociation, error) {
 	readerName := associationActorName("reader", id)
-	readerRef, err := ctx.ActorOf(newEndpointReader(id, session, codec, envelopHandler, ctx.Ref(), policy.readTimeout, policy.readFailedHandler), vivid.WithActorName(readerName))
+	readerRef, err := ctx.ActorOf(newEndpointReader(id, session, codec, envelopHandler, ctx.Ref(), policy.readTimeout), vivid.WithActorName(readerName))
 	if err != nil {
 		return nil, vivid.ErrorActorSpawnFailed.With(err)
 	}

@@ -141,14 +141,14 @@ func (a *acceptor) onAcceptCompleted(ctx vivid.ActorContext, message *acceptComp
 		if a.stopping {
 			return
 		}
-		ctx.Failed(vivid.ErrorRemotingListenerAcceptFailed.With(pipeErr))
+		ctx.Failed(vivid.ErrorRemotingAccept.With(pipeErr))
 		return
 	}
 	if message.err != nil {
 		if errors.Is(message.err, net.ErrClosed) {
 			return
 		}
-		ctx.Failed(vivid.ErrorRemotingListenerAcceptFailed.With(message.err))
+		ctx.Failed(vivid.ErrorRemotingAccept.With(message.err))
 		return
 	}
 	if message.conn == nil {
@@ -226,7 +226,7 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 		return endpointRef, nil
 	})
 	if ensureErr != nil {
-		spawnErr := vivid.ErrorRemotingSessionSpawnFailed.With(ensureErr)
+		spawnErr := vivid.ErrorRemotingEndpointUnableToCreate.With(ensureErr)
 		if closeErr := session.Close(); closeErr != nil {
 			spawnErr = spawnErr.With(closeErr)
 		}

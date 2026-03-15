@@ -11,11 +11,11 @@ import (
 )
 
 var (
-	_ vivid.Actor          = (*remoting)(nil)
-	_ vivid.PrelaunchActor = (*remoting)(nil)
+	_ vivid.Actor          = (*Remoting)(nil)
+	_ vivid.PrelaunchActor = (*Remoting)(nil)
 )
 
-func New(bindAddr, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions) *remoting {
+func New(bindAddr, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions) *Remoting {
 	retryPolicy := newEndpointRetryPolicy(&options)
 	bufferPolicy := newEndpointBufferPolicy(&options)
 	associationPolicy := newEndpointAssociationPolicy(&options)
@@ -23,7 +23,7 @@ func New(bindAddr, advertiseAddr string, codec *serialization.VividCodec, envelo
 	if stopTimeout <= 0 {
 		stopTimeout = time.Minute
 	}
-	return &remoting{
+	return &Remoting{
 		bindAddr:           bindAddr,
 		tlsConfig:          options.TLSConfig,
 		codec:              codec,
@@ -37,7 +37,7 @@ func New(bindAddr, advertiseAddr string, codec *serialization.VividCodec, envelo
 	}
 }
 
-type remoting struct {
+type Remoting struct {
 	bindAddr           string
 	tlsConfig          *tls.Config
 	codec              *serialization.VividCodec
@@ -55,13 +55,13 @@ type remoting struct {
 }
 
 // OnPrelaunch implements [vivid.PrelaunchActor].
-func (r *remoting) OnPrelaunch(ctx vivid.PrelaunchContext) error {
+func (r *Remoting) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 	r.endpointManager = newEndpointManager()
 	// 注册多阶段终止以支持优雅退出
 	return ctx.WithPhaseKill(r.phaseKillCompleted, r.stopTimeout, r.OnReceive)
 }
 
-func (r *remoting) OnReceive(ctx vivid.ActorContext) {
+func (r *Remoting) OnReceive(ctx vivid.ActorContext) {
 	switch message := ctx.Message().(type) {
 	case *vivid.OnLaunch:
 		r.onLaunch(ctx)
@@ -74,21 +74,21 @@ func (r *remoting) OnReceive(ctx vivid.ActorContext) {
 	}
 }
 
-func (r *remoting) onLaunch(ctx vivid.ActorContext) {
+func (r *Remoting) onLaunch(ctx vivid.ActorContext) {
 	listener, err := newListener(r.bindAddr, r.tlsConfig)
 	if err != nil {
-		ctx.Failed(vivid.ErrorRemotingListenerCreateFailed.With(err))
+		ctx.Failed(vivid.ErrorRemotingListen.With(err))
 		return
 	}
 
 	r.listener = listener
 	if _, err = ctx.ActorOf(newAcceptor(listener, r.endpointManager, r.advertiseAddr, r.codec, r.envelopHandler, r.bufferPolicy, r.retryPolicy, r.associationPolicy), vivid.WithActorName("acceptor")); err != nil {
-		ctx.Failed(vivid.ErrorActorSpawnFailed.With(err))
+		ctx.Failed(vivid.ParseError(err))
 		return
 	}
 }
 
-func (r *remoting) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
+func (r *Remoting) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
 	if r.stopping {
 		r.envelopHandler.HandleFailedRemotingEnvelop(envelop)
 		return
@@ -100,24 +100,24 @@ func (r *remoting) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
 		}
 		return endpointRef, nil
 	}); err != nil {
-		ctx.Failed(vivid.ErrorRemotingMessageSendFailed.With(err))
+		ctx.Failed(vivid.ErrorRemotingEndpointSendData.With(err))
 	}
 }
 
-func (r *remoting) onKill(ctx vivid.ActorContext) {
+func (r *Remoting) onKill(ctx vivid.ActorContext) {
 	r.stopping = true
 	r.endpointManager.Stop()
 
 	// 关闭监听器，停止接受新连接。
 	if r.listener != nil {
 		if err := r.listener.Close(); err != nil {
-			ctx.Logger().Warn("remoting listener close failed", log.Any("error", err))
+			ctx.Logger().Warn("listener close failed", log.Any("error", err))
 		}
 		r.listener = nil
 	}
 
 	for _, child := range ctx.Children() {
-		ctx.Kill(child, false, "remoting phase kill")
+		ctx.Kill(child, false, "phase kill")
 	}
 
 	if ctx.Children().Len() == 0 {
@@ -125,7 +125,7 @@ func (r *remoting) onKill(ctx vivid.ActorContext) {
 	}
 }
 
-func (r *remoting) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
+func (r *Remoting) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
 	if !ctx.Ref().Equals(message.Ref) && ctx.Children().Len() == 0 {
 		r.phaseKillOnce.Do(func() { close(r.phaseKillCompleted) })
 	}
