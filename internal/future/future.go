@@ -23,7 +23,7 @@ func NewFuture[T vivid.Message](liaison vivid.ActorLiaison, timeout time.Duratio
 
 	if timeout > 0 {
 		future.timer = time.AfterFunc(timeout, func() {
-			future.Close(vivid.ErrorFutureTimeout)
+			future.Close(vivid.ErrorFutureTimeout.WithMessage(timeout.String()))
 		})
 	}
 
