@@ -16,39 +16,60 @@ import (
 const (
 	// singleSchedulerReference 单个调度器的引用，用于周期 gossip。
 	singleSchedulerReference = "single"
+	gossipActorName          = "@gossip"
 )
 
 var (
-	_ vivid.Actor          = (*Actor)(nil)
-	_ vivid.PrelaunchActor = (*Actor)(nil)
+	_ vivid.Actor            = (*Actor)(nil)
+	_ vivid.FixedOptionActor = (*Actor)(nil)
+	_ vivid.PrelaunchActor   = (*Actor)(nil)
 )
 
 // New 构造 gossip Actor。seeds 为可选种子节点引用，空时以单节点身份直接进入 Up；非空时进入 Joining 并向 seeds 发起加入。
 // logger 用于 ClusterView 内部成员变更等调试日志。
-func New(logger log.Logger, options ...Option) *Actor {
-	opts := NewOptions(options...)
+func New(options *vivid.ActorSystemClusterOptions) *Actor {
 	return &Actor{
-		opts: opts,
-		view: NewClusterView(logger),
+		opts: options,
 	}
 }
 
 // Actor 实现基于 gossip 的集群发现与视图同步：维护本节点 Information、集群视图（成员列表+版本向量），
 // 通过状态机事件驱动生命周期，处理 Ping/Pong 与周期 gossip。
 type Actor struct {
-	opts                 *Options              // 配置选项
-	info                 *endpoint.Information // 本节点的端点信息（Ref、Status、LastSeen），状态迁移与 Ping/Pong 时写回视图。
-	view                 *ClusterView          // 本节点维护的集群视图：成员列表 + 版本向量，用于因果合并与 peer 选择。
-	lastViewFingerprint  string                // 收敛检测：视图指纹连续不变时投递 Converged，视图变化后重置以便再次收敛时投递。
-	convergedEmitted     bool                  // 是否已经投递过 Converged 消息
-	stableRounds         int                   // 连续不变的轮次
-	phaseKillCompleted   chan struct{}         // 多阶段终止流程完成信号。
-	coordinatorNodeID    string                // 当前的协调者节点 ID
-	convergenceStartedAt time.Time             // 最近一次视图变化的时间，用于计算收敛耗时
+	opts                 *vivid.ActorSystemClusterOptions // 配置选项
+	seeds                []vivid.ActorRef                 // 种子节点引用列表
+	info                 *endpoint.Information            // 本节点的端点信息（Ref、Status、LastSeen），状态迁移与 Ping/Pong 时写回视图。
+	view                 *ClusterView                     // 本节点维护的集群视图：成员列表 + 版本向量，用于因果合并与 peer 选择。
+	lastViewFingerprint  string                           // 收敛检测：视图指纹连续不变时投递 Converged，视图变化后重置以便再次收敛时投递。
+	convergedEmitted     bool                             // 是否已经投递过 Converged 消息
+	stableRounds         int                              // 连续不变的轮次
+	phaseKillCompleted   chan struct{}                    // 多阶段终止流程完成信号。
+	coordinatorNodeID    string                           // 当前的协调者节点 ID
+	convergenceStartedAt time.Time                        // 最近一次视图变化的时间，用于计算收敛耗时
+}
+
+// FixedOptions implements [vivid.FixedOptionActor].
+func (a *Actor) FixedOptions(ctx vivid.FixedOptionContext) []vivid.ActorOption {
+	return []vivid.ActorOption{
+		vivid.WithActorName(gossipActorName),
+	}
 }
 
 // OnPrelaunch 在 Actor 启动前执行：创建本节点 Information 并加入本地视图的成员列表。
 func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
+	// 初始化 seeds
+	a.seeds = make([]vivid.ActorRef, 0, len(a.opts.Seeds))
+	for _, seed := range a.opts.Seeds {
+		seedRef, err := ctx.System().CreateRef(seed, "/"+gossipActorName)
+		if err != nil {
+			return err
+		}
+		a.seeds = append(a.seeds, seedRef)
+	}
+
+	// 创建集群视图
+	a.view = NewClusterView(ctx.Logger())
+
 	// 注册多阶段终止以支持优雅退出
 	a.phaseKillCompleted = make(chan struct{})
 	if err := ctx.WithPhaseKill(a.phaseKillCompleted, a.opts.GracefulShutdownTimeout, a.OnReceive); err != nil {
@@ -109,8 +130,8 @@ func (a *Actor) onLaunch(ctx vivid.ActorContext) {
 
 	// 固定种子节点顺序
 	sort.Slice(a.opts.Seeds, func(i, j int) bool {
-		aAddr := a.opts.Seeds[i].GetAddress()
-		bAddr := a.opts.Seeds[j].GetAddress()
+		aAddr := a.seeds[i].GetAddress()
+		bAddr := a.seeds[j].GetAddress()
 		return aAddr < bAddr
 	})
 
@@ -124,11 +145,11 @@ func (a *Actor) onJoining(ctx vivid.ActorContext) {
 	}
 
 	// 检查种子节点是否包含自己
-	seedsSelfIndex := slices.IndexFunc(a.opts.Seeds, func(seed vivid.ActorRef) bool { return seed.Equals(ctx.Ref()) })
+	seedsSelfIndex := slices.IndexFunc(a.seeds, func(seed vivid.ActorRef) bool { return seed.Equals(ctx.Ref()) })
 
 	// 尝试加入所有种子节点
 	ping := gossipmessages.NewPing(a.info, a.view.Members(), a.view.Version())
-	for i, seed := range a.opts.Seeds {
+	for i, seed := range a.seeds {
 		// 如果种子节点是自己，则跳过
 		if i == seedsSelfIndex {
 			continue
@@ -245,7 +266,7 @@ func (a *Actor) onRemoved(ctx vivid.ActorContext) {
 
 // onSpreadGossip 向 targets 发 Ping 并同步处理每个 Pong；targets 为空时从视图中取最多 GossipPeersLimit 个 Up 节点作为目标。
 func (a *Actor) onSpreadGossip(ctx vivid.ActorContext) {
-	peers := a.view.Members().Unseens(a.info, a.opts.Seeds, a.opts.GossipPeersCount)
+	peers := a.view.Members().Unseens(a.info, a.seeds, a.opts.GossipPeersCount)
 	if len(peers) == 0 {
 		maybeEmitConverged(ctx, a)
 		return

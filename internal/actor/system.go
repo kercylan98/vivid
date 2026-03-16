@@ -72,6 +72,7 @@ type System struct {
 	statusLock             sync.Mutex                                        // 系统状态锁
 	cancel                 context.CancelFunc                                // 上下文停止函数
 	startTime              time.Time                                         // 启动时间，Start() 时记录
+	gossipRef              vivid.ActorRef                                    // 集群 gossip 引用
 	virtualCoordinator     bridge.VirtualCoordinator                         // 虚拟协调器
 }
 
@@ -155,6 +156,7 @@ func (s *System) Start() error {
 		Append(systemChains.spawnGuardActor(s)).
 		Append(systemChains.initializeMetrics(s)).
 		Append(systemChains.initializeRemoting(s)).
+		Append(systemChains.initializeCluster(s)).
 		Append(systemChains.initializeVirtualCoordinator(s)).
 		Run()
 

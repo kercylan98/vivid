@@ -48,15 +48,15 @@ func TestActor_Gossip(t *testing.T) {
 		}
 	}()
 
-	gossipRef1, err := system1.ActorOf(gossip.New(system1.Logger()))
+	gossipRef1, err := system1.ActorOf(gossip.New(vivid.NewActorSystemClusterOptions()))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef1)
 
-	gossipRef2, err := system2.ActorOf(gossip.New(system2.Logger(), gossip.WithSeeds(gossipRef1.Clone())))
+	gossipRef2, err := system2.ActorOf(gossip.New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(gossipRef1.GetAddress()))))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef2)
 
-	gossipRef3, err := system3.ActorOf(gossip.New(system3.Logger(), gossip.WithSeeds(gossipRef1.Clone())))
+	gossipRef3, err := system3.ActorOf(gossip.New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(gossipRef1.GetAddress()))))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef3)
 }
@@ -85,13 +85,13 @@ func TestMultiple_Gossip(t *testing.T) {
 		}
 	}()
 
-	var seeds []vivid.ActorRef
+	var seeds []string
 	for i := 0; i < nodeCount; i++ {
 		system := systems[i]
-		gossipActor := gossip.New(system.Logger(), gossip.WithSeeds(seeds...))
+		gossipActor := gossip.New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(seeds...)))
 		gossipRef, err := system.ActorOf(gossipActor)
 		if assert.NoError(t, err) && assert.NotNil(t, gossipRef) && len(seeds) < seedNodeCount {
-			seeds = append(seeds, gossipRef.Clone())
+			seeds = append(seeds, gossipRef.GetAddress())
 		}
 	}
 }

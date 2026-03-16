@@ -619,6 +619,15 @@ type FixedOptionContext interface {
 //   - 订阅系统事件流，在 Actor 启动前注册事件监听器。
 //   - 获取自身 ActorRef，用于后续初始化配置或传递给其他组件。
 type PrelaunchContext interface {
+	// System 返回 ActorSystem 实例。
+	//
+	// 功能说明：
+	//   - 返回当前 PrelaunchContext 所在的 ActorSystem 实例，用于在 Actor 启动前访问系统资源。
+	//
+	// 返回值：
+	//   - ActorSystem：当前 ActorSystem 实例，保证非 nil。
+	System() ActorSystem
+
 	// Logger 返回日志记录器。
 	//
 	// 功能说明：

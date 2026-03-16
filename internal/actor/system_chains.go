@@ -3,6 +3,7 @@ package actor
 import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/chain"
+	"github.com/kercylan98/vivid/internal/gossip"
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
 	"github.com/kercylan98/vivid/internal/gossip/memberlist"
@@ -22,9 +23,11 @@ const (
 	metricsActorName  = "@metrics"
 )
 
+// 停止优先级, 值越大越先停止（越靠后越先停止）
 const (
-	remotingStopPriority = 100
-	metricsStopPriority  = 50
+	metricsStopPriority = iota
+	remotingStopPriority
+	gossipStopPriority
 )
 
 var systemChains = &_systemChains{}
@@ -138,5 +141,27 @@ func (c *_systemChains) initializeVirtualCoordinator(system *System) chain.Chain
 		coordinatorInjecter := virtual.NewCoordinatorActor(system)
 		system.virtualCoordinator, err = coordinatorInjecter.Inject(system)
 		return err
+	})
+}
+
+func (c *_systemChains) initializeCluster(system *System) chain.Chain {
+	return chain.ChainFN(func() (err error) {
+		if system.options.ClusterOptions == nil {
+			return nil
+		}
+
+		// 创建 gossip actor
+		gossip := gossip.New(system.options.ClusterOptions)
+		system.gossipRef, err = system.ActorOf(gossip)
+		if err != nil {
+			return err
+		}
+
+		// 注册停止优先级
+		system.TellSelf(&guard.RegisterStopPriority{
+			ActorRef: system.gossipRef,
+			Priority: remotingStopPriority,
+		})
+		return nil
 	})
 }
