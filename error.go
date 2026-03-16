@@ -75,7 +75,8 @@ var (
 
 // Gossip 相关错误。
 var (
-	ErrorGossipScheduleFailed = RegisterError(170000, "gossip schedule failed") //  gossip 调度失败
+	ErrorGossipScheduleFailed = RegisterError(170000, "gossip schedule failed")                            //  gossip 调度失败
+	ErrorGossipRequires       = RegisterError(170001, "gossip missing required dependency", ErrorNotFound) // gossip 缺少必要内容
 )
 
 var (

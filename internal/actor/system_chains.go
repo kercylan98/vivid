@@ -150,6 +150,10 @@ func (c *_systemChains) initializeCluster(system *System) chain.Chain {
 			return nil
 		}
 
+		if system.remotingRef == nil {
+			return vivid.ErrorGossipRequires.WithMessage("remoting is not initialized")
+		}
+
 		// 创建 gossip actor
 		gossip := gossip.New(system.options.ClusterOptions)
 		system.gossipRef, err = system.ActorOf(gossip)
