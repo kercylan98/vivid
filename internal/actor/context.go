@@ -255,11 +255,20 @@ func (c *Context) tell(system bool, recipient vivid.ActorRef, message vivid.Mess
 	}
 }
 
+func (c *Context) enqueueToMailbox(recipient vivid.ActorRef, envelop vivid.Envelop) {
+	// 提前标记目标 Actor 是否即将被关闭
+	if _, ok := envelop.Message().(*vivid.OnKill); ok {
+		c.system.markActorAsClosing(recipient)
+	}
+
+	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
+	receiverMailbox.Enqueue(envelop)
+}
+
 func (c *Context) tellWithSender(system bool, sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message) (err error) {
 	if !recipient.IsVirtual() {
 		envelop := mailbox.NewEnvelop(system, sender, recipient, message)
-		receiverMailbox := c.system.findMailbox(recipient.(*Ref))
-		receiverMailbox.Enqueue(envelop)
+		c.enqueueToMailbox(recipient, envelop)
 	} else {
 		err = c.system.virtualCoordinator.TellVirtual(sender, recipient, message)
 	}
@@ -289,8 +298,7 @@ func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vi
 		c.system.appendFuture(agentRef, futureIns)
 
 		envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
-		receiverMailbox := c.system.findMailbox(recipient.(*Ref))
-		receiverMailbox.Enqueue(envelop)
+		c.enqueueToMailbox(recipient, envelop)
 
 		return futureIns
 	} else {

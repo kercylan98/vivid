@@ -29,11 +29,14 @@ const (
 var (
 	_ vivid.ActorSystem                 = (*System)(nil)
 	_ vivid.EnvelopHandler              = (*System)(nil)
-	_ remoting.NetworkEnvelopHandler    = (*System)(nil)
 	_ remoting.ActorSystemEnvelopTarget = (*System)(nil)
 	_ vivid.SystemStateProvider         = (*System)(nil)
 	_ vivid.MetricsProvider             = (*System)(nil)
 	_ bridge.VirtualActorSystem         = (*System)(nil)
+)
+
+var (
+	heartbeatMessage = &vivid.Heartbeat{}
 )
 
 func NewSystem(options ...vivid.ActorSystemOption) *System {
@@ -74,6 +77,54 @@ type System struct {
 	startTime              time.Time                                         // 启动时间，Start() 时记录
 	gossipRef              vivid.ActorRef                                    // 集群 gossip 引用
 	virtualCoordinator     bridge.VirtualCoordinator                         // 虚拟协调器
+	closingActors          sync.Map                                          // 即将被关闭的 Actor
+}
+
+func (s *System) markActorAsClosing(ref vivid.ActorRef) {
+	if ref.GetAddress() != s.Ref().GetAddress() {
+		return
+	}
+	s.closingActors.Store(ref.GetPath(), struct{}{})
+}
+
+func (s *System) unmarkActorAsClosing(ref vivid.ActorRef) {
+	if ref.GetAddress() != s.Ref().GetAddress() {
+		return
+	}
+	s.closingActors.Delete(ref.GetPath())
+}
+
+func (s *System) HeartbeatProbe(ref vivid.ActorRef) *vivid.Heartbeat {
+	heartbeat := &vivid.Heartbeat{
+		Ref:       ref,
+		Available: true,
+	}
+
+	// 是否存在
+	_, exists := s.actorContexts.Load(ref.GetPath())
+	if !exists {
+		heartbeat.Available = false
+		return heartbeat
+	}
+
+	// 是否即将被关闭
+	_, closing := s.closingActors.Load(ref.GetPath())
+	if closing {
+		heartbeat.Available = false
+		return heartbeat
+	}
+
+	return heartbeat
+}
+
+func (s *System) Probe(ref vivid.ActorRef, timeout ...time.Duration) vivid.Future[*vivid.Heartbeat] {
+	if ref.GetAddress() != s.Ref().GetAddress() {
+		return vivid.NewTypedFuture[vivid.Message, *vivid.Heartbeat](s.Ask(ref, heartbeatMessage))
+	}
+
+	f := future.NewFuture[*vivid.Heartbeat](s, 0, nil)
+	f.EnqueueMessage(s.HeartbeatProbe(ref))
+	return f
 }
 
 func (s *System) GetSystemBasicState() vivid.SystemBasicState {
@@ -92,13 +143,6 @@ func (s *System) GetSystemBasicState() vivid.SystemBasicState {
 		RemotingAddress: addr,
 		MetricsEnabled:  s.options.EnableMetrics,
 	}
-}
-
-func (s *System) HandleRemotingEnvelop(system bool, sender, receiver string, messageInstance any) error {
-	if s.remotingEnvelopHandler == nil {
-		return vivid.ErrorIllegalArgument.WithMessage("remoting envelop handler not initialized")
-	}
-	return s.remotingEnvelopHandler.HandleRemotingEnvelop(system, sender, receiver, messageInstance)
 }
 
 func (s *System) HandleFailedRemotingEnvelop(envelop vivid.Envelop) {
@@ -285,6 +329,7 @@ func (s *System) appendActorContext(ctx *Context) bool {
 // removeActorContext 用于移除指定路径的 ActorContext。
 func (s *System) removeActorContext(ctx *Context) {
 	s.actorContexts.Delete(ctx.Ref().GetPath())
+	s.unmarkActorAsClosing(ctx.Ref())
 }
 
 // FindActor 根据引用字符串查找本节点上已存在的 Actor 并返回其引用。

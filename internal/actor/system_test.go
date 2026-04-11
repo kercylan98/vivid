@@ -12,6 +12,71 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestSystem_Probe(t *testing.T) {
+	t.Run("local actor available", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		heartbeat, err := system.Probe(ref).Result()
+		assert.NoError(t, err)
+		assert.NotNil(t, heartbeat)
+		assert.True(t, heartbeat.Available)
+	})
+
+	t.Run("local actor closing", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+
+		wait := make(chan struct{})
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch ctx.Message().(type) {
+			case *vivid.OnKill:
+				<-wait
+			}
+		}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+		system.Kill(ref, false, "test kill")
+		heartbeat, err := system.Probe(ref).Result()
+		assert.NoError(t, err)
+		assert.NotNil(t, heartbeat)
+		assert.False(t, heartbeat.Available)
+		close(wait)
+	})
+
+	t.Run("local actor not found", func(t *testing.T) {
+		system := actor.NewTestSystem(t)
+		heartbeat, err := system.Probe(system.Ref()).Result()
+		assert.NoError(t, err)
+		assert.NotNil(t, heartbeat)
+		assert.False(t, heartbeat.Available)
+	})
+
+	t.Run("remote actor available", func(t *testing.T) {
+		system := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))
+		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
+		assert.NoError(t, err)
+		assert.NotNil(t, ref)
+
+		testSystem := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8081"))
+		heartbeat, err := testSystem.Probe(ref.Clone()).Result()
+		assert.NoError(t, err)
+		assert.NotNil(t, heartbeat)
+		assert.True(t, heartbeat.Available)
+	})
+
+	t.Run("remote actor not found", func(t *testing.T) {
+		system := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8083"))
+
+		testSystem := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8084"))
+		heartbeat, err := testSystem.Probe(system.Ref()).Result()
+		assert.NoError(t, err)
+		assert.NotNil(t, heartbeat)
+		assert.False(t, heartbeat.Available)
+	})
+}
+
 func TestSystem_FindActor(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		system := actor.NewTestSystem(t)

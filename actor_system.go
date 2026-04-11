@@ -68,6 +68,9 @@ type ActorSystem interface {
 
 	// VirtualRef 创建一个虚拟 Actor 的引用。
 	VirtualRef(kind string, name string) ActorRef
+
+	// Probe 探测指定 Actor 心跳状态
+	Probe(ref ActorRef, timeout ...time.Duration) Future[*Heartbeat]
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。

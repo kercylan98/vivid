@@ -80,3 +80,8 @@ func (p *PipeResult) GetMessage() Message {
 func (p *PipeResult) GetError() error {
 	return p.Error
 }
+
+type Heartbeat struct {
+	Ref       ActorRef // 心跳目标 ActorRef
+	Available bool     // 是否可用，当不可用时，表示目标已关闭或即将被关闭
+}

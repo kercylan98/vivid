@@ -32,6 +32,12 @@ const (
 
 var systemChains = &_systemChains{}
 
+func init() {
+	messagecodecs.InitActorRefParser(func(ref string) (vivid.ActorRef, error) {
+		return ParseRef(ref)
+	})
+}
+
 type _systemChains struct{}
 
 func (c *_systemChains) initializeCodec(system *System) chain.Chain {
@@ -49,6 +55,7 @@ func (c *_systemChains) initializeCodec(system *System) chain.Chain {
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKilled", new(vivid.OnKilled), messagecodecs.OnKilledEncoder(), messagecodecs.OnKilledDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.Pong", new(vivid.Pong), messagecodecs.PongEncoder(), messagecodecs.PongDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.PipeResult", new(vivid.PipeResult), messagecodecs.PipeResultEncoder(), messagecodecs.PipeResultDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*vivid.Heartbeat", new(vivid.Heartbeat), messagecodecs.HeartbeatEncoder(), messagecodecs.HeartbeatDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*messages.NoneArgsCommandMessage", new(messages.NoneArgsCommandMessage), messagecodecs.NoneArgsCommandMessageEncoder(), messagecodecs.NoneArgsCommandMessageDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*messages.PingMessage", new(messages.PingMessage), messagecodecs.PingMessageEncoder(), messagecodecs.PingMessageDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*messages.PongMessage", new(messages.PongMessage), messagecodecs.PongMessageEncoder(), messagecodecs.PongMessageDecoder())

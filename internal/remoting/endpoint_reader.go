@@ -13,6 +13,8 @@ import (
 
 var (
 	_ vivid.Actor = (*endpointReader)(nil)
+
+	endpointReadFrameMessage = endpointReadFrame{}
 )
 
 func newEndpointReader(associationID uint64, session *session, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, parentRef vivid.ActorRef, readTimeout time.Duration) *endpointReader {
@@ -62,7 +64,7 @@ func (e *endpointReader) onLaunch(ctx vivid.ActorContext) {
 	}
 	e.reader = bufio.NewReader(conn)
 	e.header = make([]byte, frameHeaderSize)
-	ctx.Tell(ctx.Ref(), endpointReadFrame{})
+	ctx.Tell(ctx.Ref(), endpointReadFrameMessage)
 }
 
 func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
@@ -119,7 +121,7 @@ func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 	switch frame.Type {
 	case FrameCtrlData:
 		if len(frame.Data) == 0 {
-			ctx.Tell(ctx.Ref(), endpointReadFrame{})
+			ctx.Tell(ctx.Ref(), endpointReadFrameMessage)
 			return
 		}
 		system, sender, receiver, messageInstance, decodeErr := decodeEnvelop(e.codec, frame.Data)
@@ -154,6 +156,6 @@ func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 	}
 
 	if ctx.Alive() {
-		ctx.Tell(ctx.Ref(), endpointReadFrame{})
+		ctx.Tell(ctx.Ref(), endpointReadFrameMessage)
 	}
 }

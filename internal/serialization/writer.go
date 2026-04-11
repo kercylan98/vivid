@@ -141,6 +141,9 @@ func (w *Writer) writeReflect(v reflect.Value) {
 		for i, n := 0, v.NumField(); i < n; i++ {
 			if f := v.Field(i); f.CanInterface() {
 				w.Write(f.Interface())
+				if w.err != nil {
+					return
+				}
 			}
 		}
 	case reflect.Int8:

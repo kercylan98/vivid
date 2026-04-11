@@ -169,6 +169,7 @@ func (h *killedHandler) handleRestart() {
 		h.ctx.mailbox.Resume()
 	} else {
 		h.ctx.restarting = nil
+		h.ctx.system.unmarkActorAsClosing(h.ctx.ref)
 		atomic.StoreInt32(&h.ctx.state, running)
 		h.ctx.tell(true, h.ctx.parent, new(vivid.OnLaunch))
 		h.ctx.mailbox.Resume()

@@ -1,5 +1,7 @@
 package vivid
 
+import "fmt"
+
 // Future 为 Actor 模式下异步请求-响应的结果占位对象（泛型）。
 // 用于异步消息通信（如 Ask）场景，支持并发安全、等待应答、超时控制与消息管道等能力。
 // T 为业务自定义的期望响应消息类型，提高类型安全与易用性。
@@ -27,4 +29,39 @@ type Future[T any] interface {
 	// 参数:
 	//   - forwarders: 结果需要进一步转发给的其他 ActorRef 列表
 	PipeTo(forwarders ActorRefs)
+}
+
+func NewTypedFuture[F, M any](future Future[F]) *TypedFuture[F, M] {
+	return &TypedFuture[F, M]{
+		Future: future,
+	}
+}
+
+type TypedFuture[F, M any] struct {
+	Future[F]
+}
+
+func (t *TypedFuture[F, M]) Close(err error) {
+	t.Future.Close(err)
+}
+
+func (t *TypedFuture[F, M]) PipeTo(forwarders ActorRefs) {
+	t.Future.PipeTo(forwarders)
+}
+
+func (t *TypedFuture[F, M]) Result() (m M, err error) {
+	v, err := t.Future.Result()
+	if err != nil {
+		return m, err
+	}
+	var val any = v
+	if m, ok := val.(M); !ok {
+		return m, ErrorFutureMessageTypeMismatch.WithMessage(fmt.Sprintf("expected %T, got %T", m, val))
+	} else {
+		return m, nil
+	}
+}
+
+func (t *TypedFuture[F, M]) Wait() error {
+	return t.Future.Wait()
 }
