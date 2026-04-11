@@ -500,17 +500,17 @@ func formatText(entry logEntry, output outputWriter) []byte {
 	appendLevel(&buffer, entry.Level, output.color)
 	appendSource(&buffer, entry.Source, output.color)
 	appendMessage(&buffer, entry.Message, output.color)
-	appendAttrsText(&buffer, entry.Attrs, output.color)
+	appendAttrsText(&buffer, entry.Attrs, output.color, entry.Level)
 	for _, block := range entry.CustomStacks {
 		for _, stack := range block.Stacks {
 			if len(stack) > 0 {
-				buffer.Write(formatStackBlockWithHeader(block.Key, "", string(stack), output.color))
+				buffer.Write(formatStackBlockWithHeader(block.Key, "", string(stack), output.color, entry.Level))
 			}
 		}
 	}
 	for _, item := range entry.ErrorStacks {
 		if item.Stack != "" {
-			buffer.Write(formatStackBlockWithHeader(item.Key, item.Message, item.Stack, output.color))
+			buffer.Write(formatStackBlockWithHeader(item.Key, item.Message, item.Stack, output.color, entry.Level))
 		}
 	}
 	buffer.WriteByte('\n')
@@ -559,7 +559,7 @@ func appendSource(buffer *bytes.Buffer, source string, color bool) {
 	buffer.WriteString(source)
 }
 
-func appendAttrsText(buffer *bytes.Buffer, attrs []flatAttr, color bool) {
+func appendAttrsText(buffer *bytes.Buffer, attrs []flatAttr, color bool, level slog.Level) {
 	for _, attr := range attrs {
 		buffer.WriteByte(' ')
 		key := strings.Join(attr.keyPath, ".")
@@ -568,7 +568,7 @@ func appendAttrsText(buffer *bytes.Buffer, attrs []flatAttr, color bool) {
 		if color {
 			key = colorizeText(colorCyan, key)
 			separator = colorizeText(colorGray, separator)
-			value = formatValueColored(attr.value)
+			value = formatValueColored(attr.value, level)
 		}
 		buffer.WriteString(key)
 		buffer.WriteString(separator)
@@ -576,8 +576,16 @@ func appendAttrsText(buffer *bytes.Buffer, attrs []flatAttr, color bool) {
 	}
 }
 
+// stackBlockColor 按日志级别选择堆栈块 ANSI 色：WARN 为黄，ERROR 及以上为亮红，其余与 ERROR 一致。
+func stackBlockColor(level slog.Level) string {
+	if level >= slog.LevelWarn && level < slog.LevelError {
+		return colorBrightYellow
+	}
+	return colorBrightRed
+}
+
 // formatStackBlockWithHeader 返回带堆栈头的堆栈块：[字段名] message：\n 再每行缩进输出堆栈。message 为空时头为 [key]:。
-func formatStackBlockWithHeader(key, message, stack string, color bool) []byte {
+func formatStackBlockWithHeader(key, message, stack string, color bool, level slog.Level) []byte {
 	if stack == "" {
 		return nil
 	}
@@ -588,8 +596,9 @@ func formatStackBlockWithHeader(key, message, stack string, color bool) []byte {
 	} else {
 		header = "[" + key + "]:"
 	}
+	c := stackBlockColor(level)
 	if color {
-		header = colorizeText(colorBrightRed, header)
+		header = colorizeText(c, header)
 	}
 	stack = strings.ReplaceAll(stack, "\\n", "\n")
 	stack = strings.TrimSuffix(stack, "\n")
@@ -602,7 +611,7 @@ func formatStackBlockWithHeader(key, message, stack string, color bool) []byte {
 	for _, line := range lines {
 		b.WriteString(indent)
 		if color {
-			line = colorizeText(colorBrightRed, line)
+			line = colorizeText(c, line)
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')
@@ -631,10 +640,10 @@ func formatValue(value any) string {
 	}
 }
 
-func formatValueColored(value any) string {
+func formatValueColored(value any, level slog.Level) string {
 	switch typed := value.(type) {
 	case error:
-		return colorizeText(colorBrightRed, strconv.Quote(typed.Error()))
+		return colorizeText(stackBlockColor(level), strconv.Quote(typed.Error()))
 	case string:
 		return colorizeText(colorGreen, formatValue(value))
 	case time.Time:
@@ -669,13 +678,13 @@ func formatJSON(entry logEntry, output outputWriter) ([]byte, error) {
 	for _, block := range entry.CustomStacks {
 		for _, stack := range block.Stacks {
 			if len(stack) > 0 {
-				data = append(data, formatStackBlockWithHeader(block.Key, "", string(stack), output.color)...)
+				data = append(data, formatStackBlockWithHeader(block.Key, "", string(stack), output.color, entry.Level)...)
 			}
 		}
 	}
 	for _, item := range entry.ErrorStacks {
 		if item.Stack != "" {
-			data = append(data, formatStackBlockWithHeader(item.Key, item.Message, item.Stack, output.color)...)
+			data = append(data, formatStackBlockWithHeader(item.Key, item.Message, item.Stack, output.color, entry.Level)...)
 		}
 	}
 	return data, nil

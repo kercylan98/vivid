@@ -31,6 +31,18 @@ type MemberList struct {
 	members []*endpoint.Information // 成员列表
 }
 
+// Clone 深拷贝当前成员列表。
+func (m *MemberList) Clone() *MemberList {
+	var clone = &MemberList{
+		logger:  m.logger,
+		members: make([]*endpoint.Information, len(m.members)),
+	}
+	for i, member := range m.members {
+		clone.members[i] = member.Clone()
+	}
+	return clone
+}
+
 // GetCoordinatorNodeID 获取当前的协调者节点 ID。
 func (m *MemberList) GetCoordinatorNodeID() string {
 	if len(m.members) == 0 {

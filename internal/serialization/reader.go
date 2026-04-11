@@ -44,7 +44,7 @@ func (r *Reader) check(n int) bool {
 		return false
 	}
 	if r.pos+n > len(r.buf) {
-		r.err = fmt.Errorf("serialization: unexpected EOF")
+		r.err = fmt.Errorf("serialization: unexpected EOF, pos: %d, n: %d, len: %d", r.pos, n, len(r.buf))
 		return false
 	}
 	return true

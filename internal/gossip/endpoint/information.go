@@ -22,6 +22,15 @@ type Information struct {
 	CreatedAt time.Time      // 节点创建时间，用于计算协调者节点 ID
 }
 
+// clone 深拷贝当前端点信息。
+func (i *Information) Clone() *Information {
+	return &Information{
+		ActorRef:  i.ActorRef.Clone(),
+		Status:    i.Status,
+		CreatedAt: i.CreatedAt,
+	}
+}
+
 // ID 返回节点唯一标识，与 ActorRef.String() 一致，用作成员列表与版本向量的 key。
 func (i *Information) ID() string {
 	return i.ActorRef.String()

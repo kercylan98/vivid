@@ -2,8 +2,6 @@ package dram
 
 import (
 	"sync"
-
-	"github.com/google/uuid"
 )
 
 // Shard 分布式共享内存的分片

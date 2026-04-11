@@ -124,7 +124,7 @@ func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 		}
 		system, sender, receiver, messageInstance, decodeErr := decodeEnvelop(e.codec, frame.Data)
 		if decodeErr != nil {
-			ctx.Logger().Warn("endpoint decode envelop failed", log.String("address", e.session.address), log.Any("error", decodeErr))
+			ctx.Logger().Warn("endpoint decode envelop failed", log.String("sender", e.session.address), log.Any("error", decodeErr), log.String("raw", string(frame.Data)))
 			ctx.Tell(e.parentRef, endpointReaderStopped{
 				associationID: e.associationID,
 				reader:        ctx.Ref(),

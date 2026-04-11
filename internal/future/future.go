@@ -22,9 +22,9 @@ func NewFuture[T vivid.Message](liaison vivid.ActorLiaison, timeout time.Duratio
 	}
 
 	if timeout > 0 {
-		future.timer = time.AfterFunc(timeout, func() {
+		future.timer.Store(time.AfterFunc(timeout, func() {
 			future.Close(vivid.ErrorFutureTimeout.WithMessage(timeout.String()))
-		})
+		}))
 	}
 
 	return future
@@ -40,15 +40,15 @@ func NewFutureFail[T vivid.Message](err error) *Future[T] {
 }
 
 type Future[T vivid.Message] struct {
-	done       chan struct{}      // 用于通知 future 完成
-	timer      *time.Timer        // 超时定时器
-	closed     atomic.Bool        // 是否已关闭
-	err        error              // 完成时的错误
-	message    T                  // 完成时的消息
-	liaison    vivid.ActorLiaison // 关联的 ActorLiaison
-	closer     func()             // Future 关闭时的回调函数
-	mu         sync.Mutex         // 保护 forwarders 的并发读写
-	forwarders vivid.ActorRefs    // 需要转发的 ActorRefs
+	done       chan struct{}              // 用于通知 future 完成
+	timer      atomic.Pointer[time.Timer] // 超时定时器
+	closed     atomic.Bool                // 是否已关闭
+	err        error                      // 完成时的错误
+	message    T                          // 完成时的消息
+	liaison    vivid.ActorLiaison         // 关联的 ActorLiaison
+	closer     func()                     // Future 关闭时的回调函数
+	mu         sync.Mutex                 // 保护 forwarders 的并发读写
+	forwarders vivid.ActorRefs            // 需要转发的 ActorRefs
 }
 
 func (f *Future[T]) Pause() {
@@ -119,8 +119,8 @@ func (f *Future[T]) close(v any) {
 		f.err = fmt.Errorf("%w, expected %T, got %T", vivid.ErrorFutureMessageTypeMismatch, f.message, val)
 	}
 	close(f.done)
-	if f.timer != nil {
-		f.timer.Stop()
+	if timer := f.timer.Load(); timer != nil {
+		timer.Stop()
 	}
 	if f.closer != nil {
 		f.closer()

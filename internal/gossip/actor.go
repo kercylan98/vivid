@@ -147,8 +147,8 @@ func (a *Actor) onJoining(ctx vivid.ActorContext) {
 	// 检查种子节点是否包含自己
 	seedsSelfIndex := slices.IndexFunc(a.seeds, func(seed vivid.ActorRef) bool { return seed.Equals(ctx.Ref()) })
 
-	// 尝试加入所有种子节点
-	ping := gossipmessages.NewPing(a.info, a.view.Members(), a.view.Version())
+	// 尝试加入所有种子节点，避免远程发送序列化过程中被修改
+	ping := a.preparePing()
 	for i, seed := range a.seeds {
 		// 如果种子节点是自己，则跳过
 		if i == seedsSelfIndex {
@@ -227,7 +227,9 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 	a.view.Members().Upsert(a.info)
 	maybeEmitConverged(ctx, a)
 
-	ctx.Reply(gossipmessages.NewPong(a.info, a.view.Members(), a.view.Version()))
+	// 避免远程发送序列化过程中被修改
+	pong := a.preparePong()
+	ctx.Reply(pong)
 }
 
 // onPong 处理 Ask 得到的 Pong：若对方版本更新则合并其成员与版本；若本节点当前为 Joining 则发 EventJoined 迁到 Up。
@@ -272,9 +274,24 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext) {
 		return
 	}
 
-	ping := gossipmessages.NewPing(a.info, a.view.Members(), a.view.Version())
+	// 避免远程发送序列化过程中被修改
+	ping := a.preparePing()
 
 	for _, peer := range peers {
 		ctx.Tell(peer, ping)
 	}
+}
+
+func (a *Actor) preparePing() *gossipmessages.Ping {
+	infoCopied := a.info.Clone()
+	memberListCopied := a.view.Members().Clone()
+	versionVectorCopied := a.view.Version().Clone()
+	return gossipmessages.NewPing(infoCopied, memberListCopied, versionVectorCopied)
+}
+
+func (a *Actor) preparePong() *gossipmessages.Pong {
+	infoCopied := a.info.Clone()
+	memberListCopied := a.view.Members().Clone()
+	versionVectorCopied := a.view.Version().Clone()
+	return gossipmessages.NewPong(infoCopied, memberListCopied, versionVectorCopied)
 }
