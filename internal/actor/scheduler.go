@@ -101,9 +101,9 @@ func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, 
 		return schedulerErrorConvert(err)
 	}
 
-	base := []any{log.String("ref", s.ctx.Ref().GetPath()), log.String("receiver", receiver.GetPath()), log.String("messageType", fmt.Sprintf("%T", message))}
-	logKindStr := fmt.Sprintf("scheduler %s scheduled", logKind)
-	s.ctx.Logger().Debug(logKindStr, append(base, logFields...)...)
+	// base := []any{log.String("ref", s.ctx.Ref().GetPath()), log.String("receiver", receiver.GetPath()), log.String("messageType", fmt.Sprintf("%T", message))}
+	// logKindStr := fmt.Sprintf("scheduler %s scheduled", logKind)
+	// s.ctx.Logger().Debug(logKindStr, append(base, logFields...)...)
 	return nil
 }
 

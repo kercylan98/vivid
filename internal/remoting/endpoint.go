@@ -27,10 +27,10 @@ const (
 )
 
 type endpointRetryPolicy struct {
-	limit        int
-	initialDelay time.Duration
-	maxDelay     time.Duration
-	backoff      float64
+	limit        int           // 重试次数限制
+	initialDelay time.Duration // 初始重试延迟
+	maxDelay     time.Duration // 最大重试延迟
+	backoff      float64       // 重试延迟倍数
 }
 
 func newEndpointRetryPolicy(opts *vivid.ActorSystemRemotingOptions) endpointRetryPolicy {
@@ -95,8 +95,9 @@ type endpointReaderStopped struct {
 	peerClosed    bool
 }
 
-func newEndpoint(address string, endpointManager *EndpointManager, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, advertiseAddr string, bufferPolicy endpointBufferPolicy, retryPolicy endpointRetryPolicy, associationPolicy endpointAssociationPolicy) *endpoint {
+func newEndpoint(availableSignal <-chan struct{}, address string, endpointManager *EndpointManager, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, advertiseAddr string, bufferPolicy endpointBufferPolicy, retryPolicy endpointRetryPolicy, associationPolicy endpointAssociationPolicy) *endpoint {
 	return &endpoint{
+		availableSignal:   availableSignal,
 		address:           address,
 		endpointManager:   endpointManager,
 		codec:             codec,
@@ -109,6 +110,7 @@ func newEndpoint(address string, endpointManager *EndpointManager, codec *serial
 }
 
 type endpoint struct {
+	availableSignal   <-chan struct{}
 	address           string
 	endpointManager   *EndpointManager
 	codec             *serialization.VividCodec
@@ -120,10 +122,10 @@ type endpoint struct {
 	association       *endpointAssociation
 	stopping          bool
 	connecting        bool
-	connectAttempt    uint64
+	connectAttempt    uint64 // 当前尝试向该端点发起连接尝试的单调递增计数
 	writing           bool
-	retryCount        int
-	retryScheduled    bool
+	retryCount        int  // 当前重试次数
+	retryScheduled    bool // 是否已调度重试
 	associationSeq    uint64
 }
 
@@ -141,8 +143,6 @@ func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
 		e.onAttachSession(ctx, msg)
 	case endpointRetryConnect:
 		e.onRetryConnect(ctx)
-	case *vivid.PipeResult:
-		e.onPipeResult(ctx, msg)
 	case endpointReaderStopped:
 		e.onReaderStopped(ctx, msg)
 	case endpointWriterAck:
@@ -151,6 +151,24 @@ func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
 		e.onWriterFailed(ctx, msg)
 	case endpointHeartbeatFailed:
 		e.onHeartbeatFailed(ctx, msg)
+	case *vivid.PipeResult:
+		switch message := msg.Message.(type) {
+		case *endpointConnectCompleted:
+			e.onConnectCompleted(ctx, message, msg.Error)
+		default:
+			e.onPipeUnexpectedResult(ctx, message, msg.Error)
+		}
+	}
+}
+
+func (e *endpoint) onPipeUnexpectedResult(ctx vivid.ActorContext, message vivid.Message, pipeErr error) {
+	if pipeErr != nil {
+		ctx.Logger().Warn("endpoint received unexpected pipe error", log.String("address", e.address), log.String("type", fmt.Sprintf("%T", message)), log.Any("error", pipeErr))
+		if e.connecting {
+			e.connecting = false
+			e.scheduleRetry(ctx, pipeErr)
+		}
+		return
 	}
 }
 
@@ -287,88 +305,47 @@ func (e *endpoint) onRetryConnect(ctx vivid.ActorContext) {
 	e.ensureSession(ctx)
 }
 
-func (e *endpoint) onPipeResult(ctx vivid.ActorContext, result *vivid.PipeResult) {
-	if e.stopping {
-		if result != nil {
-			if completed, ok := result.Message.(*endpointConnectCompleted); ok && completed != nil && completed.session != nil {
-				e.closeSession(ctx, completed.session, true, "endpoint stopping")
-			}
-		}
-		return
-	}
-	if result == nil {
-		ctx.Logger().Warn("endpoint received nil pipe result", log.String("address", e.address))
-		return
-	}
-
-	completed, ok := result.Message.(*endpointConnectCompleted)
-	if !ok {
-		if result.Error != nil {
-			ctx.Logger().Warn("endpoint received unexpected pipe error",
-				log.String("address", e.address),
-				log.Any("error", result.Error))
-			if e.connecting {
-				e.connecting = false
-				e.scheduleRetry(ctx, result.Error)
-			}
-		}
-		return
-	}
-
-	e.onConnectCompleted(ctx, completed, result.Error)
-}
-
 func (e *endpoint) onConnectCompleted(ctx vivid.ActorContext, completed *endpointConnectCompleted, pipeErr error) {
-	if completed == nil {
-		ctx.Logger().Warn("endpoint connect completed with nil payload", log.String("address", e.address))
+	// 停止中，关闭连接
+	if e.stopping && completed != nil && completed.session != nil {
+		e.closeSession(ctx, completed.session, true, "endpoint stopping")
 		return
 	}
-	if completed.attempt != e.connectAttempt {
-		if completed.session != nil {
-			e.closeSession(ctx, completed.session, true, "stale connect result")
-		}
+
+	// 连接结果已过期
+	if completed.attempt != e.connectAttempt && completed.session != nil {
+		e.closeSession(ctx, completed.session, true, "stale connect result")
 		return
 	}
 
 	e.connecting = false
+
 	if pipeErr != nil {
-		ctx.Logger().Warn("endpoint connect pipe failed",
-			log.String("address", e.address),
-			log.Any("error", pipeErr))
 		e.scheduleRetry(ctx, pipeErr)
 		return
 	}
+
 	if completed.err != nil {
-		ctx.Logger().Warn("endpoint connect failed",
-			log.String("address", e.address),
-			log.Any("error", completed.err))
 		e.scheduleRetry(ctx, completed.err)
 		return
 	}
+
 	if completed.session == nil {
 		nilSessionErr := vivid.ErrorRemotingHandshake.WithMessage("endpoint connect completed without session")
-		ctx.Logger().Warn("endpoint connect returned nil session",
-			log.String("address", e.address),
-			log.Any("error", nilSessionErr))
 		e.scheduleRetry(ctx, nilSessionErr)
 		return
 	}
 
 	if !e.shouldAcceptSession(completed.session) {
-		ctx.Logger().Debug("endpoint rejected completed session",
-			log.String("address", e.address),
-			log.Any("role", completed.session.role))
 		e.closeSession(ctx, completed.session, true, "connect completed with duplicate session")
 		return
 	}
 
 	if err := e.activateSession(ctx, completed.session); err != nil {
-		ctx.Logger().Warn("endpoint activate connected session failed",
-			log.String("address", e.address),
-			log.Any("error", err))
 		e.scheduleRetry(ctx, err)
 		return
 	}
+
 	ctx.EventStream().Publish(ctx, ves.RemotingOutboundConnectionEstablishedEvent{Address: e.address})
 	e.trySend(ctx)
 }
@@ -551,7 +528,7 @@ func (e *endpoint) activateSession(ctx vivid.ActorContext, next *session) error 
 	}
 
 	e.associationSeq++
-	association, err := spawnEndpointAssociation(ctx, e.associationSeq, next, e.codec, e.envelopHandler, e.associationPolicy)
+	association, err := spawnEndpointAssociation(ctx, e.availableSignal, e.associationSeq, next, e.codec, e.envelopHandler, e.associationPolicy)
 	if err != nil {
 		e.closeSession(ctx, next, false, "association spawn failed")
 		return err
@@ -596,10 +573,7 @@ func (e *endpoint) scheduleRetry(ctx vivid.ActorContext, cause error) {
 		Error:   cause,
 	})
 	if e.retryCount >= e.retryPolicy.limit {
-		ctx.Logger().Warn("endpoint retries exhausted",
-			log.String("address", e.address),
-			log.Any("error", cause),
-			log.Any("pending", e.outboundBuffer.Len()))
+		ctx.Logger().Warn("endpoint retries exhausted", log.String("address", e.address), log.Any("error", cause), log.Any("pending", e.outboundBuffer.Len()))
 		e.failPending(ctx)
 		ctx.Kill(ctx.Ref(), false, "endpoint retries exhausted")
 		return
@@ -610,9 +584,7 @@ func (e *endpoint) scheduleRetry(ctx vivid.ActorContext, cause error) {
 	e.retryScheduled = true
 	if err := ctx.Scheduler().Once(ctx.Ref(), delay, endpointRetryConnect{}, vivid.WithSchedulerReference(e.retryScheduleReference())); err != nil {
 		e.retryScheduled = false
-		ctx.Logger().Warn("endpoint schedule retry failed",
-			log.String("address", e.address),
-			log.Any("error", err))
+		ctx.Logger().Warn("endpoint schedule retry failed", log.String("address", e.address), log.Any("error", err))
 		e.failPending(ctx)
 		ctx.Kill(ctx.Ref(), false, "endpoint retry scheduling failed")
 	}

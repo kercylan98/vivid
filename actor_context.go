@@ -313,19 +313,10 @@ type ActorContext interface {
 	//   - int：stash 区中当前暂存的消息数量，若没有暂存消息则返回 0。
 	StashCount() int
 
-	// Alive 方法用于判断当前 Actor 是否处于存活状态。
+	// Available 是基于 [ActorSystem.Probe] 检查 Actor 自身是否还处于可用状态的函数。
 	//
-	// 功能说明：
-	//   - 返回 true 表示 Actor 仍在运行，能够正常处理消息；
-	//   - 返回 false 表示 Actor 已进入终止流程或已被销毁，不再处理业务消息。
-	//
-	// 典型应用场景：
-	//   - 在业务逻辑中判断 Actor 是否仍应继续处理特定消息或任务；
-	//   - 用于资源管理与状态监控，识别失活 Actor 避免发送无效消息。
-	//
-	// 返回值：
-	//   - bool：当前 Actor 是否存活。
-	Alive() bool
+	// 当 Actor 处于可用状态时意味着投递消息任能被处理，否则将进入死信。
+	Available() bool
 }
 
 // actorRace 抽象出 Actor 的子 Actor 创建能力，为 ActorContext 内部复用。

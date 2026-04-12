@@ -16,7 +16,7 @@ var (
 	_ vivid.PrelaunchActor = (*Remoting)(nil)
 )
 
-func New(bindAddr, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions) *Remoting {
+func New(availableSignal <-chan struct{}, bindAddr, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions) *Remoting {
 	retryPolicy := newEndpointRetryPolicy(&options)
 	bufferPolicy := newEndpointBufferPolicy(&options)
 	associationPolicy := newEndpointAssociationPolicy(&options)
@@ -25,6 +25,7 @@ func New(bindAddr, advertiseAddr string, codec *serialization.VividCodec, envelo
 		stopTimeout = time.Minute
 	}
 	return &Remoting{
+		availableSignal:    availableSignal,
 		bindAddr:           bindAddr,
 		tlsConfig:          options.TLSConfig,
 		codec:              codec,
@@ -39,6 +40,7 @@ func New(bindAddr, advertiseAddr string, codec *serialization.VividCodec, envelo
 }
 
 type Remoting struct {
+	availableSignal    <-chan struct{}
 	bindAddr           string
 	tlsConfig          *tls.Config
 	codec              *serialization.VividCodec
@@ -83,7 +85,7 @@ func (r *Remoting) onLaunch(ctx vivid.ActorContext) {
 	}
 
 	r.listener = listener
-	if _, err = ctx.ActorOf(newAcceptor(listener, r.endpointManager, r.advertiseAddr, r.codec, r.envelopHandler, r.bufferPolicy, r.retryPolicy, r.associationPolicy), vivid.WithActorName("acceptor")); err != nil {
+	if _, err = ctx.ActorOf(newAcceptor(r.availableSignal, listener, r.endpointManager, r.advertiseAddr, r.codec, r.envelopHandler, r.bufferPolicy, r.retryPolicy, r.associationPolicy), vivid.WithActorName("acceptor")); err != nil {
 		ctx.Failed(vivid.ParseError(err))
 		return
 	}
@@ -99,7 +101,7 @@ func (r *Remoting) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
 		return
 	}
 	if err := r.endpointManager.EmitToEndpoint(ctx, envelop, func(address string) (vivid.ActorRef, error) {
-		endpointRef, err := ctx.ActorOf(newEndpoint(address, r.endpointManager, r.codec, r.envelopHandler, r.advertiseAddr, r.bufferPolicy, r.retryPolicy, r.associationPolicy))
+		endpointRef, err := ctx.ActorOf(newEndpoint(r.availableSignal, address, r.endpointManager, r.codec, r.envelopHandler, r.advertiseAddr, r.bufferPolicy, r.retryPolicy, r.associationPolicy))
 		if err != nil {
 			return nil, err
 		}

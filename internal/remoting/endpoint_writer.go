@@ -70,8 +70,13 @@ func (e *endpointWriter) onSend(ctx vivid.ActorContext, message endpointWriterSe
 		})
 		return
 	}
-	ctx.Tell(e.parentRef, endpointWriterAck{associationID: e.associationID, writer: ctx.Ref()})
 
+	// 探活
+	if heartbeat, err := ctx.System().Probe(e.parentRef).Result(); err == nil && heartbeat.Available {
+		ctx.Tell(e.parentRef, endpointWriterAck{associationID: e.associationID, writer: ctx.Ref()})
+	}
+
+	// 指标统计
 	bytesLen := uint64(len(frame.Bytes()))
 	ctx.Metrics().Counter(metrics.RemotingBytesSentTotalCounter).Add(bytesLen)
 	ctx.Metrics().Counter(metrics.RemotingEnvelopSentTotalCounter).Inc()

@@ -3,6 +3,7 @@ package actor
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kercylan98/vivid"
@@ -64,7 +65,7 @@ type System struct {
 	options                *vivid.ActorSystemOptions                         // 系统选项
 	actorContexts          sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
 	futureAgents           map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
-	futureLock             sync.Mutex                                        // Future 的锁，保证 Future 的并发安全
+	futureLock             sync.RWMutex                                      // Future 的锁，保证 Future 的并发安全
 	guardClosedSignal      chan struct{}                                     // 用于通知系统关闭的信号
 	remotingRef            vivid.ActorRef                                    // 远程服务器引用
 	remotingEnvelopHandler remoting.NetworkEnvelopHandler                    // 远程信封处理器
@@ -96,24 +97,38 @@ func (s *System) unmarkActorAsClosing(ref vivid.ActorRef) {
 
 func (s *System) HeartbeatProbe(ref vivid.ActorRef) *vivid.Heartbeat {
 	heartbeat := &vivid.Heartbeat{
-		Ref:       ref,
-		Available: true,
+		Ref: ref,
 	}
 
 	// 是否存在
-	_, exists := s.actorContexts.Load(ref.GetPath())
+	value, exists := s.actorContexts.Load(ref.GetPath())
 	if !exists {
-		heartbeat.Available = false
 		return heartbeat
 	}
 
 	// 是否即将被关闭
 	_, closing := s.closingActors.Load(ref.GetPath())
 	if closing {
-		heartbeat.Available = false
+		// 如果是上下文，还需检查是否处于多阶段停止中
+		ctx, ok := value.(*Context)
+		if ok {
+			// 是否处于多阶段停止中，还可收到消息
+			if ctx.phaseKill != nil && !ctx.phaseKill.completed {
+				heartbeat.Available = true
+				return heartbeat
+			}
+
+			// 状态是否是 running
+			if atomic.LoadInt32(&ctx.state) == running {
+				heartbeat.Available = true
+				return heartbeat
+			}
+		}
+
 		return heartbeat
 	}
 
+	heartbeat.Available = true
 	return heartbeat
 }
 
@@ -195,6 +210,9 @@ func (s *System) Start() error {
 	s.startTime = time.Now()
 	s.Logger().Debug("actor system starting")
 
+	availableSignal := make(chan struct{})
+	defer close(availableSignal)
+	systemChains := newSystemChains(availableSignal)
 	startErr := chain.New(chain.WithContext(s.options.Context)).
 		Append(systemChains.initializeCodec(s)).
 		Append(systemChains.spawnGuardActor(s)).

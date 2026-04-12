@@ -30,17 +30,23 @@ const (
 	gossipStopPriority
 )
 
-var systemChains = &_systemChains{}
-
 func init() {
 	messagecodecs.InitActorRefParser(func(ref string) (vivid.ActorRef, error) {
 		return ParseRef(ref)
 	})
 }
 
-type _systemChains struct{}
+func newSystemChains(availableSignal <-chan struct{}) *systemChains {
+	return &systemChains{
+		availableSignal: availableSignal,
+	}
+}
 
-func (c *_systemChains) initializeCodec(system *System) chain.Chain {
+type systemChains struct {
+	availableSignal <-chan struct{}
+}
+
+func (c *systemChains) initializeCodec(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
 		system.codec = serialization.NewVividCodec(system.options.RemotingCodec)
 
@@ -78,7 +84,7 @@ func (c *_systemChains) initializeCodec(system *System) chain.Chain {
 	})
 }
 
-func (c *_systemChains) spawnGuardActor(system *System) chain.Chain {
+func (c *systemChains) spawnGuardActor(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
 		system.Context, err = NewContext(system, nil, guard.NewActor(system.guardClosedSignal))
 		if err != nil {
@@ -88,7 +94,7 @@ func (c *_systemChains) spawnGuardActor(system *System) chain.Chain {
 	})
 }
 
-func (c *_systemChains) initializeMetrics(system *System) chain.Chain {
+func (c *systemChains) initializeMetrics(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
 		if system.options.Metrics != nil {
 			system.metrics = system.options.Metrics
@@ -110,7 +116,7 @@ func (c *_systemChains) initializeMetrics(system *System) chain.Chain {
 	})
 }
 
-func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
+func (c *systemChains) initializeRemoting(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
 		if system.options.RemotingBindAddress == "" || system.options.RemotingAdvertiseAddress == "" {
 			return nil
@@ -122,6 +128,7 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 		}
 		system.options.Logger = system.options.Logger.With("addr", system.options.RemotingAdvertiseAddress)
 		ref, err := system.ActorOf(remoting.New(
+			c.availableSignal,
 			system.options.RemotingBindAddress,
 			system.options.RemotingAdvertiseAddress,
 			system.codec,
@@ -140,7 +147,7 @@ func (c *_systemChains) initializeRemoting(system *System) chain.Chain {
 	})
 }
 
-func (c *_systemChains) initializeVirtualCoordinator(system *System) chain.Chain {
+func (c *systemChains) initializeVirtualCoordinator(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
 		if len(system.options.VirtualActorProviders) == 0 {
 			return nil
@@ -151,7 +158,7 @@ func (c *_systemChains) initializeVirtualCoordinator(system *System) chain.Chain
 	})
 }
 
-func (c *_systemChains) initializeCluster(system *System) chain.Chain {
+func (c *systemChains) initializeCluster(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
 		if system.options.ClusterOptions == nil {
 			return nil

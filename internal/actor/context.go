@@ -311,7 +311,13 @@ func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.F
 		return future.NewFutureFail[vivid.Message](vivid.ErrorFutureInvalid.WithMessage("no task to be executed"))
 	}
 
-	futureIns := future.NewFuture[vivid.Message](c, timeout, nil)
+	// 视为需要等待的 Future，避免 Future 还未结束 Actor 先关闭了
+	agentRef, _ := NewAgentRef(c.ref.(*Ref))
+	futureIns := future.NewFuture[vivid.Message](c, timeout, func() {
+		c.system.removeFuture(agentRef)
+	})
+	c.system.appendFuture(agentRef, futureIns)
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -360,8 +366,12 @@ func (c *Context) PipeTo(recipient vivid.ActorRef, message vivid.Message, forwar
 	return pipeId
 }
 
-func (c *Context) Alive() bool {
-	return atomic.LoadInt32(&c.state) == running
+func (c *Context) Available() bool {
+	heartbeat, err := c.system.Probe(c.ref).Result()
+	if err != nil {
+		return false
+	}
+	return heartbeat.Available
 }
 
 func (c *Context) HandleEnvelop(envelop vivid.Envelop) {

@@ -17,26 +17,28 @@ var (
 	endpointReadFrameMessage = endpointReadFrame{}
 )
 
-func newEndpointReader(associationID uint64, session *session, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, parentRef vivid.ActorRef, readTimeout time.Duration) *endpointReader {
+func newEndpointReader(availableSignal <-chan struct{}, associationID uint64, session *session, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, parentRef vivid.ActorRef, readTimeout time.Duration) *endpointReader {
 	return &endpointReader{
-		associationID:  associationID,
-		session:        session,
-		codec:          codec,
-		envelopHandler: envelopHandler,
-		parentRef:      parentRef,
-		readTimeout:    readTimeout,
+		availableSignal: availableSignal,
+		associationID:   associationID,
+		session:         session,
+		codec:           codec,
+		envelopHandler:  envelopHandler,
+		parentRef:       parentRef,
+		readTimeout:     readTimeout,
 	}
 }
 
 type endpointReader struct {
-	associationID  uint64
-	session        *session
-	codec          *serialization.VividCodec
-	envelopHandler NetworkEnvelopHandler
-	parentRef      vivid.ActorRef
-	reader         *bufio.Reader
-	header         []byte
-	readTimeout    time.Duration
+	availableSignal <-chan struct{}
+	associationID   uint64
+	session         *session
+	codec           *serialization.VividCodec
+	envelopHandler  NetworkEnvelopHandler
+	parentRef       vivid.ActorRef
+	reader          *bufio.Reader
+	header          []byte
+	readTimeout     time.Duration
 }
 
 type endpointReadFrame struct{}
@@ -64,6 +66,9 @@ func (e *endpointReader) onLaunch(ctx vivid.ActorContext) {
 	}
 	e.reader = bufio.NewReader(conn)
 	e.header = make([]byte, frameHeaderSize)
+
+	// 此时如果 ActorSystem 尚未完全就绪，提前接收到的消息可能会在 Actor 启动前就被放入死信队列，故需要监听启动完成信号
+	<-e.availableSignal
 	ctx.Tell(ctx.Ref(), endpointReadFrameMessage)
 }
 
@@ -121,7 +126,9 @@ func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 	switch frame.Type {
 	case FrameCtrlData:
 		if len(frame.Data) == 0 {
-			ctx.Tell(ctx.Ref(), endpointReadFrameMessage)
+			if ctx.Available() {
+				ctx.Tell(ctx.Ref(), endpointReadFrameMessage)
+			}
 			return
 		}
 		system, sender, receiver, messageInstance, decodeErr := decodeEnvelop(e.codec, frame.Data)
@@ -155,7 +162,7 @@ func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
 		ctx.Logger().Warn("endpoint received unknown frame type", log.String("address", e.session.address), log.Any("ctrl_type", frame.Type))
 	}
 
-	if ctx.Alive() {
+	if ctx.Available() {
 		ctx.Tell(ctx.Ref(), endpointReadFrameMessage)
 	}
 }

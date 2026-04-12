@@ -14,8 +14,9 @@ var (
 	_ vivid.Actor = (*acceptor)(nil)
 )
 
-func newAcceptor(listener *listener, endpointManager *EndpointManager, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, bufferPolicy endpointBufferPolicy, retryPolicy endpointRetryPolicy, associationPolicy endpointAssociationPolicy) *acceptor {
+func newAcceptor(availableSignal <-chan struct{}, listener *listener, endpointManager *EndpointManager, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, bufferPolicy endpointBufferPolicy, retryPolicy endpointRetryPolicy, associationPolicy endpointAssociationPolicy) *acceptor {
 	return &acceptor{
+		availableSignal:   availableSignal,
 		listener:          listener,
 		endpointManager:   endpointManager,
 		advertiseAddr:     advertiseAddr,
@@ -28,6 +29,7 @@ func newAcceptor(listener *listener, endpointManager *EndpointManager, advertise
 }
 
 type acceptor struct {
+	availableSignal   <-chan struct{}
 	listener          *listener
 	endpointManager   *EndpointManager
 	advertiseAddr     string
@@ -153,13 +155,13 @@ func (a *acceptor) onAcceptCompleted(ctx vivid.ActorContext, message *acceptComp
 		return
 	}
 	if message.conn == nil {
-		if !a.stopping && ctx.Alive() {
+		if !a.stopping && ctx.Available() {
 			ctx.Tell(ctx.Ref(), acceptConnection{})
 		}
 		return
 	}
 	a.startHandshake(ctx, message.conn)
-	if !a.stopping && ctx.Alive() {
+	if !a.stopping && ctx.Available() {
 		ctx.Tell(ctx.Ref(), acceptConnection{})
 	}
 }
@@ -220,7 +222,7 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 	}
 	session := newSession(message.peerAddr, localAddr, conn, sessionRoleInbound)
 	endpointRef, ensureErr := a.endpointManager.ensureEndpoint(ctx, message.peerAddr, func(address string) (vivid.ActorRef, error) {
-		endpointRef, err := ctx.ActorOf(newEndpoint(address, a.endpointManager, a.codec, a.envelopHandler, a.advertiseAddr, a.bufferPolicy, a.retryPolicy, a.associationPolicy))
+		endpointRef, err := ctx.ActorOf(newEndpoint(a.availableSignal, address, a.endpointManager, a.codec, a.envelopHandler, a.advertiseAddr, a.bufferPolicy, a.retryPolicy, a.associationPolicy))
 		if err != nil {
 			return nil, err
 		}

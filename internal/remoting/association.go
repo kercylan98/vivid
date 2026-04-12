@@ -111,9 +111,9 @@ func closeEndpointSession(ctx vivid.ActorContext, address string, target *sessio
 	}
 }
 
-func spawnEndpointAssociation(ctx vivid.ActorContext, id uint64, session *session, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, policy endpointAssociationPolicy) (*endpointAssociation, error) {
+func spawnEndpointAssociation(ctx vivid.ActorContext, availableSignal <-chan struct{}, id uint64, session *session, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, policy endpointAssociationPolicy) (*endpointAssociation, error) {
 	readerName := associationActorName("reader", id)
-	readerRef, err := ctx.ActorOf(newEndpointReader(id, session, codec, envelopHandler, ctx.Ref(), policy.readTimeout), vivid.WithActorName(readerName))
+	readerRef, err := ctx.ActorOf(newEndpointReader(availableSignal, id, session, codec, envelopHandler, ctx.Ref(), policy.readTimeout), vivid.WithActorName(readerName))
 	if err != nil {
 		return nil, vivid.ErrorActorSpawnFailed.With(err)
 	}
