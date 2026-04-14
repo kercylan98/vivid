@@ -192,6 +192,7 @@ func (a *Actor) onConverged(ctx vivid.ActorContext) {
 	ctx.Logger().Debug("cluster converged",
 		log.String("coordinator", a.coordinatorNodeID),
 		log.Duration("convergence_duration", time.Since(a.convergenceStartedAt)),
+		log.String("status", a.info.Status.String()),
 	)
 
 	// 自身状态迁移
@@ -200,6 +201,8 @@ func (a *Actor) onConverged(ctx vivid.ActorContext) {
 		changeStatus(ctx, a, EventExiting)
 	case endpoint.StatusExiting:
 		changeStatus(ctx, a, EventRemoved)
+	case endpoint.StatusRemoved:
+		close(a.phaseKillCompleted)
 	default:
 	}
 }
@@ -227,6 +230,8 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 	a.view.Members().Upsert(a.info)
 	maybeEmitConverged(ctx, a)
 
+	ctx.Logger().Debug("received ping", log.String("sender", ctx.Sender().GetAddress()))
+
 	// 避免远程发送序列化过程中被修改
 	pong := a.preparePong()
 	ctx.Reply(pong)
@@ -241,6 +246,8 @@ func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 	// 合并后写回本节点信息，避免被对方视图中本节点的旧状态（如 JOINING）覆盖已迁移的 UP
 	a.view.Members().Upsert(a.info)
 	maybeEmitConverged(ctx, a)
+
+	ctx.Logger().Debug("received pong", log.String("sender", ctx.Sender().GetAddress()))
 }
 
 func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
@@ -261,9 +268,10 @@ func (a *Actor) onExiting(ctx vivid.ActorContext) {
 }
 
 func (a *Actor) onRemoved(ctx vivid.ActorContext) {
-	// 已离开集群，结束多阶段流程
+	// 自身状态已变更未 Remove，收敛后可结束多阶段终止流程
 	ctx.Logger().Debug("removed from cluster")
-	close(a.phaseKillCompleted)
+
+	ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip())
 }
 
 // onSpreadGossip 向 targets 发 Ping 并同步处理每个 Pong；targets 为空时从视图中取最多 GossipPeersLimit 个 Up 节点作为目标。
