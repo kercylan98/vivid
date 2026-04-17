@@ -33,17 +33,20 @@ type ActorSystemClusterOptions struct {
 // WithActorSystemClusterOptions 返回一个 ActorSystemOption，用于配置 ActorSystem 的集群选项。
 //
 // 参数：
-//   - options: 期望设置的集群选项。
 //   - opts ...ActorSystemClusterOption: 可选参数，链式扩展集群选项。
 //
 // 返回值：
 //   - ActorSystemOption: 可传给 NewActorSystem 或其它配置参数的 Option 函数。
-func WithActorSystemClusterOptions(options ActorSystemClusterOptions, opts ...ActorSystemClusterOption) ActorSystemOption {
+func WithActorSystemClusterOptions(opts ...ActorSystemClusterOption) ActorSystemOption {
 	return func(o *ActorSystemOptions) {
-		o.ClusterOptions = &options
+		var options = o.ClusterOptions
+		if options == nil {
+			options = NewActorSystemClusterOptions()
+		}
 		for _, opt := range opts {
 			opt(o.ClusterOptions)
 		}
+		o.ClusterOptions = options
 	}
 }
 

@@ -52,20 +52,25 @@ var transitions = map[endpoint.Status]map[Event]transition{
 func changeStatus(ctx vivid.ActorContext, a *Actor, e Event) bool {
 	t, ok := transitions[a.info.Status][e]
 	if !ok {
-		ctx.Logger().Error("invalid transition",
-			log.String("state", a.info.Status.String()),
-			log.Int("event", int(e)))
+		ctx.Logger().Error("invalid transition", log.String("state", a.info.Status.String()), log.Int("event", int(e)))
 		return false
 	}
+
+	ctx.Logger().Debug("changing status", log.String("state", a.info.Status.String()), log.Int("event", int(e)), log.String("to", t.to.String()), log.Bool("immediately_gossip", t.immediatelyGossip))
 
 	a.info.Status = t.to
 	a.view.Version().Increment(a.info.ID())
 	a.view.Members().Upsert(a.info)
 
-	ctx.Tell(ctx.Ref(), a.info.Status)
+	// 即刻执行状态变更后的行为，避免下一帧处理导致异常流转
+	a.onStatusChanged(ctx, a.info.Status)
 
 	if t.immediatelyGossip {
-		ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip())
+		gossipType := gossipmessages.GossipTypeCriticalStateChange
+		if t.to == endpoint.StatusRemoved {
+			gossipType = gossipmessages.GossipTypeRemoveNode
+		}
+		ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip(gossipType))
 	}
 	return true
 }

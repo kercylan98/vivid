@@ -97,17 +97,17 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 	case *gossipmessages.Pong:
 		a.onPong(ctx, m)
 	case *gossipmessages.SpreadGossip:
-		a.onSpreadGossip(ctx)
+		a.onSpreadGossip(ctx, m)
 	case *gossipmessages.Converged:
 		a.onConverged(ctx)
-	case endpoint.Status:
-		a.onStatusChanged(ctx, m)
 	case *vivid.OnKill:
 		a.onKill(ctx, m)
 	}
 }
 
 func (a *Actor) onStatusChanged(ctx vivid.ActorContext, status endpoint.Status) {
+	ctx.Logger().Debug("status changed", log.String("status", status.String()))
+
 	switch status {
 	case endpoint.StatusJoining:
 		a.onJoining(ctx)
@@ -141,14 +141,18 @@ func (a *Actor) onLaunch(ctx vivid.ActorContext) {
 
 func (a *Actor) onJoining(ctx vivid.ActorContext) {
 	if a.info.Status != endpoint.StatusJoining {
-		return // 如果当前状态不是 Joining，则不进行重试，虽然只是 gossip 同步，但是会增加不必要的开销
+		return
 	}
 
 	// 检查种子节点是否包含自己
 	seedsSelfIndex := slices.IndexFunc(a.seeds, func(seed vivid.ActorRef) bool { return seed.Equals(ctx.Ref()) })
 
+	if len(a.seeds) > 0 {
+		ctx.Logger().Debug("joining cluster", log.String("seeds", fmt.Sprintf("%v", a.seeds)))
+	}
+
 	// 尝试加入所有种子节点，避免远程发送序列化过程中被修改
-	ping := a.preparePing()
+	ping := a.preparePing(gossipmessages.GossipTypeJoin)
 	for i, seed := range a.seeds {
 		// 如果种子节点是自己，则跳过
 		if i == seedsSelfIndex {
@@ -167,17 +171,18 @@ func (a *Actor) onJoining(ctx vivid.ActorContext) {
 		}
 		a.onPong(ctx, pong)
 		changeStatus(ctx, a, EventUp)
-		ctx.Logger().Debug("joined cluster")
+		ctx.Logger().Debug("joined cluster", log.String("seed", seed.String()))
 		return
 	}
 
 	// 所有种子节点都失败了，自举为孤岛集群
+	ctx.Logger().Debug("bootstrapped cluster", log.String("seeds", fmt.Sprintf("%v", a.seeds)))
 	changeStatus(ctx, a, EventUp)
 }
 
 func (a *Actor) onUp(ctx vivid.ActorContext) {
 	// 注册周期任务，按 [GossipInterval] 向视图中节点发起 gossip。
-	spreadGossipMessage := gossipmessages.NewSpreadGossip()
+	spreadGossipMessage := gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeCycleSYNC)
 	if err := ctx.Scheduler().Loop(ctx.Ref(), a.opts.GossipInterval, spreadGossipMessage, vivid.WithSchedulerReference(singleSchedulerReference)); err != nil {
 		// 报告故障以可以支持监管者重启
 		ctx.Failed(vivid.ErrorGossipScheduleFailed.With(err).WithMessage("failed to schedule spread gossip"))
@@ -212,12 +217,18 @@ func (a *Actor) onConverged(ctx vivid.ActorContext) {
 //   - 若对方整体版本更新（IsBefore），则合并其整表成员与版本。
 //   - 最后回复 Pong，带上当前节点信息、成员列表和版本向量。
 func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
+	// 如果自身还处于 Joining 状态，不应该接受任何 Ping 消息
+	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining {
+		return
+	}
+
 	id := ping.Info.ID()
 	if ping.Version.Get(id) >= a.view.Version().Get(id) {
 		isNew := a.view.Members().Upsert(ping.Info)
 		a.view.Version().Merge(ping.Version)
 		if isNew {
-			ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip())
+			// 如果对方是新节点，则发送 SpreadGossip 消息，确保新节点能够快速加入集群
+			ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeDiscoverNewNode))
 		}
 	}
 
@@ -230,10 +241,10 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 	a.view.Members().Upsert(a.info)
 	maybeEmitConverged(ctx, a)
 
-	ctx.Logger().Debug("received ping", log.String("sender", ctx.Sender().GetAddress()))
+	ctx.Logger().Debug("received ping", log.String("sender", ctx.Sender().GetAddress()), log.String("gossip_type", ping.GossipType))
 
 	// 避免远程发送序列化过程中被修改
-	pong := a.preparePong()
+	pong := a.preparePong(ping.GossipType)
 	ctx.Reply(pong)
 }
 
@@ -247,7 +258,7 @@ func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 	a.view.Members().Upsert(a.info)
 	maybeEmitConverged(ctx, a)
 
-	ctx.Logger().Debug("received pong", log.String("sender", ctx.Sender().GetAddress()))
+	ctx.Logger().Debug("received pong", log.String("sender", ctx.Sender().GetAddress()), log.String("gossip_type", pong.GossipType))
 }
 
 func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
@@ -268,14 +279,11 @@ func (a *Actor) onExiting(ctx vivid.ActorContext) {
 }
 
 func (a *Actor) onRemoved(ctx vivid.ActorContext) {
-	// 自身状态已变更未 Remove，收敛后可结束多阶段终止流程
 	ctx.Logger().Debug("removed from cluster")
-
-	ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip())
 }
 
 // onSpreadGossip 向 targets 发 Ping 并同步处理每个 Pong；targets 为空时从视图中取最多 GossipPeersLimit 个 Up 节点作为目标。
-func (a *Actor) onSpreadGossip(ctx vivid.ActorContext) {
+func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessages.SpreadGossip) {
 	peers := a.view.Members().Unseens(a.info, a.seeds, a.opts.GossipPeersCount)
 	if len(peers) == 0 {
 		maybeEmitConverged(ctx, a)
@@ -283,23 +291,23 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext) {
 	}
 
 	// 避免远程发送序列化过程中被修改
-	ping := a.preparePing()
+	ping := a.preparePing(spreadGossip.GossipType)
 
 	for _, peer := range peers {
 		ctx.Tell(peer, ping)
 	}
 }
 
-func (a *Actor) preparePing() *gossipmessages.Ping {
+func (a *Actor) preparePing(gossipType string) *gossipmessages.Ping {
 	infoCopied := a.info.Clone()
 	memberListCopied := a.view.Members().Clone()
 	versionVectorCopied := a.view.Version().Clone()
-	return gossipmessages.NewPing(infoCopied, memberListCopied, versionVectorCopied)
+	return gossipmessages.NewPing(gossipType, infoCopied, memberListCopied, versionVectorCopied)
 }
 
-func (a *Actor) preparePong() *gossipmessages.Pong {
+func (a *Actor) preparePong(gossipType string) *gossipmessages.Pong {
 	infoCopied := a.info.Clone()
 	memberListCopied := a.view.Members().Clone()
 	versionVectorCopied := a.view.Version().Clone()
-	return gossipmessages.NewPong(infoCopied, memberListCopied, versionVectorCopied)
+	return gossipmessages.NewPong(gossipType, infoCopied, memberListCopied, versionVectorCopied)
 }

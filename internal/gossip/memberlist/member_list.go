@@ -138,6 +138,7 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 		case endpoint.StatusJoining, endpoint.StatusRemoved:
 		default:
 			out = append(out, member.ActorRef)
+			m.logger.Debug("seen member", log.String("ref", member.ActorRef.String()), log.String("status", member.Status.String()))
 		}
 	}
 
@@ -155,6 +156,7 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 				continue
 			}
 			notInPeerSeeds = append(notInPeerSeeds, seed)
+			m.logger.Debug("not in peer seeds", log.String("ref", seed.String()), log.String("status", m.Get(seed.String()).Status.String()))
 		}
 	}
 

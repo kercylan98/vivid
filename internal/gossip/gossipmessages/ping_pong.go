@@ -9,9 +9,18 @@ import (
 	"github.com/kercylan98/vivid/internal/gossip/versionvector"
 )
 
+const (
+	GossipTypeJoin                string = "JOIN_CLUSTER"          // 加入集群
+	GossipTypeCycleSYNC           string = "CYCLE_SYNC"            // 周期同步
+	GossipTypeDiscoverNewNode     string = "DISCOVER_NEW_NODE"     // 发现新节点
+	GossipTypeRemoveNode          string = "REMOVE_NODE"           // 移除节点
+	GossipTypeCriticalStateChange string = "CRITICAL_STATE_CHANGE" // 关键状态变更
+)
+
 // NewPing 构造一条 Ping 消息，携带发送方信息、其当前成员列表与版本向量，供对端合并与回 Pong。
-func NewPing(info *endpoint.Information, memberList *memberlist.MemberList, versionVector *versionvector.VersionVector) *Ping {
+func NewPing(gossipType string, info *endpoint.Information, memberList *memberlist.MemberList, versionVector *versionvector.VersionVector) *Ping {
 	return &Ping{
+		GossipType: gossipType,
 		Timestamp:  time.Now(),
 		Info:       info,
 		MemberList: memberList,
@@ -21,6 +30,7 @@ func NewPing(info *endpoint.Information, memberList *memberlist.MemberList, vers
 
 // Ping 表示 gossip 请求：发送方用其视图（Info + MemberList + Version）向对端交换并请求对端视图。
 type Ping struct {
+	GossipType string                       //  gossip 类型，用于区分不同的 gossip 消息
 	Timestamp  time.Time                    // 发送时间，可用于延迟或调试
 	Info       *endpoint.Information        // 发送方端点信息
 	MemberList *memberlist.MemberList       // 发送方当前成员列表
@@ -28,8 +38,9 @@ type Ping struct {
 }
 
 // NewPong 构造一条 Pong 响应，携带本节点信息与当前视图，供请求方合并与判断是否已加入。
-func NewPong(info *endpoint.Information, memberList *memberlist.MemberList, versionVector *versionvector.VersionVector) *Pong {
+func NewPong(gossipType string, info *endpoint.Information, memberList *memberlist.MemberList, versionVector *versionvector.VersionVector) *Pong {
 	return &Pong{
+		GossipType: gossipType,
 		Timestamp:  time.Now(),
 		Info:       info,
 		MemberList: memberList,
@@ -39,6 +50,7 @@ func NewPong(info *endpoint.Information, memberList *memberlist.MemberList, vers
 
 // Pong 表示 gossip 响应：回传本节点信息与视图，供请求方合并并可能触发状态迁移（如 Joining -> Up）。
 type Pong struct {
+	GossipType string //  gossip 类型，用于区分不同的 gossip 消息
 	Timestamp  time.Time
 	Info       *endpoint.Information
 	MemberList *memberlist.MemberList

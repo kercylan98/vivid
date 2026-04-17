@@ -323,3 +323,15 @@ func TestSystem_WithRemoting(t *testing.T) {
 		}
 	})
 }
+
+func TestSystem_Cluster(t *testing.T) {
+	t.Run("normal", func(t *testing.T) {
+		system := actor.NewTestSystem(t,
+			vivid.WithActorSystemRemoting("127.0.0.1:8080"),
+			vivid.WithActorSystemClusterOptions(),
+		)
+		defer func() {
+			assert.NoError(t, system.Stop())
+		}()
+	})
+}

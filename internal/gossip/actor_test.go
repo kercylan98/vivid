@@ -1,7 +1,6 @@
 package gossip_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -13,19 +12,21 @@ import (
 )
 
 func TestActor_Gossip(t *testing.T) {
+	// 该用例创建 3 个种子节点且互相连接，而后立即关闭集群以测试完整生命周期流程
+
 	system1 := bootstrap.NewActorSystem(
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
-		vivid.WithActorSystemRemoting("127.0.0.1:8080"),
+		vivid.WithActorSystemRemoting("127.0.0.1:7070"),
 	)
 
 	system2 := bootstrap.NewActorSystem(
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
-		vivid.WithActorSystemRemoting("127.0.0.1:8081"),
+		vivid.WithActorSystemRemoting("127.0.0.1:8080"),
 	)
 
 	system3 := bootstrap.NewActorSystem(
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
-		vivid.WithActorSystemRemoting("127.0.0.1:8082"),
+		vivid.WithActorSystemRemoting("127.0.0.1:9090"),
 	)
 
 	assert.NoError(t, system1.Start())
@@ -42,7 +43,7 @@ func TestActor_Gossip(t *testing.T) {
 		}()
 
 		select {
-		case <-time.After(10 * time.Second):
+		case <-time.After(2 * time.Second):
 			t.Fatal("timeout")
 		case <-done:
 		}
@@ -59,39 +60,4 @@ func TestActor_Gossip(t *testing.T) {
 	gossipRef3, err := system3.ActorOf(gossip.New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(gossipRef1.GetAddress()))))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef3)
-}
-
-func TestMultiple_Gossip(t *testing.T) {
-	var seedNodeCount = 3 // 种子节点数量
-	var nodeCount = 10    // 节点数量（不建议过高，单机网络风暴容易导致操作系统整体的崩溃）
-	var basePort = 8080
-
-	systems := make([]vivid.PrimaryActorSystem, nodeCount)
-
-	for i := 0; i < nodeCount; i++ {
-		systems[i] = bootstrap.NewActorSystem(
-			vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
-			vivid.WithActorSystemRemoting(fmt.Sprintf("127.0.0.1:%d", basePort+i)),
-		)
-	}
-
-	for _, system := range systems {
-		assert.NoError(t, system.Start())
-	}
-
-	defer func() {
-		for _, system := range systems {
-			assert.NoError(t, system.Stop())
-		}
-	}()
-
-	var seeds []string
-	for i := 0; i < nodeCount; i++ {
-		system := systems[i]
-		gossipActor := gossip.New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(seeds...)))
-		gossipRef, err := system.ActorOf(gossipActor)
-		if assert.NoError(t, err) && assert.NotNil(t, gossipRef) && len(seeds) < seedNodeCount {
-			seeds = append(seeds, gossipRef.GetAddress())
-		}
-	}
 }

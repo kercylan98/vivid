@@ -87,14 +87,22 @@ func (a *acceptor) onAccept(ctx vivid.ActorContext) {
 	a.accepting = true
 	a.acceptAttempt++
 	attempt := a.acceptAttempt
-	ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+	entrustFuture := ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
 		conn, err := a.listener.Accept()
 		return &acceptCompleted{
 			attempt: attempt,
 			conn:    conn,
 			err:     err,
 		}, nil
-	})).PipeTo(ctx.Ref().ToActorRefs())
+	}))
+	message, err := entrustFuture.Result()
+	pipeResult := &vivid.PipeResult{
+		Message: message,
+		Error:   err,
+	}
+	if ctx.Available() {
+		ctx.Tell(ctx.Ref(), pipeResult)
+	}
 }
 
 func (a *acceptor) onKill(ctx vivid.ActorContext) {
@@ -173,7 +181,7 @@ func (a *acceptor) startHandshake(ctx vivid.ActorContext, conn net.Conn) {
 	a.handshakeSeq++
 	seq := a.handshakeSeq
 	a.pendingHandshakes[seq] = conn
-	ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+	entrustFuture := ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
 		peerAddr, err := a.doHandshake(conn)
 		return &acceptHandshakeCompleted{
 			seq:      seq,
@@ -181,7 +189,15 @@ func (a *acceptor) startHandshake(ctx vivid.ActorContext, conn net.Conn) {
 			peerAddr: peerAddr,
 			err:      err,
 		}, nil
-	})).PipeTo(ctx.Ref().ToActorRefs())
+	}))
+	message, err := entrustFuture.Result()
+	pipeResult := &vivid.PipeResult{
+		Message: message,
+		Error:   err,
+	}
+	if ctx.Available() {
+		ctx.Tell(ctx.Ref(), pipeResult)
+	}
 }
 
 func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptHandshakeCompleted, pipeErr error) {
