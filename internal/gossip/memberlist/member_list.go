@@ -43,23 +43,32 @@ func (m *MemberList) Clone() *MemberList {
 	return clone
 }
 
-// GetCoordinatorNodeID 获取当前的协调者节点 ID。
+// GetCoordinatorNodeID 获取当前的协调者节点 ID
 func (m *MemberList) GetCoordinatorNodeID() string {
-	if len(m.members) == 0 {
+	// 首先筛选状态为UP的节点
+	var upMembers []*endpoint.Information
+	for _, member := range m.members {
+		if member.Status == endpoint.StatusUp {
+			upMembers = append(upMembers, member)
+		}
+	}
+
+	if len(upMembers) == 0 {
+		// 如果没有UP状态的节点，返回空
 		return ""
 	}
 
 	// 按创建时间升序，如果创建时间相同，则按 ActorRef 字典序升序
-	sort.Slice(m.members, func(i, j int) bool {
-		aCreatedAt := m.members[i].CreatedAt.UnixNano()
-		jCreatedAt := m.members[j].CreatedAt.UnixNano()
+	sort.Slice(upMembers, func(i, j int) bool {
+		aCreatedAt := upMembers[i].CreatedAt.UnixNano()
+		jCreatedAt := upMembers[j].CreatedAt.UnixNano()
 		if aCreatedAt == jCreatedAt {
-			return m.members[i].ActorRef.String() < m.members[j].ActorRef.String()
+			return upMembers[i].ActorRef.String() < upMembers[j].ActorRef.String()
 		}
 		return aCreatedAt < jCreatedAt
 	})
 
-	return m.members[0].ID()
+	return upMembers[0].ID()
 }
 
 // Decode 从 reader 反序列化成员列表，实现 MessageCodec。
@@ -124,10 +133,17 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 	// 检查 peers 是否种子节点，如果不包含，需要将种子节点加入 peers，并且作为优先联络的节点，避免集群分裂
 	var out = make([]vivid.ActorRef, 0, len(m.members))
 	var peerSeeds = make(map[string]struct{})
+
 	for _, member := range m.members {
+		// 排除本地节点
 		if member.ActorRef.Equals(local.ActorRef) {
 			continue
 		}
+
+		// // 排除REMOVED状态节点
+		// if member.Status == endpoint.StatusRemoved {
+		// 	continue
+		// }
 
 		// 如果成员是种子节点，并且不是本地节点，则加入 peerSeeds
 		if slices.ContainsFunc(seeds, func(seed vivid.ActorRef) bool { return seed.Equals(member.ActorRef) }) && !member.ActorRef.Equals(local.ActorRef) {
@@ -137,8 +153,8 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 		switch member.Status {
 		case endpoint.StatusJoining, endpoint.StatusRemoved:
 		default:
+			// m.logger.Debug("seen member", log.String("ref", member.ActorRef.String()), log.String("status", member.Status.String()))
 			out = append(out, member.ActorRef)
-			m.logger.Debug("seen member", log.String("ref", member.ActorRef.String()), log.String("status", member.Status.String()))
 		}
 	}
 
@@ -156,7 +172,7 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 				continue
 			}
 			notInPeerSeeds = append(notInPeerSeeds, seed)
-			m.logger.Debug("not in peer seeds", log.String("ref", seed.String()), log.String("status", m.Get(seed.String()).Status.String()))
+			// m.logger.Debug("not in peer seeds", log.String("ref", seed.String()), log.String("status", m.Get(seed.String()).Status.String()))
 		}
 	}
 
@@ -173,22 +189,29 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 	return out
 }
 
-// Merge 将 other 的成员合并到本列表（同 ID 以 other 为准）；调用方应保证仅在本地版本向量早于对方时调用，以保持因果一致。
+// Merge 将 other 的成员合并到本列表，只更新状态发生变化的成员
 func (m *MemberList) Merge(other *MemberList) {
 	if other == nil {
 		return
 	}
 
-	for _, member := range other.List() {
-		localMember := m.Get(member.ID())
+	for _, remoteMember := range other.List() {
+		localMember := m.Get(remoteMember.ID())
 		if localMember != nil {
-			if localMember.Status != member.Status {
-				m.logger.Debug("member status changed", log.String("ref", member.ActorRef.String()), log.String("before", localMember.Status.String()), log.String("current", member.Status.String()))
+			// 只在实际状态不同时才更新
+			if localMember.Status != remoteMember.Status {
+				m.logger.Debug("member status changed in merge",
+					log.String("ref", remoteMember.ActorRef.String()),
+					log.String("before", localMember.Status.String()),
+					log.String("current", remoteMember.Status.String()))
+				localMember.Status = remoteMember.Status
 			}
-			localMember.Status = member.Status
+			// 可以在这里合并其他字段，比如LastSeen
 		} else {
-			m.logger.Debug("member added", log.String("ref", member.ActorRef.String()), log.String("status", member.Status.String()))
-			m.members = append(m.members, member)
+			m.logger.Debug("member added in merge",
+				log.String("ref", remoteMember.ActorRef.String()),
+				log.String("status", remoteMember.Status.String()))
+			m.members = append(m.members, remoteMember)
 		}
 	}
 }

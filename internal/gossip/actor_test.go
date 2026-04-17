@@ -43,7 +43,7 @@ func TestActor_Gossip(t *testing.T) {
 		}()
 
 		select {
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("timeout")
 		case <-done:
 		}

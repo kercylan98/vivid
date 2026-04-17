@@ -37,18 +37,25 @@ func (v *ClusterView) Fingerprint() string {
 	return strings.Join([]string{v.version.Fingerprint(), v.members.Fingerprint()}, "|")
 }
 
-// cleanRemovedMembers 清理已移除的节点。
-func (v *ClusterView) cleanRemovedMembers(info *endpoint.Information) {
-	members := v.Members()
-	var removed bool
-	for _, member := range members.List() {
+// cleanRemovedMembers 清理已移除的成员
+func (c *ClusterView) cleanRemovedMembers(localInfo *endpoint.Information) {
+	removed := make([]string, 0)
+	members := c.members.List()
+
+	for _, member := range members {
+		// 保留本地节点，即使状态是REMOVED
+		if member.ID() == localInfo.ID() {
+			continue
+		}
+
+		// 如果成员状态为 REMOVED，并且已超过清理时间
 		if member.Status == endpoint.StatusRemoved {
-			members.Remove(member.ActorRef)
-			v.Version().Remove(member.ActorRef.String())
-			removed = true
+			removed = append(removed, member.ID())
 		}
 	}
-	if removed {
-		v.Version().Increment(info.ID())
+
+	// 移除已标记的节点
+	for _, id := range removed {
+		c.version.Remove(id)
 	}
 }

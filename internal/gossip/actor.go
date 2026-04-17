@@ -188,11 +188,18 @@ func (a *Actor) onUp(ctx vivid.ActorContext) {
 		ctx.Failed(vivid.ErrorGossipScheduleFailed.With(err).WithMessage("failed to schedule spread gossip"))
 	}
 }
+
 func (a *Actor) onConverged(ctx vivid.ActorContext) {
 	a.view.cleanRemovedMembers(a.info)
 
-	// 计算新的协调者节点 ID
-	a.coordinatorNodeID = a.view.Members().GetCoordinatorNodeID()
+	// 计算新的协调者
+	newCoordinator := a.view.Members().GetCoordinatorNodeID()
+
+	// 记录协调者变化
+	if newCoordinator != a.coordinatorNodeID {
+		ctx.Logger().Info("coordinator changed", log.String("old", a.coordinatorNodeID), log.String("new", newCoordinator))
+		a.coordinatorNodeID = newCoordinator
+	}
 
 	ctx.Logger().Debug("cluster converged",
 		log.String("coordinator", a.coordinatorNodeID),
@@ -222,26 +229,65 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 		return
 	}
 
-	id := ping.Info.ID()
-	if ping.Version.Get(id) >= a.view.Version().Get(id) {
+	senderID := ping.Info.ID()
+	localVersion := a.view.Version()
+	remoteVersion := ping.Version
+
+	// 先处理发送方节点自身信息
+	senderLocalVer := localVersion.Get(senderID)
+	senderRemoteVer := remoteVersion.Get(senderID)
+	if senderRemoteVer >= senderLocalVer {
 		isNew := a.view.Members().Upsert(ping.Info)
-		a.view.Version().Merge(ping.Version)
+		// 只更新发送方节点的版本
+		if senderRemoteVer > senderLocalVer {
+			a.view.Version().Increment(senderID)
+		}
 		if isNew {
-			// 如果对方是新节点，则发送 SpreadGossip 消息，确保新节点能够快速加入集群
+			// 如果对方是新节点，则发送 SpreadGossip 消息
 			ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeDiscoverNewNode))
 		}
 	}
 
-	// 如果对方版本更新，则合并其成员与版本
-	if a.view.Version().IsBefore(ping.Version) {
-		a.view.Members().Merge(ping.MemberList)
-		a.view.Version().Merge(ping.Version)
+	// 按节点比较版本，决定是否合并
+	for _, remoteMember := range ping.MemberList.List() {
+		nodeID := remoteMember.ID()
+
+		// 跳过发送方节点，已经处理过了
+		if nodeID == senderID {
+			continue
+		}
+
+		localMember := a.view.Members().Get(nodeID)
+		localVer := localVersion.Get(nodeID)
+		remoteVer := remoteVersion.Get(nodeID)
+
+		// 只接受版本更高的更新
+		if remoteVer > localVer {
+			// 如果本地有这个成员，记录状态变更
+			if localMember != nil && localMember.Status != remoteMember.Status {
+				ctx.Logger().Debug("member status changed by version",
+					log.String("ref", remoteMember.ActorRef.String()),
+					log.String("before", localMember.Status.String()),
+					log.String("current", remoteMember.Status.String()),
+					log.Uint64("localVersion", localVer),
+					log.Uint64("remoteVersion", remoteVer))
+			}
+			a.view.Members().Upsert(remoteMember)
+		} else if remoteVer == localVer && localMember != nil {
+			// 版本相同，但状态可能不同，需要解决冲突
+			a.resolveConflict(localMember, remoteMember, nodeID, ctx)
+		}
+		// 如果远程版本更低，忽略
 	}
-	// 合并后写回本节点信息，避免被对方视图中本节点的旧状态（如 JOINING）覆盖已迁移的 UP
+
+	// 合并版本向量（取最大值）并写回本节点信息
+	a.view.Version().Merge(ping.Version)
 	a.view.Members().Upsert(a.info)
+
+	// 检测收敛
 	maybeEmitConverged(ctx, a)
 
-	ctx.Logger().Debug("received ping", log.String("sender", ctx.Sender().GetAddress()), log.String("gossip_type", ping.GossipType))
+	// ctx.Logger().Debug("received ping", log.String("sender", ctx.Sender().GetAddress()), log.String("gossip_type", ping.GossipType))
 
 	// 避免远程发送序列化过程中被修改
 	pong := a.preparePong(ping.GossipType)
@@ -250,15 +296,94 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 
 // onPong 处理 Ask 得到的 Pong：若对方版本更新则合并其成员与版本；若本节点当前为 Joining 则发 EventJoined 迁到 Up。
 func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
-	if a.view.Version().IsBefore(pong.Version) {
-		a.view.Members().Merge(pong.MemberList)
-		a.view.Version().Merge(pong.Version)
+	senderID := pong.Info.ID()
+	localVersion := a.view.Version()
+	remoteVersion := pong.Version
+
+	// 先处理发送方节点自身信息
+	senderLocalVer := localVersion.Get(senderID)
+	senderRemoteVer := remoteVersion.Get(senderID)
+	if senderRemoteVer >= senderLocalVer {
+		a.view.Members().Upsert(pong.Info)
+		if senderRemoteVer > senderLocalVer {
+			a.view.Version().Increment(senderID)
+		}
 	}
-	// 合并后写回本节点信息，避免被对方视图中本节点的旧状态（如 JOINING）覆盖已迁移的 UP
+
+	// 按节点比较版本，决定是否合并
+	for _, remoteMember := range pong.MemberList.List() {
+		nodeID := remoteMember.ID()
+
+		// 跳过发送方节点，已经处理过了
+		if nodeID == senderID {
+			continue
+		}
+
+		localMember := a.view.Members().Get(nodeID)
+		localVer := localVersion.Get(nodeID)
+		remoteVer := remoteVersion.Get(nodeID)
+
+		// 只接受版本更高的更新
+		if remoteVer > localVer {
+			// 如果本地有这个成员，记录状态变更
+			if localMember != nil && localMember.Status != remoteMember.Status {
+				ctx.Logger().Debug("member status changed by version",
+					log.String("ref", remoteMember.ActorRef.String()),
+					log.String("before", localMember.Status.String()),
+					log.String("current", remoteMember.Status.String()),
+					log.Uint64("localVersion", localVer),
+					log.Uint64("remoteVersion", remoteVer))
+			}
+			a.view.Members().Upsert(remoteMember)
+		} else if remoteVer == localVer && localMember != nil {
+			// 版本相同，但状态可能不同，需要解决冲突
+			a.resolveConflict(localMember, remoteMember, nodeID, ctx)
+		}
+		// 如果远程版本更低，忽略
+	}
+
+	// 合并版本向量（取最大值）并写回本节点信息
+	a.view.Version().Merge(pong.Version)
 	a.view.Members().Upsert(a.info)
+
+	// 检测收敛
 	maybeEmitConverged(ctx, a)
 
-	ctx.Logger().Debug("received pong", log.String("sender", ctx.Sender().GetAddress()), log.String("gossip_type", pong.GossipType))
+	// ctx.Logger().Debug("received pong", log.String("sender", ctx.Sender().GetAddress()), log.String("gossip_type", pong.GossipType))
+}
+
+// resolveConflict 解决版本冲突
+func (a *Actor) resolveConflict(local, remote *endpoint.Information, nodeID string, ctx vivid.ActorContext) {
+	// 版本相同时，使用确定性规则解决冲突
+	// 规则1: 优先使用更稳定的状态（UP > LEAVING > JOINING > REMOVED）
+	priority := map[endpoint.Status]int{
+		endpoint.StatusUp:      4,
+		endpoint.StatusLeaving: 3,
+		endpoint.StatusJoining: 2,
+		endpoint.StatusExiting: 1,
+		endpoint.StatusRemoved: 0,
+	}
+
+	localPriority := priority[local.Status]
+	remotePriority := priority[remote.Status]
+
+	if remotePriority > localPriority {
+		ctx.Logger().Debug("resolved conflict by status priority",
+			log.String("node", nodeID),
+			log.String("localStatus", local.Status.String()),
+			log.String("remoteStatus", remote.Status.String()))
+		a.view.Members().Upsert(remote)
+	} else if remotePriority == localPriority && remote.Status != local.Status {
+		// 状态相同但其他字段不同，使用节点ID字典序解决冲突
+		if remote.ID() > local.ID() {
+			ctx.Logger().Debug("resolved conflict by node ID",
+				log.String("node", nodeID),
+				log.String("localID", local.ID()),
+				log.String("remoteID", remote.ID()))
+			a.view.Members().Upsert(remote)
+		}
+	}
+	// 否则保留本地
 }
 
 func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
