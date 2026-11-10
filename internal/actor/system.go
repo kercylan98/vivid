@@ -399,7 +399,7 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 
 	// 尝试优先从 Ref 的 cache 字段中读取 Mailbox 指针，如果存在则直接返回，减少 map 查找的开销。
 	if ptr := ref.cache.Load(); ptr != nil {
-		cached := *ptr
+		cached := ptr.mailbox
 		cacheRemote := isRemoteMailbox(cached)
 		if cacheRemote == isRemoteRef {
 			return cached
@@ -424,14 +424,14 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 		switch v := value.(type) {
 		case *Context:
 			m := v.Mailbox()
-			ref.cache.Store(&m)
+			ref.cacheMailbox(m)
 			return m
 		case *future.Future[vivid.Message]:
 			return v
 		}
 	}
 	m := s.Mailbox()
-	ref.cache.Store(&m)
+	ref.cacheMailbox(m)
 	return m
 }
 

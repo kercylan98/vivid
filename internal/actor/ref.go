@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/utils"
 )
@@ -55,8 +56,18 @@ func ParseRef(value string) (*Ref, error) {
 type Ref struct {
 	address     string
 	path        string
-	cache       atomic.Pointer[vivid.Mailbox]
+	cache       atomic.Pointer[refMailbox]
 	stringCache atomic.Pointer[string]
+}
+
+type refMailbox struct {
+	mailbox vivid.Mailbox             // 完整邮箱接口，用于统一路由
+	local   *mailbox.UnboundedMailbox // 本地默认邮箱，避免热路径重复类型断言
+}
+
+func (r *Ref) cacheMailbox(m vivid.Mailbox) {
+	local, _ := m.(*mailbox.UnboundedMailbox)
+	r.cache.Store(&refMailbox{mailbox: m, local: local})
 }
 
 func (r *Ref) GetPath() string {

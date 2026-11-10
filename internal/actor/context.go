@@ -232,6 +232,11 @@ func (c *Context) Reply(message vivid.Message) {
 }
 
 func (c *Context) TellSelf(message vivid.Message) {
+	if m, ok := c.mailbox.(*mailbox.UnboundedMailbox); ok {
+		ref := c.ref.(*Ref)
+		mailbox.EnqueueMessage(m, ref, ref, message)
+		return
+	}
 	c.mailbox.Enqueue(mailbox.NewEnvelop(false, c.ref, c.ref, message))
 }
 
@@ -239,6 +244,18 @@ func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
 	if recipient == nil {
 		c.system.mailbox.Enqueue(mailbox.NewEnvelop(false, c.ref, recipient, message))
 		return
+	}
+	// 已缓存的本地默认邮箱直接投递，远程及其他邮箱继续使用统一路由
+	sender := c.ref.(*Ref)
+	if ref, ok := recipient.(*Ref); ok && ref.address == sender.address {
+		if cached := ref.cache.Load(); cached != nil {
+			if m := cached.local; m != nil {
+				if _, ok := message.(*vivid.OnKill); !ok {
+					mailbox.EnqueueMessage(m, sender, ref, message)
+					return
+				}
+			}
+		}
 	}
 	if recipient.Equals(c.ref) {
 		c.TellSelf(message)
@@ -267,8 +284,19 @@ func (c *Context) enqueueToMailbox(recipient vivid.ActorRef, envelop vivid.Envel
 
 func (c *Context) tellWithSender(system bool, sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message) (err error) {
 	if !recipient.IsVirtual() {
-		envelop := mailbox.NewEnvelop(system, sender, recipient, message)
-		c.enqueueToMailbox(recipient, envelop)
+		if _, ok := message.(*vivid.OnKill); ok {
+			c.system.markActorAsClosing(recipient)
+		}
+		receiverMailbox := c.system.findMailbox(recipient.(*Ref))
+		if !system {
+			if m, ok := receiverMailbox.(*mailbox.UnboundedMailbox); ok {
+				if senderRef, ok := sender.(*Ref); ok {
+					mailbox.EnqueueMessage(m, senderRef, recipient.(*Ref), message)
+					return
+				}
+			}
+		}
+		receiverMailbox.Enqueue(mailbox.NewEnvelop(system, sender, recipient, message))
 	} else {
 		err = c.system.virtualCoordinator.TellVirtual(sender, recipient, message)
 	}
