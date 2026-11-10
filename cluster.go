@@ -44,7 +44,7 @@ func WithActorSystemClusterOptions(opts ...ActorSystemClusterOption) ActorSystem
 			options = NewActorSystemClusterOptions()
 		}
 		for _, opt := range opts {
-			opt(o.ClusterOptions)
+			opt(options)
 		}
 		o.ClusterOptions = options
 	}
