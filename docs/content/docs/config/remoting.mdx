@@ -40,6 +40,10 @@ description: Remoting 启用、消息注册、Codec 与位置透明
 
 Remoting 使用 TCP 通信。
 
+双方同时发送首条消息时，框架在握手确认前完成连接选择，已建立的健康连接会继续复用。`ves.RemotingInboundConnectionEstablishedEvent` 在入站会话可用后发布；它表示传输连接建立，不能代替集群加入结果或业务就绪确认。
+
+`Tell` 返回、写入 TCP 或连接建立均不表示远端 Actor 已处理消息。连接中断时仍可能丢失消息；重要操作应使用业务应答，并在重试时处理重复请求。`Ask` 超时也不能证明对端没有执行操作。
+
 ## 消息编解码
 
 框架内部消息由系统自动注册。业务消息可按类型注册，或交给外部 Codec；两种方式可以同时使用，**已注册类型优先，未注册类型才交给外部 Codec**。
@@ -151,12 +155,11 @@ system := bootstrap.NewActorSystem(
 
 ## 远程连接重试与死信
 
-向远程节点发送消息时，若连接不可用，框架会按 **ActorSystemRemotingOptions** 中的重试策略进行有限次重试（指数退避）。默认通过 **NewActorSystemRemotingOptions()** 提供：重试次数 10、初始延迟 500ms、最大延迟 10s、退避因子 2.5、启用抖动。可通过 **WithActorSystemRemotingOption** 链式配置单项或使用 **WithActorSystemRemotingReconnect** 批量配置：
+向远程节点发送消息时，若连接不可用，框架会按 **ActorSystemRemotingOptions** 中的重试策略进行有限次重连（指数退避）。默认通过 **NewActorSystemRemotingOptions()** 提供：重试次数 10、初始延迟 500ms、最大延迟 10s、退避因子 2.5。当前重连不应用随机抖动。可通过 **WithActorSystemRemotingOption** 链式配置单项或使用 **WithActorSystemRemotingReconnect** 批量配置：
 
-- **ReconnectLimit**：重试次数，&lt;1 则不重试（0 表示不重试）。对应 **WithActorSystemRemotingReconnectLimit**。
+- **ReconnectLimit**：正值指定重试次数；当前零值会回退为 5 次，不能用零值禁用重试。对应 **WithActorSystemRemotingReconnectLimit**。
 - **ReconnectInitialDelay** / **ReconnectMaxDelay**：初始与最大延迟。**WithActorSystemRemotingReconnectInitialDelay**、**WithActorSystemRemotingReconnectMaxDelay**。
 - **ReconnectFactor**：退避因子（如 2.0 表示指数退避）。**WithActorSystemRemotingReconnectFactor**。
-- **ReconnectJitter**：是否启用抖动，缓解重连雷群。**WithActorSystemRemotingReconnectJitter**。
 
 连接失败时可订阅 **`ves.RemotingConnectionFailedEvent`**，通过 `Address` 和 `Error` 查看原因。重试耗尽后，待发送消息转为死信，可通过 **`ves.DeathLetterEvent`** 监控，参见 [死信](/docs/basics/death-letter)。
 

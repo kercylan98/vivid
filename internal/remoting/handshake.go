@@ -14,9 +14,13 @@ type Handshake struct {
 	AdvertiseAddr string
 }
 
-func (h *Handshake) Send(conn net.Conn) error {
-	_, err := NewHandshakeFrame(h.AdvertiseAddr).WriteTo(conn)
-	return err
+func (h *Handshake) Send(conn net.Conn) (err error) {
+	if err = conn.SetWriteDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, conn.SetWriteDeadline(time.Time{})) }()
+	_, err = NewHandshakeFrame(h.AdvertiseAddr).WriteTo(conn)
+	return
 }
 
 func (h *Handshake) Wait(conn net.Conn) (err error) {

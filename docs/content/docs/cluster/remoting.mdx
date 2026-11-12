@@ -1,31 +1,12 @@
 ---
 title: 与 Remoting 的关系
-description: 依赖、地址与编解码
+description: 集群通信依赖、地址与就绪边界
 ---
 
-集群依赖 **Remoting** 进行节点间通信，二者关系如下。
+集群依赖 Remoting 交换成员视图。在创建系统时，通过 `WithActorSystemRemoting` 启用远程通信，将 `WithActorSystemClusterOptions` 直接传给 `bootstrap.NewActorSystem` 启用集群，见[快速开始](/docs/cluster/quick-start)。
 
-## 依赖关系
+种子地址必须与目标节点的广告地址一致，使用其他节点可访问的 `host:port`。监听所有网卡或使用端口映射时，显式配置广告地址；不要用 `0.0.0.0` 作为种子。
 
-- 集群**必须**在启用 Remoting 的前提下才能工作。
-- 通过 **WithActorSystemRemotingOptions** 传入 **WithActorSystemRemotingClusterOption** 或 **WithActorSystemRemotingClusterOptions** 启用集群。
-- 集群使用 Remoting 的地址与编解码进行成员发现、Gossip、Join、Leave 等通信。
+集群协议消息由框架注册编解码，业务无需额外注册。跨节点业务消息仍需配置消息注册或外部 Codec，详见[远程通讯](/docs/config/remoting)。
 
-## 地址一致性
-
-- **advertiseAddr** 需与种子/成员使用的地址一致（host:port）。
-- 其他节点通过 advertiseAddr 连接本节点；种子列表中的地址应与其他节点配置的 advertiseAddr 对应。
-
-## 编解码
-
-- 集群协议消息通过 Remoting 的 Codec 或 RegisterCustomMessage 序列化与反序列化。
-- 业务无需单独为集群消息注册；框架已注册集群协议所需的消息类型（含单例代理跨节点转发时的承载消息：发送方与业务消息的序列化）。
-
-## 成员发现
-
-- 成员发现依赖种子与周期性 Gossip（ClusterInternalMessageForGossip）；GetViewRequest 用于拉取视图（如 quorum 恢复）。
-- 可通过 **SeedsResolver** 动态解析种子（如 DNS、K8s），与静态 Seeds/SeedsByDC 配合使用。
-
-## 配置入口
-
-Remoting 与集群的配置均通过 [Actor System 配置](/docs/config/actor-system-config) 完成；详见 [远程通讯](/docs/config/remoting) 与 [集群概览](/docs/cluster/index)。
+Remoting 连接建立只表示传输会话可用。`Start()` 启动运行时，`ClusterReady()` 提供初始加入结果；业务处理完成仍需自己的应答协议。等待方式见[启动与加入就绪](/docs/cluster/runtime/readiness)。

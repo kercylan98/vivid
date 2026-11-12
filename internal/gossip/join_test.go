@@ -79,7 +79,8 @@ func TestActor_GossipJoinMessageLoss(t *testing.T) {
 			))
 			_, err = joiner.ActorOf(member)
 			require.NoError(t, err)
-			result, err := member.Readiness().Wait(joiner, time.Second).Result()
+			// 调用等待与种子预算分开，避免繁忙环境下先收到调用方超时而掩盖加入结果。
+			result, err := member.Readiness().Wait(joiner, 3*time.Second).Result()
 			if name == "all_requests" {
 				require.ErrorIs(t, err, vivid.ErrorClusterJoinFailed, "重发不能突破种子预算或无限重试")
 				require.ErrorIs(t, err, vivid.ErrorFutureTimeout)

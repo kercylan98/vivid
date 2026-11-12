@@ -7,7 +7,6 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
-	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 var (
@@ -252,10 +251,6 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 		ctx.Logger().Error("failed to ensure endpoint", log.Any("error", spawnErr))
 		return
 	}
-	ctx.EventStream().Publish(ctx, ves.RemotingInboundConnectionEstablishedEvent{
-		PeerAddress:  message.peerAddr,
-		LocalAddress: localAddr,
-	})
 	ctx.Tell(endpointRef, endpointAttachSession{session: session})
 }
 
@@ -271,12 +266,6 @@ func (a *acceptor) doHandshake(conn net.Conn) (string, error) {
 	if peerAddr == "" {
 		peerAddr = conn.RemoteAddr().String()
 	}
-	response := &Handshake{AdvertiseAddr: a.advertiseAddr}
-	if err := response.Send(conn); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
-			return "", errors.Join(err, closeErr)
-		}
-		return "", err
-	}
+	// 由 Endpoint 完成连接仲裁后再回复握手，避免对端提前发送的数据随连接替换丢失。
 	return peerAddr, nil
 }
