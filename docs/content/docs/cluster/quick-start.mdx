@@ -74,4 +74,4 @@ system := bootstrap.NewActorSystem(
 
 首次调用 `WithActorSystemClusterOptions(opts...)` 会初始化默认配置，再应用子选项；后续调用继续修改已有配置。`WithActorSystemClusterSeeds` 追加种子列表，其余内置子选项覆盖对应字段。不传子选项也会启用默认集群配置。
 
-当前公开接口未提供 `ctx.Cluster()` 或 `system.Cluster()`，也没有集群名、Quorum、加入认证或集群单例配置。可用选项及默认值见[配置选项](/docs/cluster/config/options)。
+通过 `system.ClusterReady()` 等待初始加入结果，通过 `system.ClusterSnapshot()` 查询本地成员。可用选项及默认值见[配置选项](/docs/cluster/config/options)，TLS/mTLS 接入见[连接认证](/docs/cluster/auth/join-auth)。

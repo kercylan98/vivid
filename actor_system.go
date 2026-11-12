@@ -56,7 +56,7 @@ type ActorSystem interface {
 	// 仅做格式解析，用于配置、服务发现中拿到的字符串需要发消息时（本地或远程均可）。
 	ParseRef(actorRef string) (ActorRef, error)
 
-	// CreateRef 根据地址与路径构造 ActorRef，不要求目标存在；用于本地或远程引用（如集群单例、远程节点）。
+	// CreateRef 根据地址与路径构造 ActorRef，不要求目标存在；用于本地或远程 Actor 引用。
 	CreateRef(address string, path string) (ActorRef, error)
 
 	// ActorOf 该方法的效果与 ActorContext.ActorOf 相同，但是它是并发安全的。

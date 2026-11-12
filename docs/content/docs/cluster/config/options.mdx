@@ -39,7 +39,7 @@ system := bootstrap.NewActorSystem(
 
 ## 当前能力范围
 
-当前配置不包含集群名、多数据中心、Quorum、加入认证、白名单或集群单例等选项。集群栏目内涉及这些接口的旧页面尚未与实现同步，不能作为当前版本的接入依据。
+当前集群配置不包含集群名、数据中心分组、Quorum、加入令牌、白名单或集群单例等选项。连接认证通过 Remoting 的 TLS/mTLS 配置，见[连接认证](/docs/cluster/auth/join-auth)。
 
 无种子时独立启动；配置种子后默认必须加入成功，全部失败时保持 Joining 并返回初始加入失败结果。主动建立新组需使用 Bootstrap，结果通过 `system.ClusterReady()` 等待，见[启动与加入就绪](/docs/cluster/runtime/readiness)。
 

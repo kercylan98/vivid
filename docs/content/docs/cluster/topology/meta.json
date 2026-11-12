@@ -1,4 +1,4 @@
 {
-  "title": "拓扑与法定人数",
-  "pages": ["multi-datacenter", "quorum"]
+  "title": "跨机房部署",
+  "pages": ["multi-datacenter"]
 }

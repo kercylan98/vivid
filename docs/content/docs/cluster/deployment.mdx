@@ -1,208 +1,55 @@
 ---
 title: 集群部署
-description: 部署拓扑、加入与发现、Gossip、优雅退出流程与图示
+description: 节点地址、启动顺序、连接认证与分区恢复验证
 ---
 
-本文用图示说明集群的部署形态、节点加入与发现、Gossip 同步、故障检测与优雅退出，便于理解部署拓扑与运行时行为。
+集群通过 Remoting 交换成员视图。部署前需确定节点的可达地址、初始加入方式和连接认证；可运行示例见[快速开始](/docs/cluster/quick-start)。
 
-## 部署拓扑
+## 地址与网络
 
-集群有两种典型部署形态：单数据中心（单 DC）与多数据中心（多 DC）。种子（Seeds）用于首次发现，之后通过 Gossip 持续收敛视图。
+- 每个运行中的节点使用独立的广告地址，格式为 `host:port`。监听所有网卡或使用端口映射时，分别配置绑定地址和广告地址。
+- 种子填写目标节点的广告地址，不含 Actor 路径。`0.0.0.0`、`::` 不能作为其他节点的连接目标。
+- 节点发现彼此后可直接连接。网络策略须允许成员间通信，不能只开放到种子的连接。
+- 跨可信网络边界时配置 [TLS/mTLS](/docs/cluster/auth/join-auth)。种子列表用于发现，不是加入白名单。
 
-<Mermaid diagram={`flowchart TB
-  subgraph 单 DC 部署
-    S1[Seed A]
-    S2[Seed B]
-    N1[Node 1]
-    N2[Node 2]
-    N3[Node 3]
-    S1 --> N1
-    S1 --> N2
-    S2 --> N2
-    S2 --> N3
-    N1 <-->|Gossip| N2
-    N2 <-->|Gossip| N3
-    N1 <-->|Gossip| N3
-  end
-`} title="单数据中心：Seeds + Gossip" />
+## 启动与加入
 
-<Mermaid diagram={`flowchart TB
-  subgraph DC1["DC1"]
-    SA1[Seed A1]
-    SA2[Seed A2]
-    NA1[Node A1]
-    NA2[Node A2]
-    SA1 & SA2 --> NA1 & NA2
-    NA1 <-->|同 DC Gossip| NA2
-  end
-  subgraph DC2["DC2"]
-    SB1[Seed B1]
-    NB1[Node B1]
-    NB2[Node B2]
-    SB1 --> NB1 & NB2
-    NB1 <-->|同 DC Gossip| NB2
-  end
-  NA1 <-.->|跨 DC Gossip| NB1
-  NA2 <-.->|跨 DC Gossip| NB2
-`} title="多数据中心：每 DC 种子 + 同 DC/跨 DC Gossip" />
+先启动初始节点，再启动配置了种子的节点。无种子或显式配置 `WithActorSystemClusterBootstrap(true)` 时独立启动；其余节点默认必须收到有效加入响应。
 
-要点：
+<Mermaid diagram={`flowchart TD
+  Start[启动系统] --> Listen[Start 成功：本地监听已创建]
+  Listen --> Mode{无种子或显式 Bootstrap?}
+  Mode -->|是| Bootstrap[独立启动并进入 Up]
+  Mode -->|否| Join[尝试加入种子]
+  Join -->|有效响应| Up[加入完成并进入 Up]
+  Join -->|全部失败| Failed[保持 Joining，报告初始加入失败]
+  Bootstrap --> Ready[ClusterReady 返回初始结果]
+  Up --> Ready
+  Failed --> Ready
+`} title="运行时启动与初始加入" />
 
-- **Seeds**：节点启动时仅知 Seeds（或 SeedsByDC）；无种子或本节点在种子列表中时，该节点以**种子身份**自举（Bootstrap），不向他人发起 Join。
-- **advertiseAddr**：必须与 Seeds 中使用的地址一致，其他节点通过该地址连接本节点。
-- **多 DC**：使用 **WithClusterSeedsByDC** 按 DC 配置种子，加入时优先连本 DC 种子；跨 DC 故障检测与 Gossip 可单独配置超时与间隔（见 [多数据中心](/docs/cluster/topology/multi-datacenter)）。
+只配置自身种子不会自动自举。全部种子失败后不会自动重新尝试整轮加入，应检查地址、证书与启动顺序，停止后重新创建系统。等待方式与超时见[启动与加入就绪](/docs/cluster/runtime/readiness)。
 
-## 节点加入与发现流程
+## 持续观察
 
-节点启动后，NodeActor 在 **OnLaunch** 中决定是“自举为种子”还是“向种子发起 Join”。成功后合并视图并启动 Gossip 与故障检测。
+进入 Up 后，节点定期与抽样成员及配置的种子交换视图。使用 `ClusterSnapshot()` 查询本地成员，订阅 `ves.ClusterMembersChangedEvent` 观察后续变化，见[本地成员查询](/docs/cluster/runtime/context)与[成员事件](/docs/cluster/events/events)。
 
-<Mermaid diagram={`sequenceDiagram
-  participant N as 新节点 NodeActor
-  participant Seed as 种子节点 @cluster
-  participant View as ClusterView
+成员按每次启动的实例 ID 区分。同地址重启后会保留历史实例和退出记录，因此成员总数、Up 数量都不等于健康节点数。Gossip 传递完整成员视图，节点规模与历史记录增长会增加通信量；调大目标数或缩短周期也会增加网络和处理成本。
 
-  N->>N: OnLaunch: 取 Seeds
-  alt 无 Seeds 或 本节点在 Seeds 中
-    N->>N: 自举为种子
-    N->>View: 加入本节点并启动 Gossip / 故障检测
-  else 有 Seeds 且 本节点不在 Seeds 中
-    N->>Seed: Ask(host:port/@cluster, JoinRequest)
-    Seed->>Seed: 校验白名单、认证与 Quorum
-    Seed->>N: JoinResponse(View)
-    N->>N: 合并视图并加入本节点
-    N->>View: 启动 Gossip / 故障检测
-  end
-`} title="加入流程：自举为种子 或 向种子 Join" />
+## 分区与恢复验证
 
-<Mermaid diagram={`flowchart LR
-  A[OnLaunch] --> B{Seeds 为空?}
-  B -->|是| C[自举为种子]
-  B -->|否| D{本节点在 Seeds 中?}
-  D -->|是| C
-  D -->|否| E[向种子发起 Join]
-  E --> F{任一种子 Join 成功?}
-  F -->|是| G[合并视图并启动 Gossip / 故障检测]
-  F -->|否| H[指数退避后重试]
-  H --> E
-`} title="加入决策：是否自举为种子" />
+至少验证启动时种子不可达、已有连接中断，以及恢复后新发出的双向业务请求。分别检查：
 
-- Join 请求发往种子的 **`/@cluster`** 路径（即 NodeActor 的远程路径）。
-- 种子侧可配置 **JoinAllowAddresses / JoinAllowDCs**、**JoinSecret**（AuthToken）、**协议版本范围**；不满足则返回错误，新节点继续尝试其他种子或退避重试。
+| 层次 | 验证内容 |
+|------|----------|
+| 连接 | 广告地址可达，双方传输模式与证书信任一致 |
+| 成员 | 初始加入结果、本地成员视图及变更事件符合预期 |
+| 业务 | 新请求得到有效应答，超时重试有去重措施，数据恢复符合业务约束 |
 
-## Gossip 与视图同步
+网络分区不会自动将成员标记为 Removed，成员视图恢复也不代表业务数据恢复。跨机房的能力边界与验证建议见[多数据中心](/docs/cluster/topology/multi-datacenter)。
 
-成员视图通过**周期性 Gossip** 在节点间扩散；状态变更（如新成员加入、故障剔除）会**立即广播一轮**，不等到下一周期。
+## 正常停止
 
-<Mermaid diagram={`sequenceDiagram
-  participant A as 节点 A
-  participant B as 节点 B
-  participant VA as View A
-  participant VB as View B
+通过 `system.Stop()` 停止节点，集群随系统执行退出流程。`WithActorSystemClusterGracefulShutdownTimeout` 控制集群阶段的等待预算，系统停止预算也需覆盖业务收尾时间；检查 `Stop()` 的返回错误。
 
-  Note over A, B: 周期 Gossip 轮次
-  A->>A: 选择目标节点
-  A->>VA: 取视图快照
-  A->>B: GossipMessage(View)
-  B->>B: 合并视图（MergeFromWithOptions）
-  B->>VB: 若有变更则发布事件并可继续扩散
-`} title="Gossip 一轮：发送视图快照、接收方合并" />
-
-<Mermaid diagram={`flowchart TB
-  subgraph 本节点
-    V[ClusterView]
-    V --> Epoch["Epoch / Timestamp"]
-    V --> VV["VersionVector"]
-    V --> Members["Members (NodeState)"]
-  end
-  Merge["MergeFromWithOptions"] --> V
-  Merge -->|VersionConcurrent| Strategy["VersionConcurrentStrategy\n(TakeMax / PreferLocal / PreferRemote)"]
-  Merge -->|MaxClockSkew>0| Skew["拒绝过大时钟偏差的 Epoch/Timestamp"]
-`} title="视图合并：版本向量 + Epoch/Timestamp 策略" />
-
-- **同 DC**：由 **DiscoveryInterval** 驱动 **GossipTick**；**跨 DC** 若配置了 **CrossDCDiscoveryInterval** > 0，另有一轮 **GossipCrossDCTick**，目标仅限跨 DC 节点。
-- 合并时使用 **VersionVector** 比较因果顺序，**VersionConcurrent** 时按 **VersionConcurrentStrategy** 决定是否采纳对方的 Epoch/Timestamp；**MaxClockSkew** > 0 时可拒绝过大时钟偏差，避免错误时钟主导。
-
-## 故障检测与剔除
-
-故障检测在 **FailureDetectionTick** 中周期执行：根据 **LastSeen** 与超时判断 Suspect / Down，从视图中剔除并发布事件。
-
-<Mermaid diagram={`flowchart LR
-  subgraph 输入
-    View[ClusterView]
-    Now[当前时间]
-  end
-  View --> FD[执行故障检测]
-  Now --> FD
-  FD --> Suspect["置为 Suspect\n(可选 SuspectConfirmDuration)"]
-  FD --> Remove["从视图剔除"]
-  Suspect --> Publish[发布视图变更事件]
-  Remove --> Publish
-  Publish --> Quorum[重新计算 Quorum 并发布 Leader 事件]
-`} title="故障检测：超时 → Suspect → 剔除 → 事件" />
-
-- **FailureDetectionTimeout**：同 DC 成员超时未刷新 LastSeen 则先 Suspect（若配置了 **SuspectConfirmDuration**），再剔除。
-- **CrossDCFailureDetectionTimeout**：对跨 DC 成员单独超时；未配置时默认采用同 DC 超时的 2 倍，减少跨 DC 延迟导致的误判。
-
-## 优雅退出（Leave）
-
-业务调用 **Leave()** 后，NodeActor 收到 **LeaveRequest**，经 **LeaveCoordinator** 多轮广播“本节点离开”，进入 Exiting 并回复 **LeaveAck**，发布 **ClusterLeaveCompletedEvent** 使 Leave() 返回。
-
-<Mermaid diagram={`sequenceDiagram
-  participant App as 业务 / system.Cluster().Leave()
-  participant Watcher as LeaveWatcher
-  participant NA as NodeActor
-  participant Others as 其他节点 @cluster
-
-  App->>Watcher: 订阅 ClusterLeaveCompletedEvent
-  App->>NA: LeaveRequest
-  NA->>NA: 调度多轮广播
-  loop 每轮 LeaveBroadcastDelay
-    NA->>Others: GossipMessage(视图不含本节点)
-  end
-  NA->>NA: 进入 Exiting 并 Reply(LeaveAck)
-  NA->>Watcher: 发布 ClusterLeaveCompletedEvent
-  Watcher->>App: Leave() 返回
-`} title="优雅退出：多轮广播 → Exiting → LeaveAck → 事件" />
-
-<Mermaid diagram={`flowchart LR
-  L[LeaveRequest] --> Schedule[调度 LeaveBroadcastDelay]
-  Schedule --> Round[第 1..N 轮广播]
-  Round --> Broadcast[向当前视图成员发送不含本节点的视图]
-  Broadcast --> Next{还有下一轮?}
-  Next -->|是| Schedule
-  Next -->|否| Exiting[进入 Exiting 状态]
-  Exiting --> Ack[回复 LeaveAck]
-  Exiting --> Event[发布 ClusterLeaveCompletedEvent]
-`} title="Leave 多轮广播与退出" />
-
-- **LeaveBroadcastRounds** > 1 时多轮广播，提高多 DC 场景下各 DC 收敛概率；**LeaveBroadcastDelay** 为每轮间隔，多 DC 建议 1–2s。
-
-## 节点生命周期（状态流转）
-
-从启动到退出的状态流转见 [节点生命周期](/docs/cluster/events/lifecycle)；此处用状态图概括。
-
-<Mermaid diagram={`stateDiagram-v2
-  direction LR
-  [*] --> Starting
-  Starting --> Discovering: OnLaunch
-  Discovering --> Joining: 向种子发 JoinRequest
-  Joining --> Syncing: 收到 JoinResponse, 合并视图
-  Syncing --> Active: 启动 Gossip + 故障检测
-  Active --> Active: Gossip / 故障检测 / 处理 Join·GetView
-  Active --> Leaving: LeaveRequest
-  Leaving --> Exiting: 多轮广播完成
-  Exiting --> [*]: 发布 LeaveCompleted
-  Joining --> Joining: 失败则指数退避重试
-  Active --> Discovering: 失多数派时执行 Quorum 恢复
-`} title="节点生命周期状态" />
-
-## 架构要点摘要
-
-| 项目 | 说明 |
-|------|------|
-| **NodeActor 名称与路径** | 框架创建时使用名称 `@cluster`，节点间通信路径为 `/@cluster`。 |
-| **种子与自举** | 无 Seeds 或本节点在 Seeds 中时，节点以种子身份自举；否则向 `seed_host:port/@cluster` 发起 Join。 |
-| **Gossip 与视图拉取** | 成员视图通过 Gossip 消息在节点间同步；GetViewRequest 用于按需拉取当前视图（如多数派恢复）。 |
-| **多 DC 配置** | SeedsByDC、CrossDCFailureDetectionTimeout、CrossDCDiscoveryInterval、MaxDiscoveryTargetsPerTickCrossDC 等见 [多数据中心](/docs/cluster/topology/multi-datacenter) 与 [配置选项](/docs/cluster/config/options)。 |
-
-更多配置与行为说明见 [配置选项](/docs/cluster/config/options)、[与 Remoting 的关系](/docs/cluster/remoting) 及 [多数据中心](/docs/cluster/topology/multi-datacenter)。
+退出不保证所有远端已确认，也不保证待发送业务消息已交付。强制终止可能留下 Up 的旧实例记录，详见[节点生命周期](/docs/cluster/events/lifecycle)。
