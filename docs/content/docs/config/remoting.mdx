@@ -48,6 +48,67 @@ Remoting 使用 TCP 通信。启用后，`Start()` 成功返回表示本地监�
 
 入站握手请求并行读取并限制并发，单个静默对端不会阻塞后续连接；达到并发上限时暂停接入，释放名额后继续。停止 Remoting 时会取消未完成的拨号并关闭待握手连接；已建立连接的关闭通知只做限时尝试，不保证待发送消息已交付。
 
+## TLS 与双向认证
+
+通过 `WithActorSystemRemotingTLSConfig` 统一配置入站和出站 TLS。下面使用节点证书和受信任 CA 启用 mTLS：
+
+```go
+import (
+    "crypto/tls"
+    "crypto/x509"
+    "fmt"
+    "os"
+
+    "github.com/kercylan98/vivid"
+    "github.com/kercylan98/vivid/pkg/bootstrap"
+)
+
+func nodeTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
+    certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+    if err != nil {
+        return nil, err
+    }
+    pem, err := os.ReadFile(caFile)
+    if err != nil {
+        return nil, err
+    }
+    roots := x509.NewCertPool()
+    if !roots.AppendCertsFromPEM(pem) {
+        return nil, fmt.Errorf("CA 文件不包含有效证书")
+    }
+    return &tls.Config{
+        Certificates: []tls.Certificate{certificate},
+        RootCAs:      roots,
+        ClientCAs:    roots,
+        ClientAuth:   tls.RequireAndVerifyClientCert,
+        MinVersion:   tls.VersionTLS13,
+    }, nil
+}
+```
+
+加载成功后，在创建系统时传入配置，并检查 `Start()` 的返回错误：
+
+```go
+config, err := nodeTLSConfig("node.crt", "node.key", "ca.crt")
+if err != nil {
+    return err
+}
+system := bootstrap.NewActorSystem(
+    vivid.WithActorSystemRemoting("0.0.0.0:8080", "node1.example.com:8080"),
+    vivid.WithActorSystemRemotingOption(
+        vivid.WithActorSystemRemotingTLSConfig(config),
+    ),
+)
+```
+
+- `Certificates` 提供本节点身份。每个节点同时作为服务端和客户端，mTLS 证书需支持 `ServerAuth` 和 `ClientAuth`，SAN 需包含其他节点访问它时使用的 DNS 名称或 IP。
+- `RootCAs` 用于出站服务端证书校验；为空时使用系统根证书。`ServerName` 为空时从每次连接的目标地址推导；显式设置后会用于所有出站目标的名称校验。
+- `ClientCAs` 和 `ClientAuth` 控制入站客户端认证。仅需服务端认证时，可省略这两项；启用 mTLS 时，所有节点需信任对方的证书链。
+
+未配置 `TLSConfig` 时使用明文 TCP；启用后不会在 TLS 失败时降级到明文。已建立的连接继续复用，但加密仍有计算和流量开销。启动后不要修改配置及其引用的证书、证书池。
+
+`Start()` 成功只表示本地监听已创建。出站证书或握手失败通过 `ves.RemotingConnectionFailedEvent` 观察，并遵循连接重试策略。mTLS 验证证书身份，不自动绑定对方声明的 Remoting 地址，也不提供业务权限控制或防脑裂能力。
+
 ## 消息编解码
 
 框架内部消息由系统自动注册。业务消息可按类型注册，或交给外部 Codec；两种方式可以同时使用，**已注册类型优先，未注册类型才交给外部 Codec**。
@@ -167,6 +228,8 @@ system := bootstrap.NewActorSystem(
 - **ReconnectJitter**：启用后，在当前退避间隔的 50% 到 100% 之间随机选择延迟。对应 **WithActorSystemRemotingReconnectJitter**。
 
 退避期间的新消息进入待发送队列，不会提前触发拨号。重试次数限制针对当前 Endpoint 的连接过程；后续新消息仍可重新发起连接，不是对某个地址永久禁用。
+
+双方同时首次建连时，关闭重复连接可能触发一次连接失败与重试；将 `ReconnectLimit` 设为 0 时，该场景的待发送消息可能转为死信。
 
 连接失败时可订阅 **`ves.RemotingConnectionFailedEvent`**，通过 `Address` 和 `Error` 查看原因。重试耗尽后，待发送消息转为死信，可通过 **`ves.DeathLetterEvent`** 监控，参见 [死信](/docs/basics/death-letter)。
 

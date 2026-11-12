@@ -207,7 +207,7 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 	task, ok := a.pendingHandshakes[message.seq]
 	if !ok {
 		if message.conn != nil {
-			_ = message.conn.Close()
+			_ = closeConnection(message.conn)
 		}
 		return
 	}
@@ -262,7 +262,7 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 func (a *acceptor) doHandshake(conn net.Conn) (string, error) {
 	request := &Handshake{}
 	if err := request.Wait(conn); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := closeConnection(conn); closeErr != nil {
 			return "", errors.Join(err, closeErr)
 		}
 		return "", err

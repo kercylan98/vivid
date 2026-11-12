@@ -27,7 +27,7 @@ func New(availableSignal <-chan struct{}, bindAddr, advertiseAddr string, codec 
 	return &Remoting{
 		availableSignal:    availableSignal,
 		bindAddr:           bindAddr,
-		tlsConfig:          options.TLSConfig,
+		tlsConfig:          associationPolicy.tlsConfig,
 		codec:              codec,
 		envelopHandler:     envelopHandler,
 		advertiseAddr:      advertiseAddr,

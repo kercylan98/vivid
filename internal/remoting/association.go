@@ -1,6 +1,7 @@
 package remoting
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ type endpointAssociation struct {
 type endpointAssociationPolicy struct {
 	readTimeout       time.Duration
 	heartbeatInterval time.Duration
+	tlsConfig         *tls.Config
 }
 
 const (
@@ -43,6 +45,9 @@ func newEndpointAssociationPolicy(opts *vivid.ActorSystemRemotingOptions) endpoi
 	}
 	if opts.HeartbeatInterval >= 0 {
 		policy.heartbeatInterval = opts.HeartbeatInterval
+	}
+	if opts.TLSConfig != nil {
+		policy.tlsConfig = opts.TLSConfig.Clone()
 	}
 	return policy
 }

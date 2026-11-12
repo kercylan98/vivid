@@ -47,7 +47,7 @@ func (p *pendingConnection) attach(conn net.Conn) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.done {
-		_ = conn.Close()
+		_ = closeConnection(conn)
 		return false
 	}
 	p.conn = conn
@@ -78,7 +78,7 @@ func (p *pendingConnection) finish(closeConn bool) bool {
 	p.mu.Unlock()
 	p.cancel()
 	if closeConn && conn != nil {
-		_ = conn.Close()
+		_ = closeConnection(conn)
 	}
 	p.manager.mu.Lock()
 	delete(p.manager.pending, p)

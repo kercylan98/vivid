@@ -297,23 +297,29 @@ func (e *endpoint) dial(task *pendingConnection) (net.Conn, error) {
 	if !task.attach(conn) {
 		return nil, task.ctx.Err()
 	}
+	if config := e.associationPolicy.tlsConfig; config != nil {
+		conn, err = handshakeTLS(task.ctx, conn, addr, config)
+		if err != nil {
+			return nil, err
+		}
+	}
 	h := &Handshake{AdvertiseAddr: e.advertiseAddr}
 	if err := h.Send(conn); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := closeConnection(conn); closeErr != nil {
 			return nil, errors.Join(err, closeErr)
 		}
 		return nil, err
 	}
 	response := &Handshake{}
 	if err := response.Wait(conn); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := closeConnection(conn); closeErr != nil {
 			return nil, errors.Join(err, closeErr)
 		}
 		return nil, err
 	}
 	if response.AdvertiseAddr != "" && response.AdvertiseAddr != addr {
 		mismatchErr := vivid.ErrorRemotingHandshake.WithMessage("remote advertise address mismatch")
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := closeConnection(conn); closeErr != nil {
 			return nil, errors.Join(mismatchErr, closeErr)
 		}
 		return nil, mismatchErr

@@ -59,7 +59,9 @@ type ActorSystemRemotingOptions struct {
 	// HeartbeatInterval 心跳发送间隔；为 0 时不发送心跳。默认 10s，保证空闲连接在 ReadTimeout 内能收到心跳。
 	HeartbeatInterval time.Duration
 
-	// TLSConfig 可选；非空时 Remoting 服务端使用 TLS 监听，跨 DC/公网部署时建议启用以保证传输加密与身份校验（如 mTLS）。
+	// TLSConfig 非空时，入站与出站均使用 TLS；Certificates 为节点证书，RootCAs 验证服务端。
+	// ClientCAs 和 ClientAuth 控制入站客户端认证；未指定 ServerName 时按目标地址校验。
+	// 启动后不得修改配置及其引用的证书和证书池。
 	TLSConfig *tls.Config
 
 	// StopTimeout 停止超时时间，用于配置远程通信组件的停止超时时间。
@@ -230,8 +232,8 @@ func WithActorSystemRemotingHeartbeatInterval(interval time.Duration) ActorSyste
 	}
 }
 
-// WithActorSystemRemotingTLSConfig 返回一个 ActorSystemRemotingOption，用于配置 Remoting 服务端 TLS。
-// 非空时服务端使用 TLS 监听；跨 DC/公网部署时建议配置以保证传输加密，可选配合 mTLS 做节点身份校验。
+// WithActorSystemRemotingTLSConfig 返回一个 ActorSystemRemotingOption，统一配置入站与出站 TLS。
+// RootCAs 验证远端服务端；需要 mTLS 时设置 ClientCAs 和 ClientAuth，节点证书需支持相应认证用途。
 func WithActorSystemRemotingTLSConfig(cfg *tls.Config) ActorSystemRemotingOption {
 	return func(opts *ActorSystemRemotingOptions) {
 		opts.TLSConfig = cfg

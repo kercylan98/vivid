@@ -68,8 +68,7 @@ func (s *session) Close() error {
 	if conn == nil {
 		return nil
 	}
-	_ = conn.SetDeadline(time.Now())
-	return conn.Close()
+	return closeConnection(conn)
 }
 
 func (s *session) writeClose() error {
