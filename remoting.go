@@ -20,6 +20,7 @@ func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSyste
 		ReadTimeout:           30 * time.Second,
 		HeartbeatInterval:     10 * time.Second, // 默认启用心跳，避免空闲连接读超时
 		StopTimeout:           10 * time.Minute,
+		DecodeLimits:          DefaultDecodeLimits(),
 	}
 	for _, opt := range opts {
 		opt(options)
@@ -48,6 +49,9 @@ type ActorSystemRemotingOptions struct {
 	// MaxPendingEnvelops 单个远程地址的最大待发送信封数；超过后新消息将直接失败。
 	MaxPendingEnvelops int
 
+	// DecodeLimits 限制单个远程信封的解码资源，零字段使用默认预算。
+	DecodeLimits DecodeLimits
+
 	// ReadTimeout 读超时时长，用于 SetReadDeadline；每次成功读完整帧后刷新。
 	ReadTimeout time.Duration
 
@@ -66,15 +70,13 @@ type ActorSystemRemotingOptions struct {
 // 用法说明：
 //   - 首个参数为一个 ActorSystemRemotingOptions 结构体，用于初始化远程选项的默认值；
 //   - 其余可变参数为 ActorSystemRemotingOption 函数，可链式定制具体配置；
-//   - 推荐通过该方法集中配置包括远程异常、错误处理、重连、连接池等扩展能力。
+//   - 推荐通过该方法集中配置重连、解码预算、心跳和超时。
 //
 // 典型用法：
 //
 //	WithActorSystemRemotingOptions(
-//	    ActorSystemRemotingOptions{
-//	        ConnectionReadFailedHandler: myHandler,
-//	    },
-//	    func(opt *ActorSystemRemotingOptions) { /* 其它自定义扩展 */ },
+//	    NewActorSystemRemotingOptions(),
+//	    WithActorSystemRemotingDecodeLimits(DecodeLimits{MaxAllocationBytes: 16 << 20}),
 //	)
 //
 // 参数：
@@ -201,6 +203,13 @@ func WithActorSystemRemotingMaxPendingEnvelops(limit int) ActorSystemRemotingOpt
 		if limit > 0 {
 			opts.MaxPendingEnvelops = limit
 		}
+	}
+}
+
+// WithActorSystemRemotingDecodeLimits 返回一个 ActorSystemRemotingOption，用于配置单个远程信封的解码预算。
+func WithActorSystemRemotingDecodeLimits(limits DecodeLimits) ActorSystemRemotingOption {
+	return func(opts *ActorSystemRemotingOptions) {
+		opts.DecodeLimits = limits
 	}
 }
 

@@ -14,16 +14,21 @@ type VividCodec struct {
 	fullName2desc map[string]*MessageDesc
 	tof2desc      map[reflect.Type]*MessageDesc
 	externalCodec Codec
+	decodeLimits  DecodeLimits
 }
 
 // NewVividCodec 创建并初始化 VividCodec
-func NewVividCodec(externalCodec Codec) *VividCodec {
+func NewVividCodec(externalCodec Codec, limits ...DecodeLimits) *VividCodec {
 	return &VividCodec{
 		fullName2desc: make(map[string]*MessageDesc),
 		tof2desc:      make(map[reflect.Type]*MessageDesc),
 		externalCodec: externalCodec,
+		decodeLimits:  decodeLimits(limits),
 	}
 }
+
+// DecodeLimits 返回远程信封 Reader 使用的解码预算，独立 Reader 保留自身配置。
+func (c *VividCodec) DecodeLimits() DecodeLimits { return c.decodeLimits }
 
 func (c *VividCodec) RegisterMessageWithEncoderAndDecoder(class string, name string, message any, encoder MessageEncoder, decoder MessageDecoder) error {
 	typeOf := reflect.TypeOf(message)
@@ -86,6 +91,10 @@ func (c *VividCodec) Encode(writer *Writer, message any) error {
 }
 
 func (c *VividCodec) Decode(reader *Reader) (any, error) {
+	if !reader.enter() {
+		return nil, reader.Err()
+	}
+	defer reader.leave()
 	var fullName string
 	if err := reader.ReadString(&fullName); err != nil {
 		return nil, err
@@ -103,6 +112,15 @@ func (c *VividCodec) Decode(reader *Reader) (any, error) {
 		return nil, fmt.Errorf("message %s not registered", fullName)
 	}
 
+	typ := messageDesc.typeOf
+	count := uint64(2) // 非指针类型还需复制到接口。
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+		count = 1
+	}
+	if !reader.reserveAllocation(count, uint64(typ.Size())) {
+		return nil, reader.Err()
+	}
 	message := messageDesc.Instantiate()
 	if err := messageDesc.Decode(reader, message); err != nil {
 		return nil, err

@@ -10,21 +10,25 @@ var builtInInstanceTypes = make(map[reflect.Type]reflect.Type)
 var timeType = reflect.TypeFor[time.Time]()
 
 type Reader struct {
-	buf []byte
-	pos int
-	err error
+	buf    []byte
+	pos    int
+	err    error
+	budget decodeBudget
 }
 
 func RegisterBuiltInInstanceType[T any](tmpl any) {
 	builtInInstanceTypes[reflect.TypeFor[T]()] = reflect.TypeOf(tmpl)
 }
 
-// NewReader 创建独立的字段读取器，读取期间输入数据应保持不变。
-func NewReader(data []byte) *Reader { return &Reader{buf: data} }
+// NewReader 创建独立的字段读取器，可选预算以最后一份为准，读取期间输入数据应保持不变。
+func NewReader(data []byte, limits ...DecodeLimits) *Reader {
+	return &Reader{buf: data, budget: decodeBudget{limits: decodeLimits(limits)}}
+}
 
-func GetReader(data []byte) *Reader {
+func GetReader(data []byte, limits ...DecodeLimits) *Reader {
 	r := readerPool.Get().(*Reader)
 	r.buf = data
+	r.budget = decodeBudget{limits: decodeLimits(limits)}
 	return r
 }
 
@@ -32,6 +36,7 @@ func PutReader(r *Reader) {
 	r.buf = nil
 	r.pos = 0
 	r.err = nil
+	r.budget = decodeBudget{}
 	readerPool.Put(r)
 }
 
@@ -107,7 +112,7 @@ func (r *Reader) ReadString(dst *string) error {
 		return r.invalidDestination()
 	}
 	data := r.readData()
-	if r.err == nil {
+	if r.err == nil && r.ReserveAllocation(uint64(len(data))) == nil {
 		*dst = string(data)
 	}
 	return r.err
@@ -122,7 +127,15 @@ func (r *Reader) ReadBytes(dst *[]byte) error {
 	}
 	data := r.readData()
 	if r.err == nil {
-		*dst = append((*dst)[:0], data...)
+		if len(data) > cap(*dst) {
+			if r.ReserveAllocation(uint64(len(data))) != nil {
+				return r.err
+			}
+			*dst = make([]byte, len(data))
+		} else {
+			*dst = (*dst)[:len(data)]
+		}
+		copy(*dst, data)
 	}
 	return r.err
 }

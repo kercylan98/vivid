@@ -36,9 +36,9 @@ description: Remoting 启用、消息注册、Codec 与位置透明
 通过 **WithActorSystemRemoting(bindAddr, advertiseAddr?)** 启用：
 
 - **bindAddr**（必填）：本机监听地址，如 `"0.0.0.0:8080"`。框架在此地址上启动 Listener 接受连接。
-- **advertiseAddr**（可选）：对外暴露地址，如公网 IP 或集群内域名+端口，供其它节点连接。不传则使用 bindAddr。若 advertiseAddr 缺端口且**非域名**，会 panic；缺端口的域名会由框架或上层补充处理。
+- **advertiseAddr**（可选）：其他节点可访问的地址，例如 `"node1.example.com:8080"`。不传则使用 bindAddr；监听所有网卡或使用端口映射时，应显式设置可访问的地址与端口。
 
-TCP 与 UDP 是否复用同一端口以当前版本实现与发布说明为准。
+Remoting 使用 TCP 通信。
 
 ## 消息编解码
 
@@ -81,7 +81,7 @@ system := bootstrap.NewActorSystem(
 )
 ```
 
-示例使用 `github.com/kercylan98/vivid` 和 `github.com/kercylan98/vivid/pkg/bootstrap`，不需要导入内部包。类型自身实现 **MessageCodec** 时，也可通过 `registry.RegisterMessage` 注册。当前注册入口是 **WithActorSystemMessageRegister**，不存在 `RegisterCustomMessage` 函数。
+示例使用 `github.com/kercylan98/vivid` 和 `github.com/kercylan98/vivid/pkg/bootstrap`。类型自身实现 **MessageCodec** 时，也可通过 `registry.RegisterMessage` 注册。
 
 ### 外部 Codec
 
@@ -94,13 +94,13 @@ type Codec interface {
 }
 ```
 
-外部 Codec 只负责消息体。框架统一写入和读取消息类型标识：注册消息使用注册全名，外部消息使用空名称标记；外部 Codec 不需要重复写这一标记。支持多种业务类型时，Codec 自行在消息体内区分类型并恢复对应的 Go 类型。不能返回仅保留字段而丢失消息类型的通用对象来替代原消息。
+外部 Codec 负责消息体，框架负责消息分帧与注册类型路由。支持多种业务类型时，Codec 需自行区分并恢复对应的 Go 类型。
 
 未注册类型且没有外部 Codec 时，编码返回错误；对方无法识别的注册名称也返回错误，不会转交外部 Codec 猜测。codec 不能为 nil。第三方 Codec 需要匹配当前接口与分帧约定，接入前应验证双向消息往返。
 
-### Reader / Writer 的设计与用法
+### Reader / Writer
 
-Reader/Writer 只负责字段读写，不依赖消息注册表或外部 Codec，避免注册编码器调用 `w.Write(message)` 时再次进入自身。需要独立使用时，可通过 `vivid.NewWriter()` 和 `vivid.NewReader(data)` 创建。
+Reader/Writer 用于读写消息字段，也可通过 `vivid.NewWriter()` 和 `vivid.NewReader(data)` 独立使用。
 
 - **WriteInteger / ReadInteger**：Go 1.27 泛型方法，接受固定宽度整数及其自定义类型；例如 `w.WriteInteger(uint32(42))`、`r.ReadInteger(&id)`。泛型入口不接受 int/uint，协议字段应明确宽度。
 - **WriteFloat / ReadFloat**：泛型浮点读写，float32 为 4 字节，float64 为 8 字节，支持自定义浮点类型。
@@ -109,20 +109,45 @@ Reader/Writer 只负责字段读写，不依赖消息注册表或外部 Codec，
 
 数值使用大端序，浮点数使用 IEEE 754。字符串、切片、数组与 map 使用 uint32 长度前缀；结构体优先使用自身的 MessageCodec，否则按声明顺序处理导出字段。字段读写不携带字段名或结构体类型，双方必须使用一致的布局，不能替代远程消息注册。nil 指针、nil 接口和循环引用不受支持；nil 与空集合均编码为零长度，不保留两者的区别。
 
-首次错误会保留，后续读写停止；失败前的字段可能已经更新，解码不是事务操作。外部消息与字段格式均已调整，所有通信节点需使用同一版本。
+首次错误会保留，后续读写停止；失败前的字段可能已经更新。所有通信节点需使用相同的消息格式。
 
-Reader 的字符串和字节切片不会借用输入数据；读取期间不要修改输入缓冲。Reader 可复用目标切片容量以减少重复解码的分配，原切片的别名也会观察到修改；需要保留旧值时应使用新的目标或复制数据。Writer.Bytes 返回当前缓冲的视图，继续写入可能改变已有视图；归还内部 Writer 后框架不会复用其底层缓冲，已返回数据仍可由网络层持有。Reader/Writer 实例不可并发使用。
+读取期间不要修改输入缓冲，解码后的字符串和字节切片可独立使用。Reader 会复用目标切片的容量，需要保留旧值时应使用新目标或复制数据。Writer.Bytes 返回当前缓冲的视图，继续写入可能改变已有视图。Reader/Writer 实例不可并发使用。
+
+### 解码资源预算
+
+Reader 默认限制解码资源，避免异常输入引起过深嵌套或大量内存申请：
+
+| 配置 | 默认值 | 统计范围 |
+|------|--------|----------|
+| `MaxDepth` | 64 | 复合类型和消息解码的嵌套层数 |
+| `MaxElements` | `1 << 20` | 切片、数组元素和 map 条目的累计数量，嵌套集合合并统计；字符串与字节切片不计入 |
+| `MaxAllocationBytes` | `64 << 20`（64 MiB） | 框架解码过程中累计申请的内存估算值 |
+
+同一个 Reader 的多次读取共享预算；远程通信按单个信封统计，包含地址和消息体。省略配置或将字段设为零时，使用对应默认值。分配预算是估算值，不等同于实际堆内存上限。
+
+通过远程选项调整接收侧预算：
+
+```go
+limits := vivid.DecodeLimits{
+    MaxDepth:           32,
+    MaxElements:        100_000,
+    MaxAllocationBytes: 16 << 20,
+}
+system := bootstrap.NewActorSystem(
+    vivid.WithActorSystemRemoting("127.0.0.1:8080"),
+    vivid.WithActorSystemRemotingOption(
+        vivid.WithActorSystemRemotingDecodeLimits(limits),
+    ),
+)
+```
+
+独立使用时可传入 `vivid.NewReader(data, limits)`。超限通过 `errors.Is(err, vivid.ErrDecodeLimit)` 判断，之后该 Reader 停止读取；远程消息不会投递，连接按下方的读失败流程处理。
+
+自定义 Codec 使用 Reader 字段方法时自动受限。自行分配内存或遍历自定义集合时，应在操作前调用 `reader.ReserveAllocation(bytes)` 或 `reader.ReserveElements(count)` 并检查错误；第三方解码库的资源限制需自行配置。
 
 ## 远程连接读失败处理
 
-通过 **WithActorSystemRemotingOptions** 传入 **ActorSystemRemotingOptions**，可设置 **ConnectionReadFailedHandler**，在远程连接**读取失败**时被调用（如对端断开、网络异常、超时）：
-
-- **HandleRemotingConnectionReadFailed(fatal bool, err error) error**
-  - **fatal**：是否为致命错误（如 true 可能触发连接关闭或更高级别处理）。
-  - **err**：具体错误。
-  - 返回 **非 nil** 时，该连接会被关闭并将该 error 作为停止原因；返回 nil 表示忽略或已自行处理。
-
-可使用 **ActorSystemRemotingConnectionReadFailedHandlerFN** 以函数形式实现，便于在连接失败时打日志、告警或做重试策略。
+连接读取、帧解析或消息解码失败时，当前会话会关闭。可订阅 **`ves.RemotingConnectionClosedEvent`**，通过 `Address`、`PeerClosed` 和 `Error` 获取关闭原因；有待发送消息时，系统会尝试重新连接。
 
 ## 远程连接重试与死信
 
@@ -133,11 +158,9 @@ Reader 的字符串和字节切片不会借用输入数据；读取期间不要�
 - **ReconnectFactor**：退避因子（如 2.0 表示指数退避）。**WithActorSystemRemotingReconnectFactor**。
 - **ReconnectJitter**：是否启用抖动，缓解重连雷群。**WithActorSystemRemotingReconnectJitter**。
 
-重试期间会向事件流发布 **`ves.RemotingConnectionFailedEvent`**（含 RemoteAddr、Error、RetryCount 等），可订阅该事件做监控。**若在重试次数用尽后仍无法投递，该消息会作为死信投递**（即 **HandleFailedRemotingEnvelop** 将 Envelope 投递到死信队列），可通过订阅 **`ves.DeathLetterEvent`** 进行监控与审计，参见 [死信](/docs/basics/death-letter)。
+连接失败时可订阅 **`ves.RemotingConnectionFailedEvent`**，通过 `Address` 和 `Error` 查看原因。重试耗尽后，待发送消息转为死信，可通过 **`ves.DeathLetterEvent`** 监控，参见 [死信](/docs/basics/death-letter)。
 
-未启用 Remoting 时，向远程 **ActorRef** 发送消息会得到“远程未启用”的告警，且该消息不会跨节点发送（由框架按当前实现处理，例如落入系统邮箱），业务侧应避免在未启用 Remoting 的节点上向远程 ref 发信。
-
-远程消息发送、编解码、握手或处理失败时会返回 **ErrorRemotingMessageSendFailed**、**ErrorRemotingMessageEncodeFailed**、**ErrorRemotingMessageDecodeFailed**、**ErrorRemotingMessageHandleFailed**、**ErrorRemotingHandshakeFailed** 等，详见 [错误](/docs/config/errors)。
+跨节点发送消息的双方都应启用 Remoting。
 
 ## 与集群配合
 

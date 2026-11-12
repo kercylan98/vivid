@@ -48,7 +48,7 @@ type systemChains struct {
 
 func (c *systemChains) initializeCodec(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
-		system.codec = serialization.NewVividCodec(system.options.RemotingCodec)
+		system.codec = serialization.NewVividCodec(system.options.RemotingCodec, system.options.RemotingOptions.DecodeLimits)
 
 		// 注册系统消息
 		registry := newMessageRegistry(system.codec).SetClass("SYS")

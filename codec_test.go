@@ -59,6 +59,17 @@ func TestCodec_PublicReaderWriter(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+func TestCodec_PublicDecodeLimits(t *testing.T) {
+	limits := vivid.DecodeLimits{MaxAllocationBytes: 3}
+	w := vivid.NewWriter().WriteString("1234")
+	r := vivid.NewReader(w.Bytes(), limits)
+	var text string
+	require.ErrorIs(t, r.ReadString(&text), vivid.ErrDecodeLimit)
+	options := vivid.NewActorSystemOptions(vivid.WithActorSystemRemotingOption(vivid.WithActorSystemRemotingDecodeLimits(limits)))
+	assert.Equal(t, limits, options.RemotingOptions.DecodeLimits)
+	assert.Equal(t, vivid.DefaultDecodeLimits(), vivid.NewActorSystemRemotingOptions().DecodeLimits)
+}
+
 func TestCodec_Remoting(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

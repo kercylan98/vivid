@@ -41,7 +41,7 @@ func decodeEnvelop(codec *serialization.VividCodec, data []byte) (
 	system bool, sender, receiver string, message any,
 	err error,
 ) {
-	var reader = serialization.GetReader(data)
+	var reader = serialization.GetReader(data, codec.DecodeLimits())
 	defer serialization.PutReader(reader)
 
 	if err = reader.Read(&system, &sender, &receiver); err != nil {
