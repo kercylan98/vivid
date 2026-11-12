@@ -19,6 +19,7 @@ import (
     "log"
     "os"
     "os/signal"
+    "time"
 
     "github.com/kercylan98/vivid"
     "github.com/kercylan98/vivid/pkg/bootstrap"
@@ -35,6 +36,12 @@ func main() {
     if err := system.Start(); err != nil {
         log.Fatal(err)
     }
+    result, err := system.ClusterReady(10 * time.Second).Result()
+    if err != nil {
+        _ = system.Stop()
+        log.Fatal(err)
+    }
+    log.Printf("cluster ready: instance=%s bootstrap=%t seed=%s", result.LocalID, result.Bootstrapped, result.SeedAddress)
     <-ctx.Done()
     if err := system.Stop(); err != nil {
         log.Print(err)
@@ -59,7 +66,7 @@ system := bootstrap.NewActorSystem(
 
 跨机器部署时，将本机地址换为可达的广告地址，例如 `WithActorSystemRemoting("0.0.0.0:8080", "node1:8080")`，其他节点的种子填写 `node1:8080`。不要将 `0.0.0.0` 作为其他节点连接的地址。
 
-未配置种子，或启动时所有种子加入尝试均失败，当前实现会自举为独立集群。因此 `Start()` 成功不代表已经加入目标集群，可通过 `system.ClusterSnapshot()` 查询本地成员，结合实际节点通信确认，详见[本地成员查询](/docs/cluster/runtime/context)。
+无种子时独立启动；配置种子后默认必须加入成功，全部失败时不会自动成为孤岛。`Start()` 成功仅表示运行时启动，使用 `system.ClusterReady()` 等待初始加入结果，详见[启动与加入就绪](/docs/cluster/runtime/readiness)。需要主动独立启动时，显式配置 `WithActorSystemClusterBootstrap(true)`。
 
 节点进入 Up 后，会在周期 Gossip 中继续联络配置的种子地址。网络恢复或种子同地址重启后可发现对方；旧实例的退出记录仍独立保留。配置种子时应确保各组节点之间存在可恢复的联络路径。
 

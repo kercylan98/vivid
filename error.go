@@ -78,6 +78,7 @@ var (
 	ErrorGossipScheduleFailed = RegisterError(170000, "gossip schedule failed")                            //  gossip 调度失败
 	ErrorGossipRequires       = RegisterError(170001, "gossip missing required dependency", ErrorNotFound) // gossip 缺少必要内容
 	ErrorClusterNotEnabled    = RegisterError(170002, "cluster is not enabled")                            // 未启用集群
+	ErrorClusterJoinFailed    = RegisterError(170003, "cluster join failed")                               // 所有非本地种子均未接受加入
 )
 
 var (

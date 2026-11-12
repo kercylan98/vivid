@@ -185,16 +185,30 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 					seeds = addresses[2:] // 仅一侧保留跨机房种子，也应能在恢复后相互发现。
 				}
 				opts := vivid.NewActorSystemClusterOptions(
+					vivid.WithActorSystemClusterBootstrap(i%2 == 0),
 					vivid.WithActorSystemClusterSeeds(seeds...),
+					vivid.WithActorSystemClusterJoinTimeout(500*time.Millisecond),
 					vivid.WithActorSystemClusterLaunchDelay(0),
 					vivid.WithActorSystemClusterGossipInterval(50*time.Millisecond),
 					vivid.WithActorSystemClusterGossipPeersCount(1),
 					vivid.WithActorSystemClusterGracefulShutdownTimeout(time.Second),
 				)
-				opts.JoinTimeout = 100 * time.Millisecond
-				ref, err := system.ActorOf(gossip.NewSnapshotActor(opts))
+				member := gossip.NewSnapshotActor(opts)
+				ref, err := system.ActorOf(member)
 				require.NoError(t, err, "node: %d", i)
 				refs = append(refs, ref)
+				// 先确认各组初始节点就绪，再让后续节点加入；不依赖失败后隐式自举。
+				_, err = member.Readiness().Wait(system, 5*time.Second).Result()
+				if err != nil {
+					for j, ref := range refs {
+						result, queryErr := systems[j].Ask(ref, gossip.TestSnapshotRequest{}, time.Second).Result()
+						if queryErr == nil {
+							snapshot := result.(gossip.SnapshotResponse)
+							t.Logf("join node %d address=%s seeds=%v; node %d status=%s members=%s pings=%v", i, addresses[i], seeds, j, snapshot.Status, snapshot.View.Members().Fingerprint(), snapshot.PingCount)
+						}
+					}
+				}
+				require.NoError(t, err, "join node: %d", i)
 			}
 			read := func(i int) (gossip.SnapshotResponse, bool) {
 				result, err := systems[i].Ask(refs[i], gossip.TestSnapshotRequest{}, time.Second).Result()

@@ -5,7 +5,7 @@ description: 使用 ClusterSnapshot 查询成员实例及生命周期
 
 `system.ClusterSnapshot(timeout...)` 返回 `Future[vivid.ClusterSnapshot]`。Actor 内使用 `ctx.System().ClusterSnapshot()`；查询由本地 Gossip Actor 处理，不发起远程探测。
 
-在启用集群并完成 `Start()` 后调用，超时规则与 Ask 一致：
+在启用集群并完成 `Start()` 后调用，超时规则与 Ask 一致。启动延迟与加入期间也可查询，但结果可能仍为 None 或 Joining；初始加入结果使用 [ClusterReady](/docs/cluster/runtime/readiness) 等待。
 
 ```go
 func printMembers(system vivid.ActorSystem) error {

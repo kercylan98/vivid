@@ -75,6 +75,10 @@ type ActorSystem interface {
 	// ClusterSnapshot 查询本地成员视图，超时规则与 Ask 相同；不会探测远端节点。
 	// 未启动、已停止或未启用集群时，Future 返回相应错误。
 	ClusterSnapshot(timeout ...time.Duration) Future[ClusterSnapshot]
+
+	// ClusterReady 等待本次启动的初始加入结果，超时规则与 Ask 相同。
+	// 超时或 Close 只结束当前调用的等待，不取消节点加入；成功结果不代表持续健康。
+	ClusterReady(timeout ...time.Duration) Future[ClusterJoinResult]
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。

@@ -1,0 +1,43 @@
+---
+title: 启动与加入就绪
+description: 区分运行时启动、加入成功、独立启动与加入失败
+---
+
+`Start()` 启动运行时及集群组件，加入流程异步执行。需要等待初始结果时，调用 `system.ClusterReady(timeout...).Result()`；Actor 内可使用 `ctx.System().ClusterReady(...).PipeTo(...)` 接收结果。
+
+## 默认启动规则
+
+| 配置 | 行为 |
+|------|------|
+| 未配置种子 | 独立启动并进入 Up |
+| 配置种子，Bootstrap 为 false（默认） | 依次尝试加入非本地种子，收到有效响应后进入 Up |
+| Bootstrap 为 true | 独立启动并进入 Up，之后仍联络种子 |
+
+配置了种子却全部加入失败时，返回 `ErrorClusterJoinFailed`，节点停留在 Joining，不自动成为孤岛，也不自动重试整轮加入。应检查地址与启动顺序，停止后重新创建系统。只有自身种子时必须显式启用 Bootstrap，避免把配置错误当作加入成功。
+
+需要建立初始组，或明确允许分区两侧独立启动后重新发现时，使用 `WithActorSystemClusterBootstrap(true)`。这不会授予独占写入资格，也不提供业务数据合并。
+
+## 等待结果
+
+```go
+func waitCluster(system vivid.ActorSystem) error {
+    result, err := system.ClusterReady(10 * time.Second).Result()
+    if err != nil {
+        return err
+    }
+    if result.Bootstrapped {
+        fmt.Printf("独立启动：%s\n", result.LocalID)
+    } else {
+        fmt.Printf("加入完成：%s，种子：%s\n", result.LocalID, result.SeedAddress)
+    }
+    return nil
+}
+```
+
+结果包含 `LocalID`、`Bootstrapped` 和 `SeedAddress`；独立启动时 SeedAddress 为空。加入成功表示已收到种子对本实例的有效加入响应，不代表所有节点已同步、当前健康或多数派授权。结果是本次系统启动的初始结果，后续分区不会将成功结果改成失败；当前状态请查询[本地成员视图](/docs/cluster/runtime/context)。
+
+等待超时沿用 Ask 规则，未指定时使用系统默认值，传入 `0` 表示不限等待时间。超时或 `Future.Close(err)` 只结束本次调用的等待，不取消节点加入，不影响其他等待者；等待失败后可再次读取同一次初始结果。系统停止会结束尚未完成的等待。
+
+`WithActorSystemClusterJoinTimeout` 控制每个种子的加入总超时，与调用方的等待超时不同。种子会先去除自身和重复项，再按地址排序；请求超时时会在该种子的总超时内有限重发，避免一次消息丢失直接结束加入。多个种子与启动延迟可能使加入过程超过单个种子的超时。
+
+启动延迟和等待种子期间仍可查询快照或停止系统。快照可能显示 None、Joining，不能用查询成功代替加入完成。错误判定见[集群错误](/docs/cluster/errors)。

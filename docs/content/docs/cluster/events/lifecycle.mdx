@@ -8,17 +8,17 @@ description: 当前集群成员状态、退出与重新加入边界
 | 状态 | 含义 |
 |------|------|
 | None | 尚未开始加入 |
-| Joining | 正在向配置的种子发起加入 |
-| Up | 已完成加入流程，或在种子不可达时自举，参与周期 Gossip |
+| Joining | 正在加入，或初始加入失败后等待处理 |
+| Up | 已完成加入或独立启动，参与周期 Gossip |
 | Leaving | 已请求退出，传播离开状态 |
 | Exiting | 继续推进退出流程 |
 | Removed | 已完成本节点的退出状态迁移 |
 
 ## 启动与退出
 
-没有种子或所有种子加入尝试失败时，节点会自举并进入 Up；因此 Up 不代表已经连接到预期集群。Up 节点会继续联络配置的种子地址，参见[快速开始](/docs/cluster/quick-start)。
+无种子或显式 Bootstrap 时独立启动；配置种子且未启用 Bootstrap 时，必须收到有效加入响应才会进入 Up，全部失败则停留在 Joining。通过 `ClusterReady()` 区分初始结果，见[启动与加入就绪](/docs/cluster/runtime/readiness)。Up 节点会继续联络配置的种子地址。
 
-正常停止时，节点依次进入 Leaving、Exiting 和 Removed；退出过程受 `GracefulShutdownTimeout` 限制。当前状态推进依据本地视图稳定情况，不提供所有远端已确认退出的保证。
+正常停止时，节点依次进入 Leaving、Exiting 和 Removed；退出过程受 `GracefulShutdownTimeout` 限制。已进入 Up 的节点依据本地视图稳定情况推进退出，不提供所有远端已确认退出的保证。
 
 已移除成员及其版本会在当前进程中继续保留，用于拒绝迟到的旧状态更新，不会因局部视图稳定而自动回收。频繁重启或增减节点会增加保留记录及 Gossip 传播量。
 

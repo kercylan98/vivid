@@ -37,6 +37,8 @@ func startClusterTestSystem(t testing.TB, address string, delay time.Duration, s
 	)
 	require.NoError(t, system.Start())
 	t.Cleanup(func() { require.NoError(t, system.Stop(3*time.Second)) })
+	_, err := system.ClusterReady(2 * time.Second).Result()
+	require.NoError(t, err)
 	return system
 }
 
@@ -51,14 +53,21 @@ func TestSystem_ClusterSnapshotErrors(t *testing.T) {
 	_, err = system.ClusterSnapshot().Result()
 	assert.ErrorIs(t, err, vivid.ErrorActorSystemStopped)
 
-	cluster := startClusterTestSystem(t, clusterTestAddress(t), 300*time.Millisecond)
-	_, err = cluster.ClusterSnapshot(time.Millisecond).Result()
-	assert.ErrorIs(t, err, vivid.ErrorFutureTimeout)
-	future := cluster.ClusterSnapshot(time.Second)
+	cluster := actor.NewSystem(
+		vivid.WithActorSystemRemoting(clusterTestAddress(t)),
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterLaunchDelay(300*time.Millisecond)),
+	)
+	require.NoError(t, cluster.Start())
+	t.Cleanup(func() { require.NoError(t, cluster.Stop(3*time.Second)) })
+	snapshot, err := cluster.ClusterSnapshot(time.Second).Result()
+	require.NoError(t, err)
+	local, _ := snapshot.Member(snapshot.LocalID())
+	assert.Equal(t, vivid.ClusterMemberStatusNone, local.Status, "启动延迟不得阻塞快照查询")
+	future := cluster.ClusterReady(time.Second)
 	future.Close(context.Canceled)
 	_, err = future.Result()
 	assert.ErrorIs(t, err, context.Canceled)
-	snapshot, err := cluster.ClusterSnapshot(time.Second).Result()
+	snapshot, err = cluster.ClusterSnapshot(time.Second).Result()
 	require.NoError(t, err)
 	assert.Equal(t, 1, snapshot.Len())
 }

@@ -1,18 +1,20 @@
 ---
 title: 集群错误
-description: 集群启动和本地成员查询的实际错误
+description: 集群启动、加入与本地查询的实际错误
 ---
 
 以下预定义错误可使用 `errors.Is` 判断。
 
 | 变量 | 错误码 | 场景 |
 |------|--------|------|
-| `vivid.ErrorGossipScheduleFailed` | 170000 | 周期 Gossip 调度失败 |
+| `vivid.ErrorGossipScheduleFailed` | 170000 | 集群启动延迟或周期 Gossip 调度失败 |
 | `vivid.ErrorGossipRequires` | 170001 | 集群依赖未初始化，例如未启用 Remoting |
 | `vivid.ErrorClusterNotEnabled` | 170002 | 查询时未启用集群 |
+| `vivid.ErrorClusterJoinFailed` | 170003 | 全部种子未接受初始加入 |
+| `vivid.ErrorIllegalArgument` | 120000 | 集群参数或种子配置无效 |
 | `vivid.ErrorActorSystemNotStarted` | 100005 | 系统启动前查询 |
 | `vivid.ErrorActorSystemStopped` | 100006 | 系统停止后查询 |
-| `vivid.ErrorFutureTimeout` | 110000 | 查询未在指定时间内完成 |
+| `vivid.ErrorFutureTimeout` | 110000 | 查询或就绪等待超时；也可作为加入失败的底层原因 |
 
 查询失败示例：
 
@@ -26,4 +28,4 @@ func queryCluster(system vivid.ActorSystem) error {
 }
 ```
 
-启动失败还需检查返回错误及启动日志。完整错误体系见[错误处理](/docs/config/errors)，成员查询见[本地成员查询](/docs/cluster/runtime/context)。
+初始加入失败通过 `ClusterReady()` 返回 `ErrorClusterJoinFailed`；等待超时只结束当前调用，不会取消加入。参数错误通过 `Start()` 返回，使用 `errors.Is(err, vivid.ErrorIllegalArgument)` 判断。完整错误体系见[错误处理](/docs/config/errors)，成员查询见[本地成员查询](/docs/cluster/runtime/context)。

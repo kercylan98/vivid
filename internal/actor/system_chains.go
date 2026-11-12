@@ -176,6 +176,7 @@ func (c *systemChains) initializeCluster(system *System) chain.Chain {
 		}
 		system.statusLock.Lock()
 		system.gossipRef = gossipRef
+		system.clusterReadiness = gossip.Readiness()
 		system.statusLock.Unlock()
 
 		// 注册停止优先级

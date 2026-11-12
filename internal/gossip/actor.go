@@ -2,9 +2,6 @@
 package gossip
 
 import (
-	"fmt"
-	"slices"
-	"sort"
 	"time"
 
 	"github.com/kercylan98/vivid"
@@ -28,9 +25,7 @@ var (
 
 // New 构造 gossip Actor。seeds 为可选种子节点引用，空时以单节点身份直接进入 Up；非空时进入 Joining 并向 seeds 发起加入。
 func New(options *vivid.ActorSystemClusterOptions) *Actor {
-	return &Actor{
-		opts: options,
-	}
+	return &Actor{opts: options, readiness: newReadiness()}
 }
 
 // Actor 实现基于 gossip 的集群发现与视图同步：维护本节点 Information、集群视图（成员列表+版本向量），
@@ -48,6 +43,13 @@ type Actor struct {
 	convergenceStartedAt time.Time                        // 最近一次视图变化的时间，用于计算收敛耗时
 	viewRevision         uint64                           // 本地观察序号，与本实例 ID 一起标识快照
 	snapshot             *clusterSnapshot                 // 当前视图的只读快照
+	readiness            *Readiness                       // 线程安全的初始加入结果
+	joinRequest          vivid.Future[vivid.Message]      // 当前种子的加入请求
+	joinIndex            int                              // 当前尝试的去重种子下标
+	joinAttempt          int                              // 当前种子的请求次数
+	joinDeadline         time.Time                        // 当前种子的加入总截止时间
+	joinError            error                            // 最近一次加入失败
+	stopping             bool                             // 已开始停止，不再接受迟到的加入结果
 	membersChanged       bool                             // 本次合并是否接收了成员更新
 }
 
@@ -60,15 +62,12 @@ func (a *Actor) FixedOptions(ctx vivid.FixedOptionContext) []vivid.ActorOption {
 
 // OnPrelaunch 在 Actor 启动前执行：创建本节点 Information 并加入本地视图的成员列表。
 func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
-	// 初始化 seeds
-	a.seeds = make([]vivid.ActorRef, 0, len(a.opts.Seeds))
-	for _, seed := range a.opts.Seeds {
-		seedRef, err := ctx.System().CreateRef(seed, "/"+gossipActorName)
-		if err != nil {
-			return err
-		}
-		a.seeds = append(a.seeds, seedRef)
+	if err := a.initializeSeeds(ctx); err != nil {
+		return err
 	}
+	a.joinRequest, a.joinError = nil, nil
+	a.joinIndex, a.stopping = 0, false
+	a.joinAttempt, a.joinDeadline = 0, time.Time{}
 
 	// 创建集群视图
 	a.view = NewClusterView(ctx.Logger())
@@ -98,6 +97,12 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 	switch m := ctx.Message().(type) {
 	case *vivid.OnLaunch:
 		a.onLaunch(ctx)
+	case launchJoin:
+		if m.instanceID == a.info.ID() && !a.stopping && a.info.Status == endpoint.StatusNone {
+			changeStatus(ctx, a, EventJoining)
+		}
+	case joinReply:
+		a.onJoinReply(ctx, m)
 	case SnapshotRequest:
 		ctx.Reply(a.currentSnapshot())
 	case *gossipmessages.Ping:
@@ -131,67 +136,12 @@ func (a *Actor) onStatusChanged(ctx vivid.ActorContext, status endpoint.Status) 
 	}
 }
 
-// onLaunch 根据是否有种子决定初始状态：无种子发 EventBootstrap 直接 Up，有种子发 EventJoinRequested 进入 Joining；并注册多阶段终止以支持优雅退出。
-func (a *Actor) onLaunch(ctx vivid.ActorContext) {
-	// 随机延迟启动，避免所有节点同时启动，导致集群瞬间压力过大
-	time.Sleep(a.opts.LaunchDelay)
-
-	// 固定种子节点顺序
-	sort.Slice(a.opts.Seeds, func(i, j int) bool {
-		aAddr := a.seeds[i].GetAddress()
-		bAddr := a.seeds[j].GetAddress()
-		return aAddr < bAddr
-	})
-
-	// 尝试加入
-	changeStatus(ctx, a, EventJoining)
-}
-
-func (a *Actor) onJoining(ctx vivid.ActorContext) {
-	if a.info.Status != endpoint.StatusJoining {
-		return
-	}
-
-	// 检查种子节点是否包含自己
-	seedsSelfIndex := slices.IndexFunc(a.seeds, func(seed vivid.ActorRef) bool { return seed.Equals(ctx.Ref()) })
-
-	if len(a.seeds) > 0 {
-		ctx.Logger().Debug("joining cluster", log.String("seeds", fmt.Sprintf("%v", a.seeds)))
-	}
-
-	// 尝试加入所有种子节点，避免远程发送序列化过程中被修改
-	ping := a.preparePing(gossipmessages.GossipTypeJoin)
-	for i, seed := range a.seeds {
-		// 如果种子节点是自己，则跳过
-		if i == seedsSelfIndex {
-			continue
-		}
-		result, err := ctx.Ask(seed, ping, a.opts.JoinTimeout).Result()
-		if err != nil {
-			ctx.Logger().Error("failed to join cluster, try next seed", log.String("seed", seed.String()), log.Any("error", err))
-			continue
-		}
-		pong, ok := result.(*gossipmessages.Pong)
-		if !ok {
-			ctx.Logger().Error("failed to join cluster, try next seed", log.String("seed", seed.String()), log.Any("result", result),
-				log.Any("error", vivid.ErrorFutureMessageTypeMismatch.WithMessage(fmt.Sprintf("expected *gossipmessages.Pong, got %T", result))))
-			continue
-		}
-		a.onPong(ctx, pong)
-		changeStatus(ctx, a, EventUp)
-		ctx.Logger().Debug("joined cluster", log.String("seed", seed.String()))
-		return
-	}
-
-	// 所有种子节点都失败了，自举为孤岛集群
-	ctx.Logger().Debug("bootstrapped cluster", log.String("seeds", fmt.Sprintf("%v", a.seeds)))
-	changeStatus(ctx, a, EventUp)
-}
-
 func (a *Actor) onUp(ctx vivid.ActorContext) {
 	// 注册周期任务，按 [GossipInterval] 向视图中节点发起 gossip。
 	spreadGossipMessage := gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeCycleSYNC)
 	if err := ctx.Scheduler().Loop(ctx.Ref(), a.opts.GossipInterval, spreadGossipMessage, vivid.WithSchedulerReference(singleSchedulerReference)); err != nil {
+		a.joinError = vivid.ErrorGossipScheduleFailed.With(err)
+		a.readiness.complete(vivid.ClusterJoinResult{}, a.joinError)
 		// 报告故障以可以支持监管者重启
 		ctx.Failed(vivid.ErrorGossipScheduleFailed.With(err).WithMessage("failed to schedule spread gossip"))
 	}
@@ -221,7 +171,7 @@ func (a *Actor) onConverged(ctx vivid.ActorContext) {
 	case endpoint.StatusExiting:
 		changeStatus(ctx, a, EventRemoved)
 	case endpoint.StatusRemoved:
-		close(a.phaseKillCompleted)
+		a.completePhaseKill()
 	default:
 	}
 }
@@ -229,7 +179,8 @@ func (a *Actor) onConverged(ctx vivid.ActorContext) {
 // onPing 接收实例成员记录及版本，并回复当前视图。
 func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 	// 加入完成前不接收 Ping，避免向其他节点提供未就绪视图。
-	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining {
+	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining ||
+		ping.GossipType == gossipmessages.GossipTypeJoin && a.info.Status != endpoint.StatusUp {
 		return
 	}
 
@@ -252,6 +203,13 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 
 // onPong 接收加入请求或周期同步得到的实例视图。
 func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
+	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining {
+		return
+	}
+	a.mergePong(ctx, pong)
+}
+
+func (a *Actor) mergePong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 	a.mergeMember(pong.Info, pong.Version)
 	for _, member := range pong.MemberList.List() {
 		if member.ID() != pong.Info.ID() {
@@ -283,8 +241,34 @@ func (a *Actor) mergeMember(info *endpoint.Information, version *versionvector.V
 }
 
 func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
-	// 处理本节点告知即将离开集群
+	if a.stopping {
+		return
+	}
+	a.stopping = true
+	a.readiness.Stop()
+	if a.joinRequest != nil {
+		a.joinRequest.Close(vivid.ErrorActorSystemStopped)
+		a.joinRequest = nil
+	}
+	if ctx.Scheduler().Exists(launchSchedulerReference) {
+		_ = ctx.Scheduler().Cancel(launchSchedulerReference)
+	}
+	unjoined := a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining
 	changeStatus(ctx, a, EventLeaving)
+	if unjoined {
+		// 尚未进入 Up，也没有周期 Gossip，无需等待不存在的稳定轮次。
+		changeStatus(ctx, a, EventExiting)
+		changeStatus(ctx, a, EventRemoved)
+		a.completePhaseKill()
+	}
+}
+
+func (a *Actor) completePhaseKill() {
+	select {
+	case <-a.phaseKillCompleted:
+	default:
+		close(a.phaseKillCompleted)
+	}
 }
 
 func (a *Actor) onLeaving(ctx vivid.ActorContext) {

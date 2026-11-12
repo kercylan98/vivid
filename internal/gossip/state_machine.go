@@ -30,6 +30,7 @@ var transitions = map[endpoint.Status]map[Event]transition{
 	endpoint.StatusNone: {
 		EventJoining:   {endpoint.StatusJoining, false},
 		EventBootstrap: {endpoint.StatusUp, true},
+		EventLeaving:   {endpoint.StatusLeaving, true},
 	},
 	endpoint.StatusJoining: {
 		EventUp:      {endpoint.StatusUp, true},
