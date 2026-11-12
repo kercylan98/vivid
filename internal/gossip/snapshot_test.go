@@ -15,6 +15,7 @@ type SnapshotActor struct {
 type SnapshotRequest struct{}
 
 type SnapshotResponse struct {
+	ID        string
 	Status    endpoint.Status
 	View      *ClusterView
 	PingCount map[string]uint64
@@ -32,6 +33,7 @@ func (a *SnapshotActor) OnReceive(ctx vivid.ActorContext) {
 			counts[key] = count
 		}
 		ctx.Reply(SnapshotResponse{
+			ID:        a.info.ID(),
 			Status:    a.info.Status,
 			View:      &ClusterView{members: a.view.Members().Clone(), version: a.view.Version().Clone()},
 			PingCount: counts,
