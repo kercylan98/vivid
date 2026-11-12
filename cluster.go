@@ -32,7 +32,7 @@ type ActorSystemClusterOptions struct {
 	Bootstrap               bool          // 配置了种子时仍主动独立启动，默认 false
 	LaunchDelay             time.Duration // 延迟启动时间，避免所有节点同时启动，导致集群瞬间压力过大，通常以随机值设置，默认 50~1000ms
 	GossipInterval          time.Duration // 周期向集群内节点交换视图 gossip 的间隔，默认 200 ms
-	GossipPeersCount        int           // 周期向集群内节点交换视图 gossip 时，向每个节点发送 gossip 的数量，默认 5
+	GossipPeersCount        int           // 每轮 Gossip 最多联络的目标地址数量，默认 5
 	GracefulShutdownTimeout time.Duration // 优雅退出超时时间，默认 10 秒
 	JoinTimeout             time.Duration // 每个种子的初始加入总超时，包含有限重发，默认 3 秒
 	ProbeTimeout            time.Duration // Gossip 直接往返的等待预算，默认 3 秒

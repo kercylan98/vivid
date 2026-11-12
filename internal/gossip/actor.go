@@ -315,7 +315,16 @@ func (a *Actor) onRemoved(ctx vivid.ActorContext) {
 func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessages.SpreadGossip) {
 	now := time.Now()
 	a.refreshReachability(ctx, now)
-	peers := a.view.Members().Unseens(a.info, a.seeds, a.opts.GossipPeersCount)
+	observe := a.reachability != nil && !a.stopping && a.info.Status == endpoint.StatusUp
+	limit := a.opts.GossipPeersCount
+	if observe {
+		// 观察需要看到所有候选地址，不能在分配额度前先随机截断。
+		limit = len(a.view.Members().List()) + len(a.seeds)
+	}
+	peers := a.view.Members().Unseens(a.info, a.seeds, limit)
+	if observe {
+		peers = a.reachability.selectPeers(peers, a.opts.GossipPeersCount)
+	}
 	if len(peers) == 0 {
 		maybeEmitConverged(ctx, a)
 		return
@@ -325,7 +334,7 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 	ping := a.preparePing(spreadGossip.GossipType)
 
 	for _, peer := range peers {
-		if a.reachability != nil && !a.stopping && a.info.Status == endpoint.StatusUp {
+		if observe {
 			sequence := a.reachability.begin(peer, a.view.Members().List(), now, a.opts.ProbeTimeout, a.opts.GossipPeersCount)
 			if sequence != 0 {
 				// 多个目标共享只读视图，但各自保留独立的请求序号。

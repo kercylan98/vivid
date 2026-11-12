@@ -45,4 +45,4 @@ system := bootstrap.NewActorSystem(
 
 无种子时独立启动；配置种子后默认必须加入成功，全部失败时保持 Joining 并返回初始加入失败结果。主动建立新组需使用 Bootstrap，结果通过 `system.ClusterReady()` 等待，见[启动与加入就绪](/docs/cluster/runtime/readiness)。
 
-Up 节点会持续联络配置的种子地址，和可联络成员一起按地址去重、随机选取目标，共享 `GossipPeersCount` 的每轮数量限制。旧实例退出不影响该种子地址的后续联络；退出期间不再探测种子。直接往返观察复用相同 Gossip 消息，未完成的观察请求最多为 `GossipPeersCount` 个地址；额度满时仍交换成员视图。可达性使用与配置建议见[本地可达性](/docs/cluster/runtime/reachability)。
+Up 节点会持续联络配置的种子地址，和可联络成员一起按地址去重，共享 `GossipPeersCount` 的每轮数量限制。空闲观察额度优先分配给最久未开始探测的地址，其余发送名额用于随机 Gossip。旧实例退出不影响该种子地址的后续联络；退出期间不再探测种子。直接往返观察复用相同 Gossip 消息，未完成的观察请求最多为 `GossipPeersCount` 个地址；额度满时仍交换成员视图。可达性使用与配置建议见[本地可达性](/docs/cluster/runtime/reachability)。

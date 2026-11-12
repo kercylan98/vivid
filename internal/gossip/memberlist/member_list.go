@@ -134,12 +134,12 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 	out := make([]vivid.ActorRef, 0, len(m.members)+len(seeds))
 	seen := make(map[string]struct{}, len(m.members)+len(seeds))
 	for _, member := range m.members {
-		if member.ActorRef.Equals(local.ActorRef) {
+		if member.ActorRef.GetAddress() == local.ActorRef.GetAddress() {
 			continue
 		}
 		switch member.Status {
 		case endpoint.StatusUp, endpoint.StatusLeaving, endpoint.StatusExiting:
-			address := member.ActorRef.String()
+			address := member.ActorRef.GetAddress()
 			if _, exists := seen[address]; exists {
 				continue
 			}
@@ -150,10 +150,10 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 	// 种子是联络地址，旧实例的退出墓碑不能阻止同地址新实例的发现；退出期间不再探测种子。
 	if local.Status == endpoint.StatusUp {
 		for _, seed := range seeds {
-			if seed == nil || seed.Equals(local.ActorRef) {
+			if seed == nil || seed.GetAddress() == local.ActorRef.GetAddress() {
 				continue
 			}
-			id := seed.String()
+			id := seed.GetAddress()
 			if _, exists := seen[id]; exists {
 				continue
 			}

@@ -88,3 +88,28 @@ func TestMemberList_UnseensInstances(t *testing.T) {
 	}
 	assert.Equal(t, members.GetCoordinatorNodeID(), reversed.GetCoordinatorNodeID())
 }
+
+func TestMemberList_UnseensAddressBudget(t *testing.T) {
+	localRef, err := actor.NewRef("127.0.0.1:10001", "/@gossip")
+	require.NoError(t, err)
+	local := endpoint.NewInformation(localRef, time.Now())
+	local.Status = endpoint.StatusUp
+	members := memberlist.New(log.GetDefault())
+	members.Upsert(local)
+	for _, item := range []struct{ address, path string }{
+		{localRef.GetAddress(), "/old-gossip"},
+		{"127.0.0.1:10002", "/@gossip"},
+		{"127.0.0.1:10002", "/old-gossip"},
+	} {
+		ref, err := actor.NewRef(item.address, item.path)
+		require.NoError(t, err)
+		info := endpoint.NewInformation(ref, time.Now())
+		info.Status = endpoint.StatusUp
+		members.Upsert(info)
+	}
+	seed, err := actor.NewRef("127.0.0.1:10002", "/seed-alias")
+	require.NoError(t, err)
+	peers := members.Unseens(local, []vivid.ActorRef{seed}, 10)
+	require.Len(t, peers, 1, "目标数量按地址计费，不因引用路径或实例历史重复占用")
+	assert.Equal(t, seed.GetAddress(), peers[0].GetAddress())
+}

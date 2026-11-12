@@ -24,16 +24,20 @@ type reachabilityProbe struct {
 // localReachability 仅在 Gossip Actor 线程中访问；未完成请求按地址去重且数量有界。
 // 时间来自本地 time.Now，保留单调时钟，不比较远端时间戳。
 type localReachability struct {
-	observations map[string]reachabilityObservation
-	pending      map[string]reachabilityProbe
-	sequence     uint64
-	changed      bool
+	observations  map[string]reachabilityObservation
+	pending       map[string]reachabilityProbe
+	attempts      map[string]probeAttempt
+	candidates    []probeCandidate
+	scheduleRound uint64
+	sequence      uint64
+	changed       bool
 }
 
 func newLocalReachability() *localReachability {
 	return &localReachability{
 		observations: make(map[string]reachabilityObservation),
 		pending:      make(map[string]reachabilityProbe),
+		attempts:     make(map[string]probeAttempt),
 	}
 }
 
@@ -75,6 +79,7 @@ func (r *localReachability) begin(peer vivid.ActorRef, members []*endpoint.Infor
 		}
 	}
 	r.pending[key] = probe
+	r.attempts[key] = probeAttempt{sequence: probe.sequence, round: r.scheduleRound}
 	return probe.sequence
 }
 
@@ -130,6 +135,8 @@ func (r *localReachability) reset() {
 	r.changed = len(r.observations) > 0
 	clear(r.observations)
 	clear(r.pending)
+	clear(r.attempts)
+	r.candidates = nil
 }
 
 func (a *Actor) refreshReachability(ctx vivid.ActorContext, now time.Time) {

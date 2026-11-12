@@ -32,7 +32,7 @@ description: 节点地址、启动顺序、连接认证与分区恢复验证
 
 ## 持续观察
 
-进入 Up 后，节点定期与抽样成员及配置的种子交换视图。使用 `ClusterSnapshot()` 查询本地成员，通过成员的 `Reachability` 读取本地往返观察，订阅 `ves.ClusterMembersChangedEvent` 和 `ves.ClusterReachabilityChangedEvent` 观察后续变化，见[本地成员查询](/docs/cluster/runtime/context)与[成员事件](/docs/cluster/events/events)。
+进入 Up 后，节点在每轮目标数限制内与成员及配置的种子交换视图。使用 `ClusterSnapshot()` 查询本地成员，通过成员的 `Reachability` 读取本地往返观察，订阅 `ves.ClusterMembersChangedEvent` 和 `ves.ClusterReachabilityChangedEvent` 观察后续变化，见[本地成员查询](/docs/cluster/runtime/context)与[成员事件](/docs/cluster/events/events)。
 
 可达性观察复用 Gossip 消息，详见[本地可达性](/docs/cluster/runtime/reachability)。
 
