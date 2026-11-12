@@ -57,11 +57,19 @@ type Remoting struct {
 	endpointManager    *EndpointManager
 }
 
-// OnPrelaunch implements [vivid.PrelaunchActor].
+// OnPrelaunch 在注册前创建监听，使监听失败同步返回启动调用方。
 func (r *Remoting) OnPrelaunch(ctx vivid.PrelaunchContext) error {
-	r.endpointManager = newEndpointManager()
 	// 注册多阶段终止以支持优雅退出
-	return ctx.WithPhaseKill(r.phaseKillCompleted, r.stopTimeout, r.OnReceive)
+	if err := ctx.WithPhaseKill(r.phaseKillCompleted, r.stopTimeout, r.OnReceive); err != nil {
+		return err
+	}
+	listener, err := newListener(r.bindAddr, r.tlsConfig)
+	if err != nil {
+		return vivid.ErrorRemotingListen.With(err)
+	}
+	r.listener = listener
+	r.endpointManager = newEndpointManager()
+	return nil
 }
 
 func (r *Remoting) OnReceive(ctx vivid.ActorContext) {
@@ -78,14 +86,7 @@ func (r *Remoting) OnReceive(ctx vivid.ActorContext) {
 }
 
 func (r *Remoting) onLaunch(ctx vivid.ActorContext) {
-	listener, err := newListener(r.bindAddr, r.tlsConfig)
-	if err != nil {
-		ctx.Failed(vivid.ErrorRemotingListen.With(err))
-		return
-	}
-
-	r.listener = listener
-	if _, err = ctx.ActorOf(newAcceptor(r.availableSignal, listener, r.endpointManager, r.advertiseAddr, r.codec, r.envelopHandler, r.bufferPolicy, r.retryPolicy, r.associationPolicy), vivid.WithActorName("acceptor")); err != nil {
+	if _, err := ctx.ActorOf(newAcceptor(r.availableSignal, r.listener, r.endpointManager, r.advertiseAddr, r.codec, r.envelopHandler, r.bufferPolicy, r.retryPolicy, r.associationPolicy), vivid.WithActorName("acceptor")); err != nil {
 		ctx.Failed(vivid.ParseError(err))
 		return
 	}

@@ -27,14 +27,10 @@ import (
 type ActorSystem interface {
 	actorBasic // 内嵌 actorCore 接口，继承 Actor 系统基础能力
 
-	// Start 启动当前 ActorSystem 实例。
-	//
-	// 主要功能与行为说明：
-	//   - 调用后会启动 ActorSystem 及其全部托管的 Actor（包括根 Actor 及所有子 Actor）。
-	//   - 方法实现采用同步阻塞（blocking）方式，调用者会被挂起，直到所有 Actor 启动完成并返回。
-	//   - 启动流程包括初始化 ActorSystem 及其内部组件，如远程通信、指标收集等。
-	//   - 用于应用生命周期管理，可保障启动前所有未处理消息与状态持久化等任务优雅完成，防止资源泄漏及并发冲突。
-	//   - 支持可选的超时参数，用于控制启动过程的时间限制。若超时，系统会立即终止并返回错误。
+	// Start 同步初始化 ActorSystem 运行时及内部组件。
+	// 启用 Remoting 时，成功返回表示监听已创建；监听失败返回包含底层原因的启动错误。
+	// Actor 的 OnLaunch 和集群加入仍异步执行，初始加入结果通过 ClusterReady 等待。
+	// 启动失败会尝试停止已创建的组件；失败实例不可重启，应重新创建系统。
 	Start() error
 
 	// Stop 优雅地停止当前 ActorSystem 实例。

@@ -38,7 +38,9 @@ description: Remoting 启用、消息注册、Codec 与位置透明
 - **bindAddr**（必填）：本机监听地址，如 `"0.0.0.0:8080"`。框架在此地址上启动 Listener 接受连接。
 - **advertiseAddr**（可选）：其他节点可访问的地址，例如 `"node1.example.com:8080"`。不传则使用 bindAddr；监听所有网卡或使用端口映射时，应显式设置可访问的地址与端口。
 
-Remoting 使用 TCP 通信。当前 `Start()` 返回尚不代表远程监听已就绪，部署时应验证监听地址实际可连接。
+Remoting 使用 TCP 通信。启用后，`Start()` 成功返回表示本地监听已创建；端口占用、监听配置错误会使启动失败，可使用 `errors.Is(err, vivid.ErrorRemotingListen)` 判断，并通过 `errors.As` 获取底层原因。启动失败的实例不可重启，应修正配置后重新创建系统。
+
+监听创建成功不代表远端可达、集群加入成功或业务已就绪；部署探针仍需按服务需求验证。
 
 双方同时发送首条消息时，框架在握手确认前完成连接选择，已建立的健康连接会继续复用。`ves.RemotingInboundConnectionEstablishedEvent` 在入站会话可用后发布；它表示传输连接建立，不能代替集群加入结果或业务就绪确认。
 

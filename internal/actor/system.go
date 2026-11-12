@@ -218,16 +218,19 @@ func (s *System) Start() error {
 	s.Logger().Debug("actor system starting")
 
 	availableSignal := make(chan struct{})
-	defer close(availableSignal)
 	systemChains := newSystemChains(availableSignal)
-	startErr := chain.New(chain.WithContext(s.options.Context)).
-		Append(systemChains.initializeCodec(s)).
-		Append(systemChains.spawnGuardActor(s)).
-		Append(systemChains.initializeMetrics(s)).
-		Append(systemChains.initializeRemoting(s)).
-		Append(systemChains.initializeCluster(s)).
-		Append(systemChains.initializeVirtualCoordinator(s)).
-		Run()
+	startErr := func() error {
+		// 回滚前解除组件的启动等待，避免停止流程等待尚未结束的 Start。
+		defer close(availableSignal)
+		return chain.New(chain.WithContext(s.options.Context)).
+			Append(systemChains.initializeCodec(s)).
+			Append(systemChains.spawnGuardActor(s)).
+			Append(systemChains.initializeMetrics(s)).
+			Append(systemChains.initializeRemoting(s)).
+			Append(systemChains.initializeCluster(s)).
+			Append(systemChains.initializeVirtualCoordinator(s)).
+			Run()
+	}()
 
 	if startErr != nil {
 		s.Logger().Error("actor system start failed", log.Any("err", startErr))

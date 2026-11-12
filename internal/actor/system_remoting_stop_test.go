@@ -24,15 +24,6 @@ func stopTestSystem(t *testing.T) *actor.System {
 		err := system.Stop(3 * time.Second)
 		require.True(t, err == nil || errors.Is(err, vivid.ErrorActorSystemAlreadyStopped), "%v", err)
 	})
-	// Start 返回与监听就绪之间仍存在异步窗口，此处只等待测试所需的 TCP 监听。
-	require.Eventually(t, func() bool {
-		conn, err := net.DialTimeout("tcp", system.Ref().GetAddress(), 100*time.Millisecond)
-		if err != nil {
-			return false
-		}
-		_ = conn.Close()
-		return true
-	}, time.Second, time.Millisecond)
 	return system
 }
 

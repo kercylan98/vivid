@@ -3,7 +3,7 @@ title: 启动与加入就绪
 description: 区分运行时启动、加入成功、独立启动与加入失败
 ---
 
-`Start()` 启动运行时及集群组件，加入流程异步执行。需要等待初始结果时，调用 `system.ClusterReady(timeout...).Result()`；Actor 内可使用 `ctx.System().ClusterReady(...).PipeTo(...)` 接收结果。
+`Start()` 同步初始化运行时及集群组件，本地 Remoting 监听创建失败会直接返回错误；Actor 的启动回调与集群加入仍异步执行。需要等待初始加入结果时，调用 `system.ClusterReady(timeout...).Result()`；Actor 内可使用 `ctx.System().ClusterReady(...).PipeTo(...)` 接收结果。
 
 ## 默认启动规则
 
