@@ -122,7 +122,7 @@ func TestActor_GossipRestartProcess(t *testing.T) {
 		if input.Decode(&request) != nil || request == "stop" {
 			return
 		}
-		result, err := system.Ask(ref, gossip.SnapshotRequest{}, time.Second).Result()
+		result, err := system.Ask(ref, gossip.TestSnapshotRequest{}, time.Second).Result()
 		require.NoError(t, err)
 		snapshot := result.(gossip.SnapshotResponse)
 		response := restartSnapshot{ID: snapshot.ID, Fingerprint: snapshot.View.Fingerprint(), Members: make(map[string]restartMember)}

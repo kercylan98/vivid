@@ -13,15 +13,17 @@ description: 基于 Gossip 的成员发现、视图同步与当前能力范围
 
 ## 当前能力范围
 
-当前实现提供成员发现、成员视图同步及退出状态传播。公开接口未提供 `ClusterContext`、`ctx.Cluster()`、`system.Cluster()`、Quorum、加入认证或集群单例能力；版本向量用于视图合并，不能据此推导多数派或脑裂防护保证。
+当前实现提供成员发现、成员视图同步、退出状态传播，以及 `system.ClusterSnapshot()` 本地只读查询和成员变更事件。公开接口未提供 `ClusterContext`、`ctx.Cluster()`、`system.Cluster()`、Quorum、加入认证或集群单例能力；版本向量用于视图合并，不能据此推导多数派或脑裂防护保证。
 
 <Callout type="warn" title="文档适用范围">
-本页、快速开始、配置选项、节点生命周期和多数据中心已按当前实现修正。集群栏目其余旧页面仍包含未实现的接口与配置，接入时以这些页面和当前公共 API 为准。
+本页、快速开始、配置选项、本地成员查询、成员事件、节点生命周期、集群错误和多数据中心已按当前实现修正。集群栏目其余旧页面仍包含未实现的接口与配置，接入时以这些页面和当前公共 API 为准。
 </Callout>
 
 ## 入门与配置
 
 - [快速开始](/docs/cluster/quick-start)：可运行的单节点示例、种子加入与退出。
+- [本地成员查询](/docs/cluster/runtime/context)：读取实例身份与生命周期。
+- [成员事件](/docs/cluster/events/events)：订阅本地成员视图的后续变更。
 - [配置选项](/docs/cluster/config/options)：实际可用的配置函数、默认值及组合行为。
 - [远程通讯](/docs/config/remoting)：地址、业务消息编解码与远程投递。
 - [多数据中心](/docs/cluster/topology/multi-datacenter)：跨机房连接、分区恢复及当前能力边界。

@@ -170,14 +170,17 @@ func (c *systemChains) initializeCluster(system *System) chain.Chain {
 
 		// 创建 gossip actor
 		gossip := gossip.New(system.options.ClusterOptions)
-		system.gossipRef, err = system.ActorOf(gossip)
+		gossipRef, err := system.ActorOf(gossip)
 		if err != nil {
 			return err
 		}
+		system.statusLock.Lock()
+		system.gossipRef = gossipRef
+		system.statusLock.Unlock()
 
 		// 注册停止优先级
 		system.TellSelf(&guard.RegisterStopPriority{
-			ActorRef: system.gossipRef,
+			ActorRef: gossipRef,
 			Priority: remotingStopPriority,
 		})
 		return nil

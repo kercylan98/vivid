@@ -71,6 +71,10 @@ type ActorSystem interface {
 
 	// Probe 探测指定 Actor 心跳状态
 	Probe(ref ActorRef, timeout ...time.Duration) Future[*Heartbeat]
+
+	// ClusterSnapshot 查询本地成员视图，超时规则与 Ask 相同；不会探测远端节点。
+	// 未启动、已停止或未启用集群时，Future 返回相应错误。
+	ClusterSnapshot(timeout ...time.Duration) Future[ClusterSnapshot]
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。

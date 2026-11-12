@@ -46,6 +46,9 @@ type Actor struct {
 	phaseKillCompleted   chan struct{}                    // 多阶段终止流程完成信号。
 	coordinatorNodeID    string                           // 当前的协调者节点 ID
 	convergenceStartedAt time.Time                        // 最近一次视图变化的时间，用于计算收敛耗时
+	viewRevision         uint64                           // 本地观察序号，与本实例 ID 一起标识快照
+	snapshot             *clusterSnapshot                 // 当前视图的只读快照
+	membersChanged       bool                             // 本次合并是否接收了成员更新
 }
 
 // FixedOptions implements [vivid.FixedOptionActor].
@@ -69,6 +72,9 @@ func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 
 	// 创建集群视图
 	a.view = NewClusterView(ctx.Logger())
+	a.viewRevision = 0
+	a.snapshot = nil
+	a.membersChanged = false
 
 	// 注册多阶段终止以支持优雅退出
 	a.phaseKillCompleted = make(chan struct{})
@@ -92,6 +98,8 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 	switch m := ctx.Message().(type) {
 	case *vivid.OnLaunch:
 		a.onLaunch(ctx)
+	case SnapshotRequest:
+		ctx.Reply(a.currentSnapshot())
 	case *gossipmessages.Ping:
 		a.onPing(ctx, m)
 	case *gossipmessages.Pong:
@@ -233,6 +241,9 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 			a.mergeMember(member, ping.Version)
 		}
 	}
+	if a.membersChanged {
+		a.publishMembersChanged(ctx)
+	}
 	maybeEmitConverged(ctx, a)
 
 	// 避免远程发送序列化过程中被修改。
@@ -246,6 +257,9 @@ func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 		if member.ID() != pong.Info.ID() {
 			a.mergeMember(member, pong.Version)
 		}
+	}
+	if a.membersChanged {
+		a.publishMembersChanged(ctx)
 	}
 	maybeEmitConverged(ctx, a)
 }
@@ -264,6 +278,7 @@ func (a *Actor) mergeMember(info *endpoint.Information, version *versionvector.V
 	}
 	isNew := a.view.Members().Upsert(info)
 	a.view.Version().Update(id, remoteVersion)
+	a.membersChanged = true
 	return isNew
 }
 

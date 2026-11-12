@@ -197,7 +197,7 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 				refs = append(refs, ref)
 			}
 			read := func(i int) (gossip.SnapshotResponse, bool) {
-				result, err := systems[i].Ask(refs[i], gossip.SnapshotRequest{}, time.Second).Result()
+				result, err := systems[i].Ask(refs[i], gossip.TestSnapshotRequest{}, time.Second).Result()
 				if err != nil {
 					return gossip.SnapshotResponse{}, false
 				}

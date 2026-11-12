@@ -19,14 +19,32 @@ type tombstoneRef struct {
 	address string
 }
 
-func (r *tombstoneRef) String() string { return r.address + ":/@gossip" }
+func (r *tombstoneRef) String() string     { return r.address + ":/@gossip" }
+func (r *tombstoneRef) GetAddress() string { return r.address }
 func (r *tombstoneRef) Clone() vivid.ActorRef {
 	return &tombstoneRef{address: r.address}
 }
 
 type tombstoneContext struct {
 	vivid.ActorContext
-	ref vivid.ActorRef
+	ref    vivid.ActorRef
+	stream *snapshotEventStream
+}
+
+type snapshotEventStream struct {
+	vivid.EventStream
+	events []vivid.Message
+}
+
+func (s *snapshotEventStream) Publish(_ vivid.EventStreamContext, event vivid.Message) {
+	s.events = append(s.events, event)
+}
+
+func (c *tombstoneContext) EventStream() vivid.EventStream {
+	if c.stream == nil {
+		c.stream = &snapshotEventStream{}
+	}
+	return c.stream
 }
 
 func (c *tombstoneContext) Ref() vivid.ActorRef              { return c.ref }

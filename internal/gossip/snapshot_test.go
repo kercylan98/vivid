@@ -12,7 +12,7 @@ type SnapshotActor struct {
 	pingCount map[string]uint64
 }
 
-type SnapshotRequest struct{}
+type TestSnapshotRequest struct{}
 
 type SnapshotResponse struct {
 	ID        string
@@ -27,7 +27,7 @@ func NewSnapshotActor(options *vivid.ActorSystemClusterOptions) *SnapshotActor {
 
 func (a *SnapshotActor) OnReceive(ctx vivid.ActorContext) {
 	switch message := ctx.Message().(type) {
-	case SnapshotRequest:
+	case TestSnapshotRequest:
 		counts := make(map[string]uint64, len(a.pingCount))
 		for key, count := range a.pingCount {
 			counts[key] = count

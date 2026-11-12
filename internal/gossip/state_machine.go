@@ -61,6 +61,7 @@ func changeStatus(ctx vivid.ActorContext, a *Actor, e Event) bool {
 	a.info.Status = t.to
 	a.view.Version().Increment(a.info.ID())
 	a.view.Members().Upsert(a.info)
+	a.publishMembersChanged(ctx)
 
 	// 即刻执行状态变更后的行为，避免下一帧处理导致异常流转
 	a.onStatusChanged(ctx, a.info.Status)
