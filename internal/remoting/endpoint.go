@@ -124,6 +124,7 @@ type endpoint struct {
 	associationPolicy endpointAssociationPolicy
 	association       *endpointAssociation
 	inboundSession    *session // 已通过仲裁，尚未完成握手响应的入站会话
+	fallbackSession   *session // 同时拨号时暂存的非优选入站会话
 	stopping          bool
 	connecting        bool
 	connectAttempt    uint64 // 当前尝试向该端点发起连接尝试的单调递增计数
@@ -177,7 +178,7 @@ func (e *endpoint) onPipeUnexpectedResult(ctx vivid.ActorContext, message vivid.
 				e.connectTask = nil
 			}
 			e.connecting = false
-			e.scheduleRetry(ctx, pipeErr)
+			e.onConnectFailed(ctx, pipeErr)
 		}
 		return
 	}
@@ -202,6 +203,12 @@ func (e *endpoint) onAttachSession(ctx vivid.ActorContext, message endpointAttac
 	}
 
 	if !e.shouldAcceptSession(message.session) {
+		if e.connecting && e.association == nil && e.inboundSession == nil && e.fallbackSession == nil &&
+			message.session.role == sessionRoleInbound && e.preferredSessionRole(message.session) == sessionRoleOutbound {
+			// 等优选握手完成后再关闭，避免对端先收到 EOF 而尚未接管优选连接。
+			e.fallbackSession = message.session
+			return
+		}
 		ctx.Logger().Debug("endpoint rejected duplicate session",
 			log.String("address", e.address),
 			log.Any("role", message.session.role))
@@ -376,21 +383,23 @@ func (e *endpoint) onConnectCompleted(ctx vivid.ActorContext, completed *endpoin
 
 	if pipeErr != nil {
 		e.closeSession(ctx, completed.session, false, "connect task failed")
-		e.scheduleRetry(ctx, pipeErr)
+		e.onConnectFailed(ctx, pipeErr)
 		return
 	}
 
 	if completed.err != nil {
-		e.scheduleRetry(ctx, completed.err)
+		e.onConnectFailed(ctx, completed.err)
 		return
 	}
 
 	if completed.session == nil {
 		nilSessionErr := vivid.ErrorRemotingHandshake.WithMessage("endpoint connect completed without session")
-		e.scheduleRetry(ctx, nilSessionErr)
+		e.onConnectFailed(ctx, nilSessionErr)
 		return
 	}
 
+	// 已收到优选连接的握手响应，对端必已完成入站接管，才能释放备用连接。
+	e.closeFallbackSession(ctx, "outbound handshake completed")
 	if !e.shouldAcceptSession(completed.session) {
 		e.closeSession(ctx, completed.session, false, "connect completed with duplicate session")
 		return
@@ -403,6 +412,24 @@ func (e *endpoint) onConnectCompleted(ctx vivid.ActorContext, completed *endpoin
 
 	ctx.EventStream().Publish(ctx, ves.RemotingOutboundConnectionEstablishedEvent{Address: e.address})
 	e.trySend(ctx)
+}
+
+func (e *endpoint) onConnectFailed(ctx vivid.ActorContext, cause error) {
+	if e.fallbackSession != nil {
+		// 复用已经接入的连接，不增加拨号次数或消耗额外重试预算。
+		next := e.fallbackSession
+		e.fallbackSession = nil
+		e.onAttachSession(ctx, endpointAttachSession{session: next})
+		return
+	}
+	e.scheduleRetry(ctx, cause)
+}
+
+func (e *endpoint) closeFallbackSession(ctx vivid.ActorContext, reason string) {
+	if e.fallbackSession != nil {
+		e.closeSession(ctx, e.fallbackSession, false, reason)
+		e.fallbackSession = nil
+	}
 }
 
 func (e *endpoint) onReaderStopped(ctx vivid.ActorContext, message endpointReaderStopped) {
@@ -545,6 +572,7 @@ func (e *endpoint) onKill(ctx vivid.ActorContext) {
 		e.closeSession(ctx, e.inboundSession, false, "endpoint closing")
 		e.inboundSession = nil
 	}
+	e.closeFallbackSession(ctx, "endpoint closing")
 	// 仅关闭 TCP 会话，不再 Kill 子 Actor。
 	// 框架的 doKill 在调用此行为之前已向所有子 Actor 发送了 Kill 消息。
 	if e.association != nil {

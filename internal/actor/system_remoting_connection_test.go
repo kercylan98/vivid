@@ -175,6 +175,7 @@ func TestSystem_RemotingSimultaneousFirstMessages(t *testing.T) {
 				defer proxy.Close()
 				system := actor.NewSystem(
 					vivid.WithActorSystemRemoting(backend, proxy.listener.Addr().String()),
+					vivid.WithActorSystemRemotingOption(vivid.WithActorSystemRemotingReconnectLimit(0)),
 					vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError), log.WithErrorStack(false))),
 				)
 				require.NoError(t, system.Start())

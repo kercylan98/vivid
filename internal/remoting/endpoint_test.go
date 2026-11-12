@@ -2,14 +2,43 @@ package remoting
 
 import (
 	"errors"
+	"io"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEndpoint_SimultaneousInboundBudget(t *testing.T) {
+	manager := newEndpointManager()
+	defer manager.Stop()
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	pending := manager.newPendingConnection(0)
+	require.True(t, pending.attach(conn))
+	inbound := newSession("z:1", "a:1", conn, sessionRoleInbound)
+	inbound.pending = pending
+	e := &endpoint{address: "z:1", advertiseAddr: "a:1", connecting: true}
+	e.onAttachSession(&endpointTestContext{}, endpointAttachSession{session: inbound})
+	// 优选拨号未完成前不能关闭反向连接，否则对端可能先将待发消息转为死信。
+	require.NoError(t, peer.SetReadDeadline(time.Now().Add(20*time.Millisecond)))
+	_, err := peer.Read(make([]byte, 1))
+	var timeout net.Error
+	require.ErrorAs(t, err, &timeout)
+	require.True(t, timeout.Timeout())
+	require.True(t, e.connecting)
+	require.False(t, e.retryScheduled)
+	// 暂存连接继续受原握手预算约束，不因仲裁而取得无限生命周期。
+	pending.startTimeout(20 * time.Millisecond)
+	require.NoError(t, peer.SetReadDeadline(time.Now().Add(time.Second)))
+	_, err = peer.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.EOF)
+	require.False(t, pending.release())
+}
 
 type endpointTestContext struct{ vivid.ActorContext }
 
@@ -58,12 +87,15 @@ func TestEndpoint_SessionAdmission(t *testing.T) {
 
 func TestEndpoint_StaleConnectCompletion(t *testing.T) {
 	for _, stopping := range []bool{false, true} {
-		e := &endpoint{connectAttempt: 2, connecting: true, retryCount: 1, stopping: stopping}
+		fallback := newSession("m:1", "a:1", nil, sessionRoleInbound)
+		e := &endpoint{connectAttempt: 2, connecting: true, retryCount: 1, stopping: stopping, fallbackSession: fallback}
 		// 旧拨号错误不得清除新尝试或启动另一轮重试，停止后也不再执行连接逻辑。
 		e.onConnectCompleted(nil, &endpointConnectCompleted{attempt: 1, err: errors.New("old dial failed")}, nil)
 		assert.True(t, e.connecting)
 		assert.Equal(t, 1, e.retryCount)
 		assert.False(t, e.retryScheduled)
+		assert.Same(t, fallback, e.fallbackSession)
+		assert.False(t, fallback.isClosed())
 	}
 	conn, peer := net.Pipe()
 	defer peer.Close()

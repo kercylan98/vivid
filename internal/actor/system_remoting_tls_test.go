@@ -78,7 +78,12 @@ func TestSystem_RemotingTLSExchange(t *testing.T) {
 		for _, first := range []int{0, 1, 2} {
 			t.Run("mutual="+strconv.FormatBool(mutual)+"/first="+strconv.Itoa(first), func(t *testing.T) {
 				configs := []*tls.Config{ca.Config(t, mutual), ca.Config(t, mutual)}
-				systems := []*actor.System{startRemotingTLSSystem(t, configs[0]), startRemotingTLSSystem(t, configs[1])}
+				var systems []*actor.System
+				for _, config := range configs {
+					systems = append(systems, startRemotingTLSSystem(t, config, vivid.WithActorSystemRemotingOption(
+						vivid.WithActorSystemRemotingReconnectLimit(0),
+					)))
+				}
 				refs := make([]vivid.ActorRef, 2)
 				for i, system := range systems {
 					ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
