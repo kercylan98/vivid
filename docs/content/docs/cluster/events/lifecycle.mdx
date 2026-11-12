@@ -1,61 +1,29 @@
 ---
 title: 节点生命周期
-description: 集群节点状态机与阶段说明
+description: 当前集群成员状态、退出与重新加入边界
 ---
 
-集群节点的生命周期遵循规范化的状态流转，从启动到退出依次经过：启动 → 发现/加入 → 同步 → 活跃 ⇄ 故障恢复；活跃 → 离开 → 退出 → 停止。
+集群成员通过 Gossip 交换生命周期状态。状态反映加入与退出进度，不表示实时网络可达性。
 
-## 阶段说明
-
-| 阶段 | 说明 |
+| 状态 | 含义 |
 |------|------|
-| **启动 (Starting)** | OnLaunch：加载配置、初始化（由 Actor 系统完成） |
-| **发现 (Discovering)** | 尝试连接种子，在 onLaunch 中 tryJoinSeeds |
-| **加入 (Joining)** | 发送 JoinRequest、等待接受；失败则按指数退避重试（InitialJoinRetryDelay → MaxJoinRetryDelay） |
-| **同步 (Syncing)** | 接收集群视图 MergeFromWithOptions(resp.View)，在 tryJoinSeeds 成功后完成 |
-| **活跃 (Active)** | 参与 Gossip（runGossipRound）、故障检测（runFailureDetection）、响应 Join/GetView/Leave |
-| **离开 (Leaving)** | handleLeaveRequest：广播离开视图、进入 Exiting、回复 LeaveAck 并发布 ClusterLeaveCompletedEvent |
-| **退出 (Exiting)** | ExitingReady：停止调度、发布退出完成事件，供 Leave() 侧监听解除阻塞 |
-| **故障恢复** | Joining 时持续重试；Active 时失联节点由故障检测剔除，本节点若失多数派则 tryQuorumRecovery |
+| None | 尚未开始加入 |
+| Joining | 正在向配置的种子发起加入 |
+| Up | 已完成加入流程，或在种子不可达时自举，参与周期 Gossip |
+| Leaving | 已请求退出，传播离开状态 |
+| Exiting | 继续推进退出流程 |
+| Removed | 已完成本节点的退出状态迁移 |
 
-## 状态机简图
+## 启动与退出
 
-<Mermaid diagram={`stateDiagram-v2
-  direction LR
-  [*] --> 启动
-  启动 --> 发现: OnLaunch
-  发现 --> 加入: 向种子 JoinRequest
-  加入 --> 同步: JoinResponse, 合并视图
-  同步 --> 活跃: 启动 Gossip + 故障检测
-  活跃 --> 活跃: Gossip / 故障检测
-  活跃 --> 故障恢复: 失多数派时 tryQuorumRecovery
-  故障恢复 --> 活跃: 拉取视图合并
-  活跃 --> 离开: LeaveRequest
-  离开 --> 退出: 多轮广播, ExitingReady
-  退出 --> 停止: ClusterLeaveCompletedEvent
-  停止 --> [*]
-`} title="节点生命周期状态流转" />
+没有种子或所有种子加入尝试失败时，节点会自举并进入 Up；因此 Up 不代表已经连接到预期集群。Up 节点会继续联络未知或仍处于 Joining 的种子，参见[快速开始](/docs/cluster/quick-start)。
 
-## 成员状态 (MemberStatus)
+正常停止时，节点依次进入 Leaving、Exiting 和 Removed；退出过程受 `GracefulShutdownTimeout` 限制。当前状态推进依据本地视图稳定情况，不提供所有远端已确认退出的保证。
 
-NodeState 中的 Status 字段表示成员在视图中的状态：
+已移除成员及其版本会在当前进程中继续保留，用于拒绝迟到的旧状态更新，不会因局部视图稳定而自动回收。成员地址频繁变化会增加保留记录及 Gossip 传播量。
 
-| 状态 | 说明 |
-|------|------|
-| **Joining** | 正在加入 |
-| **Up** | 健康在线 |
-| **Suspect** | 疑似故障（超时未刷新，但处于 SuspectConfirmDuration 内） |
-| **Unreachable** | 不可达 |
-| **Down** | 已下线 |
-| **Leaving** | 正在离开 |
-| **Exiting** | 正在退出 |
-| **Removed** | 已移除 |
+## 故障与重新加入
 
-**Suspect** 不计入健康数，避免分区时两边都自认 quorum。若配置了 `SuspectConfirmDuration`，超时后先置为 Suspect，经过该时长再从视图剔除。
+当前没有 Suspect、Unreachable 或 Down 成员状态，也没有成员故障检测。进程崩溃或网络分区不会自动将已有成员标记为 Removed；Up 不能作为健康检查或故障迁移的依据。
 
-## 多数据中心下的生命周期
-
-- 通过 ClusterOptions.Datacenter/Rack 设置本节点拓扑，写入 NodeState.Labels，随 Gossip 传播。
-- Gossip 目标选择（GossipTargetSelector）同 DC/同 Region 优先，减少跨 DC 流量、加快本 DC 收敛。
-- 跨 DC 成员可使用 CrossDCFailureDetectionTimeout 单独超时，减少因跨 DC 延迟导致的误判。
-- GetMembers() 返回的 ClusterMemberInfo 含 Datacenter/Rack，便于路由与展示。
+节点身份由广告地址和 Actor 路径组成，尚未隔离同地址的新旧进程实例。同地址重启后的重新加入不具备完整保证，不应据此实现自动接管或跨节点唯一激活。跨机房边界见[多数据中心](/docs/cluster/topology/multi-datacenter)。

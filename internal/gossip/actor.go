@@ -190,8 +190,7 @@ func (a *Actor) onUp(ctx vivid.ActorContext) {
 }
 
 func (a *Actor) onConverged(ctx vivid.ActorContext) {
-	a.view.cleanRemovedMembers(a.info)
-
+	// Removed 记录及其版本需一起保留，局部视图稳定不能证明旧消息已消失。
 	// 计算新的协调者
 	newCoordinator := a.view.Members().GetCoordinatorNodeID()
 

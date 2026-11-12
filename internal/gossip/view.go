@@ -3,7 +3,6 @@ package gossip
 import (
 	"strings"
 
-	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/memberlist"
 	"github.com/kercylan98/vivid/internal/gossip/versionvector"
 	"github.com/kercylan98/vivid/pkg/log"
@@ -35,27 +34,4 @@ func (v *ClusterView) Fingerprint() string {
 		return ""
 	}
 	return strings.Join([]string{v.version.Fingerprint(), v.members.Fingerprint()}, "|")
-}
-
-// cleanRemovedMembers 清理已移除的成员
-func (c *ClusterView) cleanRemovedMembers(localInfo *endpoint.Information) {
-	removed := make([]string, 0)
-	members := c.members.List()
-
-	for _, member := range members {
-		// 保留本地节点，即使状态是REMOVED
-		if member.ID() == localInfo.ID() {
-			continue
-		}
-
-		// 如果成员状态为 REMOVED，并且已超过清理时间
-		if member.Status == endpoint.StatusRemoved {
-			removed = append(removed, member.ID())
-		}
-	}
-
-	// 移除已标记的节点
-	for _, id := range removed {
-		c.version.Remove(id)
-	}
 }
