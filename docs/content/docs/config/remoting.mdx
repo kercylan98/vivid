@@ -1,9 +1,9 @@
 ---
 title: 远程通讯
-description: Remoting 启用、Codec、RegisterCustomMessage 与位置透明
+description: Remoting 启用、消息注册、Codec 与位置透明
 ---
 
-跨节点 Actor 通信需在创建 **ActorSystem** 时启用 **Remoting** 并配置消息**编解码**（Codec 或 RegisterCustomMessage）。配置完成后，**本地与远程的消息投递对业务透明**：**同一套 API**（Tell、Ask、Reply、PipeTo 等）不因目标在本机或远程而改变，无需改写调用方式或增加分支；框架根据 **ActorRef** 的地址自动选择本地投递或跨网络发送，并完成序列化与反序列化。本文说明如何启用 Remoting、配置 Codec 或 RegisterCustomMessage，以及远程连接读失败时的处理。入口配置见 [Actor System 配置](/docs/config/actor-system-config)。
+跨节点 Actor 通信需在创建 **ActorSystem** 时启用 **Remoting** 并配置消息**编解码**（消息注册或外部 Codec）。配置完成后，**本地与远程的消息投递对业务透明**：**同一套 API**（Tell、Ask、Reply、PipeTo 等）不因目标在本机或远程而改变，无需改写调用方式或增加分支；框架根据 **ActorRef** 的地址自动选择本地投递或跨网络发送，并完成序列化与反序列化。本文说明如何启用 Remoting、配置 消息注册或外部 Codec，以及远程连接读失败时的处理。入口配置见 [Actor System 配置](/docs/config/actor-system-config)。
 
 <Mermaid diagram={`flowchart LR
   subgraph 本机
@@ -12,7 +12,7 @@ description: Remoting 启用、Codec、RegisterCustomMessage 与位置透明
   end
   subgraph 框架
     Ref[ActorRef 地址]
-    Codec[Codec / RegisterCustomMessage]
+    Codec[消息注册 / 外部 Codec]
   end
   subgraph 远程
     Net[网络]
@@ -40,38 +40,78 @@ description: Remoting 启用、Codec、RegisterCustomMessage 与位置透明
 
 TCP 与 UDP 是否复用同一端口以当前版本实现与发布说明为准。
 
-## 编解码（二选一）
+## 消息编解码
 
-跨网络传递的消息必须可序列化。两种方式任选其一：
+框架内部消息由系统自动注册。业务消息可按类型注册，或交给外部 Codec；两种方式可以同时使用，**已注册类型优先，未注册类型才交给外部 Codec**。
 
-### 统一 Codec
+### 按类型注册
 
-**WithActorSystemCodec(codec)**：所有消息的序列化/反序列化均通过该 **Codec** 完成。**Codec** 接口为：
+通过 **WithActorSystemMessageRegister** 配置 **MessageRegister**，可使用 **MessageRegisterFN** 注册编码器与解码器。以固定宽度的订单消息为例：
 
 ```go
-type Codec interface {
-    Encode(message Message) ([]byte, error)
-    Decode(data []byte) (Message, error)
+type Order struct {
+    ID    uint64
+    Price float32
+}
+
+func registerOrder(registry vivid.MessageRegistry) {
+    registry.RegisterMessageWithEncoderAndDecoder("Order", new(Order),
+        vivid.MessageEncoderFN(func(w *vivid.Writer, message any) error {
+            order := message.(*Order)
+            w.WriteInteger(order.ID).WriteFloat(order.Price)
+            return w.Err()
+        }),
+        vivid.MessageDecoderFN(func(r *vivid.Reader, message any) error {
+            order := message.(*Order)
+            if err := r.ReadInteger(&order.ID); err != nil {
+                return err
+            }
+            return r.ReadFloat(&order.Price)
+        }),
+    )
 }
 ```
 
-可由业务实现 JSON、MessagePack、Proto 等格式。codec 不能为 nil。适用于消息种类多、希望统一格式或已有现成编解码库的场景。
+创建系统时将注册函数传入，所有通信节点使用相同的注册名称与字段布局：
 
-若希望直接使用 **Protocol Buffers** 作为 Remoting 消息格式，可使用官方维护的 [**vivid-proto**](https://github.com/kercylan98/vivid-proto)，接入方式为 `vivid.WithActorSystemCodec(codec.New())`。完整说明见 [集成：vivid-proto](/docs/integrations/vivid-proto)。
+```go
+system := bootstrap.NewActorSystem(
+    vivid.WithActorSystemRemoting("127.0.0.1:8080"),
+    vivid.WithActorSystemMessageRegister(vivid.MessageRegisterFN(registerOrder)),
+)
+```
 
-### 按类型注册（RegisterCustomMessage）
+示例使用 `github.com/kercylan98/vivid` 和 `github.com/kercylan98/vivid/pkg/bootstrap`，不需要导入内部包。类型自身实现 **MessageCodec** 时，也可通过 `registry.RegisterMessage` 注册。当前注册入口是 **WithActorSystemMessageRegister**，不存在 `RegisterCustomMessage` 函数。
 
-未使用统一 Codec 时，需为**每一种**需要跨节点传输的自定义消息类型调用 **RegisterCustomMessage** 注册 reader/writer：
+### 外部 Codec
 
-- **messageName**：消息在系统中的唯一名称，建议与类型名一致，用于网络协议中区分类型。
-- **reader**（CustomMessageReader）：反序列化时被调用，将字节流按序填入 **message**。
-- **writer**（CustomMessageWriter）：序列化时被调用，将 **message** 的字段按序写出。
+通过 **WithActorSystemCodec(codec)** 接入外部编解码器，接口参数使用公开的 Reader/Writer：
 
-**读写顺序必须一致**。函数签名与 reader/writer 参数类型见 [pkg.go.dev - RegisterCustomMessage](https://pkg.go.dev/github.com/kercylan98/vivid#RegisterCustomMessage)。注册应在 **init** 或应用启动时完成，仅需一次。适用于希望按类型精细控制二进制格式、或与现有协议兼容的场景。
+```go
+type Codec interface {
+    Encode(writer *vivid.Writer, message any) error
+    Decode(reader *vivid.Reader) (any, error)
+}
+```
 
-<Callout type="warn" title="必选其一">
-跨网络传递消息必须：要么设置 **WithActorSystemCodec**，要么为所有需要远程传输的自定义消息类型 **RegisterCustomMessage**，否则远程通信会失败。
-</Callout>
+外部 Codec 只负责消息体。框架统一写入和读取消息类型标识：注册消息使用注册全名，外部消息使用空名称标记；外部 Codec 不需要重复写这一标记。支持多种业务类型时，Codec 自行在消息体内区分类型并恢复对应的 Go 类型。不能返回仅保留字段而丢失消息类型的通用对象来替代原消息。
+
+未注册类型且没有外部 Codec 时，编码返回错误；对方无法识别的注册名称也返回错误，不会转交外部 Codec 猜测。codec 不能为 nil。第三方 Codec 需要匹配当前接口与分帧约定，接入前应验证双向消息往返。
+
+### Reader / Writer 的设计与用法
+
+Reader/Writer 只负责字段读写，不依赖消息注册表或外部 Codec，避免注册编码器调用 `w.Write(message)` 时再次进入自身。需要独立使用时，可通过 `vivid.NewWriter()` 和 `vivid.NewReader(data)` 创建。
+
+- **WriteInteger / ReadInteger**：Go 1.27 泛型方法，接受固定宽度整数及其自定义类型；例如 `w.WriteInteger(uint32(42))`、`r.ReadInteger(&id)`。泛型入口不接受 int/uint，协议字段应明确宽度。
+- **WriteFloat / ReadFloat**：泛型浮点读写，float32 为 4 字节，float64 为 8 字节，支持自定义浮点类型。
+- **WriteBool、WriteString、WriteBytes** 与对应的 **Read** 方法：已知字段类型时直接使用。
+- **Write(values...) / Read(destinations...)**：方便处理混合字段，复合类型使用反射；Read 目标必须为非 nil 指针。通用路径的 int/uint 固定使用 8 字节。
+
+数值使用大端序，浮点数使用 IEEE 754。字符串、切片、数组与 map 使用 uint32 长度前缀；结构体优先使用自身的 MessageCodec，否则按声明顺序处理导出字段。字段读写不携带字段名或结构体类型，双方必须使用一致的布局，不能替代远程消息注册。nil 指针、nil 接口和循环引用不受支持；nil 与空集合均编码为零长度，不保留两者的区别。
+
+首次错误会保留，后续读写停止；失败前的字段可能已经更新，解码不是事务操作。外部消息与字段格式均已调整，所有通信节点需使用同一版本。
+
+Reader 的字符串和字节切片不会借用输入数据；读取期间不要修改输入缓冲。Reader 可复用目标切片容量以减少重复解码的分配，原切片的别名也会观察到修改；需要保留旧值时应使用新的目标或复制数据。Writer.Bytes 返回当前缓冲的视图，继续写入可能改变已有视图；归还内部 Writer 后框架不会复用其底层缓冲，已返回数据仍可由网络层持有。Reader/Writer 实例不可并发使用。
 
 ## 远程连接读失败处理
 

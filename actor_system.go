@@ -349,9 +349,9 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 
 // WithActorSystemRemoting 提供 ActorSystemOption，用于配置远程通信组件的监听及广告地址。
 //
-// 注意：如果需要跨网络进行消息序列化，必须通过 WithCodec 显式指定 Codec，
+// 注意：如果需要跨网络进行消息序列化，必须通过 WithActorSystemCodec 显式指定 Codec，
 //
-//	或者为所有自定义消息通过 RegisterCustomMessage 注册对应的消息读写器，
+//	或者为所有自定义消息通过 WithActorSystemMessageRegister 注册对应的消息读写器，
 //	否则消息无法被正确地序列化和反序列化，导致分布式或远程通信失败。
 //
 // 用途说明：
@@ -387,7 +387,7 @@ func WithActorSystemgClusterOption(options ...ActorSystemClusterOption) ActorSys
 // WithActorSystemCodec 提供 ActorSystemOption，用于配置远程消息的序列化与反序列化 Codec。
 //
 // 如果希望 ActorSystem 支持跨网络或分布式消息传递，必须通过本选项显式设置 Codec，
-// 否则需要对所有自定义消息类型调用 RegisterCustomMessage 注册对应的消息读写器。
+// 否则需要对所有自定义消息类型调用 WithActorSystemMessageRegister 注册对应的消息读写器。
 // 否则系统无法完成消息的跨节点编解码，导致远程通信失败。
 //
 // 参数：
@@ -395,7 +395,7 @@ func WithActorSystemgClusterOption(options ...ActorSystemClusterOption) ActorSys
 func WithActorSystemCodec(codec Codec) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		if codec == nil {
-			panic("ActorSystem Codec (WithCodec) must not be nil: required for cross-network message serialization or register custom message readers/writers with RegisterCustomMessage.")
+			panic("ActorSystem Codec (WithActorSystemCodec) must not be nil: required for cross-network message serialization or register custom message readers/writers with WithActorSystemMessageRegister.")
 		}
 		opts.RemotingCodec = codec
 	}

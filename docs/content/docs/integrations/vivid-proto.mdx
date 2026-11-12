@@ -3,21 +3,25 @@ title: Protocol Buffers Codec
 description: 为 Vivid Remoting 提供 Proto 消息编解码的官方集成
 ---
 
-**vivid-proto** 由 [Vivid](https://github.com/kercylan98/vivid) **官方维护**，为 Remoting 提供基于 **Protocol Buffers** 的远程消息编解码器（Codec），用于 [Remoting](/docs/config/remoting) 跨节点通信时的序列化与反序列化。使用本库后，无需自行实现 `vivid.Codec` 或为每种消息调用 `RegisterCustomMessage`，即可用 Proto 消息进行跨节点 Tell/Ask。
+**vivid-proto** 由 [Vivid](https://github.com/kercylan98/vivid) **官方维护**，为 Remoting 提供基于 **Protocol Buffers** 的远程消息编解码器（Codec），用于 [Remoting](/docs/config/remoting) 跨节点通信时的序列化与反序列化。使用本库后，无需自行实现 `vivid.Codec` 或为每种消息调用 `WithActorSystemMessageRegister`，即可用 Proto 消息进行跨节点 Tell/Ask。
 
 <Callout type="info" title="与 Vivid 主库的关系">
-vivid-proto 与主库**分库发布**（[github.com/kercylan98/vivid-proto](https://github.com/kercylan98/vivid-proto)），按需引入：仅在使用 Remoting 且希望采用 Proto 作为线缆格式时需要；未启用 Remoting 或使用其他 Codec/RegisterCustomMessage 时无需依赖。
+vivid-proto 与主库**分库发布**（[github.com/kercylan98/vivid-proto](https://github.com/kercylan98/vivid-proto)），按需引入：仅在使用 Remoting 且希望采用 Proto 作为线缆格式时需要；未启用 Remoting 或使用其他 Codec/WithActorSystemMessageRegister 时无需依赖。
+</Callout>
+
+<Callout type="warn" title="当前接口适配">
+当前 Vivid 使用 Go 1.27 的 Reader/Writer 接口，外部 Codec 只处理消息体，框架统一处理类型标识。本页的集成示例保留为历史参考；本轮未更新或验证独立发布的 vivid-proto 版本，不能直接视为与当前主库兼容。接入前请按[当前编解码接口](/docs/config/remoting#外部-codec)适配并验证跨节点往返。
 </Callout>
 
 ## 特性
 
-- **实现 vivid.Codec**：可直接作为 [WithActorSystemCodec](/docs/config/actor-system-config) 传入，与 Vivid Remoting 无缝配合。
+- **实现 vivid.Codec**：适配当前接口后可作为 [WithActorSystemCodec](/docs/config/actor-system-config) 传入，与 Vivid Remoting 无缝配合。
 - **多消息类型**：通过「类型全名 + 二进制载荷」的包装格式，支持多种 Proto 消息类型，无需为每种消息单独注册。
 - **依赖精简**：仅依赖 `github.com/kercylan98/vivid` 与 `google.golang.org/protobuf`。
 
 ## 安装与要求
 
-- **Go**：1.26+
+- **Go**：1.27+
 - **安装**：
 
 ```bash
@@ -129,14 +133,14 @@ func newRemoteSystem(bindAddr string, c *codec.Codec) vivid.ActorSystem {
 
 更多细节与 proto 定义可参考 [vivid-proto 仓库 example](https://github.com/kercylan98/vivid-proto/tree/main/example)。
 
-## 与 RegisterCustomMessage 的取舍
+## 与 WithActorSystemMessageRegister 的取舍
 
 | 方式 | 适用场景 |
 |------|----------|
 | **vivid-proto（统一 Codec）** | 希望统一用 Proto 作为 Remoting 线缆格式，消息种类较多，且可接受「跨节点消息均为 proto.Message」的约束。 |
-| **RegisterCustomMessage** | 需要与既有二进制协议兼容、或仅少量消息类型且希望精细控制每类读写逻辑时使用。 |
+| **WithActorSystemMessageRegister** | 需要与既有二进制协议兼容、或仅少量消息类型且希望精细控制每类读写逻辑时使用。 |
 
-二者二选一：若已设置 **WithActorSystemCodec**，则不再使用 RegisterCustomMessage 处理远程消息。详见 [远程通讯 - 编解码](/docs/config/remoting#编解码二选一)。
+二者二选一：若已设置 **WithActorSystemCodec**，则不再使用 WithActorSystemMessageRegister 处理远程消息。详见 [远程通讯 - 编解码](/docs/config/remoting#编解码二选一)。
 
 ## 相关链接
 

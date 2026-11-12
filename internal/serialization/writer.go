@@ -1,31 +1,32 @@
 package serialization
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math"
 	"reflect"
-	"time"
 )
 
 type Writer struct {
-	buf   []byte
-	err   error
-	codec *VividCodec
+	buf []byte
+	err error
 }
 
-func GetWriter(codec *VividCodec) *Writer {
+// NewWriter 创建独立的字段写入器。
+func NewWriter() *Writer { return &Writer{} }
+
+func GetWriter() *Writer {
 	w := writerPool.Get().(*Writer)
-	w.codec = codec
 	return w
 }
 
 func PutWriter(w *Writer) {
+	// 已返回的字节可能仍被网络层持有，只复用 Writer，不复用底层缓冲区。
 	w.buf = nil
 	w.err = nil
 	writerPool.Put(w)
 }
 
+// Bytes 返回当前编码数据；归还 Writer 后数据仍有效，后续编码不会复用该缓冲区。
 func (w *Writer) Bytes() []byte { return w.buf }
 func (w *Writer) Err() error    { return w.err }
 
@@ -34,141 +35,89 @@ func (w *Writer) ensure(n int) {
 		return
 	}
 	need := len(w.buf) + n
-	if cap(w.buf) < need {
-		b := make([]byte, len(w.buf), need*2)
-		copy(b, w.buf)
-		w.buf = b
-	}
+	capacity := max(64, need*2)
+	buf := make([]byte, len(w.buf), capacity)
+	copy(buf, w.buf)
+	w.buf = buf
 }
 
-func (w *Writer) Write(v ...any) *Writer {
-	for _, x := range v {
+// Write 依次写入多个值；已知宽度的数值可直接使用泛型 WriteInteger 或 WriteFloat。
+func (w *Writer) Write(values ...any) *Writer {
+	for _, value := range values {
 		if w.err != nil {
-			return w
+			break
 		}
-		switch val := x.(type) {
-		case byte:
-			w.ensure(1)
-			w.buf = append(w.buf, val)
+		switch v := value.(type) {
+		case uint8:
+			w.WriteInteger(v)
 		case int8:
-			w.ensure(1)
-			w.buf = append(w.buf, byte(val))
+			w.WriteInteger(v)
 		case uint16:
-			w.ensure(2)
-			w.buf = append(w.buf, 0, 0)
-			binary.BigEndian.PutUint16(w.buf[len(w.buf)-2:], val)
+			w.WriteInteger(v)
 		case int16:
-			w.Write(uint16(val))
+			w.WriteInteger(v)
 		case uint32:
-			w.ensure(4)
-			w.buf = append(w.buf, 0, 0, 0, 0)
-			binary.BigEndian.PutUint32(w.buf[len(w.buf)-4:], val)
+			w.WriteInteger(v)
 		case int32:
-			w.Write(uint32(val))
+			w.WriteInteger(v)
 		case uint64:
-			w.ensure(8)
-			w.buf = append(w.buf, 0, 0, 0, 0, 0, 0, 0, 0)
-			binary.BigEndian.PutUint64(w.buf[len(w.buf)-8:], val)
+			w.WriteInteger(v)
 		case int64:
-			w.Write(uint64(val))
-		case bool:
-			if val {
-				w.Write(byte(1))
-			} else {
-				w.Write(byte(0))
-			}
+			w.WriteInteger(v)
+		case int:
+			w.WriteInteger(int64(v))
+		case uint:
+			w.WriteInteger(uint64(v))
 		case float32:
-			w.Write(math.Float32bits(val))
+			w.WriteFloat(v)
 		case float64:
-			w.Write(math.Float64bits(val))
-		case []byte:
-			w.Write(uint32(len(val)))
-			w.ensure(len(val))
-			w.buf = append(w.buf, val...)
+			w.WriteFloat(v)
+		case bool:
+			w.WriteBool(v)
 		case string:
-			w.Write([]byte(val))
+			w.WriteString(v)
+		case []byte:
+			w.WriteBytes(v)
 		default:
-			w.writeReflect(reflect.ValueOf(val))
+			w.writeReflect(reflect.ValueOf(value))
 		}
 	}
 	return w
 }
 
-func (w *Writer) writeReflect(v reflect.Value) {
+func (w *Writer) WriteBool(value bool) *Writer {
+	var b uint8
+	if value {
+		b = 1
+	}
+	return w.WriteInteger(b)
+}
+
+func (w *Writer) writeLength(n int) {
 	if w.err != nil {
 		return
 	}
-	switch v.Kind() {
-	case reflect.Ptr, reflect.Interface:
-		if !v.IsNil() {
-			w.writeReflect(v.Elem())
-		}
-	case reflect.Slice, reflect.Array:
-		n := v.Len()
-		w.Write(uint32(n))
-		for i := 0; i < n; i++ {
-			w.Write(v.Index(i).Interface())
-		}
-	case reflect.Map:
-		n := v.Len()
-		w.Write(uint32(n))
-		for _, key := range v.MapKeys() {
-			w.Write(key.Interface())
-			w.Write(v.MapIndex(key).Interface())
-		}
-	case reflect.Struct:
-		if v.Type() == timeType {
-			w.Write(v.Interface().(time.Time).UnixNano())
-			return
-		}
-		// 若该结构体指针类型实现了 MessageCodec，则优先使用其自定义编解码逻辑（适用于包含未导出字段的内部类型）
-		if v.CanAddr() && v.Addr().Type().Implements(messageCodecType) {
-			codec := v.Addr().Interface().(MessageCodec)
-			w.err = codec.Encode(w, v.Addr().Interface())
-			return
-		}
-		// 若能查到该类型的 MessageDesc 则用其 Encode；否则尝试 externalCodec；最后按字段递归写
-		if w.codec != nil {
-			if messageDesc := w.codec.FindMessageDescByType(v.Type()); messageDesc != nil {
-				w.err = messageDesc.Encode(w, v.Addr().Interface())
-				return
-			}
-		}
-		if w.codec.externalCodec != nil {
-			w.err = w.codec.externalCodec.Encode(w, v.Addr().Interface())
-			return
-		}
-		for i, n := 0, v.NumField(); i < n; i++ {
-			if f := v.Field(i); f.CanInterface() {
-				w.Write(f.Interface())
-				if w.err != nil {
-					return
-				}
-			}
-		}
-	case reflect.Int8:
-		w.Write(byte(v.Int()))
-	case reflect.Int16:
-		w.Write(uint16(v.Int()))
-	case reflect.Int32:
-		w.Write(uint32(v.Int()))
-	case reflect.Int, reflect.Int64:
-		w.Write(v.Int())
-	case reflect.Uint8:
-		w.Write(byte(v.Uint()))
-	case reflect.Uint16:
-		w.Write(uint16(v.Uint()))
-	case reflect.Uint32:
-		w.Write(uint32(v.Uint()))
-	case reflect.Uint, reflect.Uint64:
-		w.Write(v.Uint())
-	case reflect.Bool:
-		w.Write(v.Bool())
-	case reflect.Float32, reflect.Float64:
-		w.Write(v.Float())
-	case reflect.String:
-		w.Write(v.String())
-	default:
-		w.err = fmt.Errorf("serialization: unsupported type %v", v.Type())
+	if uint64(n) > math.MaxUint32 {
+		w.err = fmt.Errorf("serialization: length %d exceeds uint32", n)
+		return
 	}
+	w.WriteInteger(uint32(n))
+}
+
+func (w *Writer) WriteString(value string) *Writer {
+	w.writeLength(len(value))
+	w.ensure(len(value))
+	if w.err == nil {
+		w.buf = append(w.buf, value...)
+	}
+	return w
+}
+
+func (w *Writer) WriteBytes(value []byte) *Writer {
+	w.writeLength(len(value))
+	w.ensure(len(value))
+	if w.err == nil {
+		w.buf = append(w.buf, value...)
+	}
+	return w
 }

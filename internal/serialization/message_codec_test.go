@@ -19,7 +19,7 @@ func TestMessageEncoderFN_Encode(t *testing.T) {
 		return nil
 	})
 
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 	err := fn.Encode(w, 42)
 	require.NoError(t, err)
@@ -40,13 +40,13 @@ func TestMessageDecoderFN_Decode(t *testing.T) {
 		return r.Read(m)
 	})
 
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 	w.Write(uint32(456))
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(nil, data)
+	r := GetReader(data)
 	defer PutReader(r)
 	var v uint32
 	err := fn.Decode(r, &v)

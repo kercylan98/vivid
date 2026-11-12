@@ -13,7 +13,7 @@ func ensureEnvelopReceiverAddress(envelop vivid.Envelop) string {
 }
 
 func encodeEnvelop(codec *serialization.VividCodec, envelop vivid.Envelop) ([]byte, error) {
-	var writer = serialization.GetWriter(codec)
+	var writer = serialization.GetWriter()
 	defer serialization.PutWriter(writer)
 
 	var sender, receiver string
@@ -41,7 +41,7 @@ func decodeEnvelop(codec *serialization.VividCodec, data []byte) (
 	system bool, sender, receiver string, message any,
 	err error,
 ) {
-	var reader = serialization.GetReader(codec, data)
+	var reader = serialization.GetReader(data)
 	defer serialization.PutReader(reader)
 
 	if err = reader.Read(&system, &sender, &receiver); err != nil {

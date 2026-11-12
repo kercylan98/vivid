@@ -42,7 +42,7 @@ func main() {
 }
 ```
 
-通过 `pkg/bootstrap` 创建系统即可，无需业务导入 `internal` 包。集群内部消息由框架注册编解码；跨节点发送业务自定义消息时，仍需按[远程通讯](/docs/config/remoting)配置 Codec 或消息注册。
+通过 `pkg/bootstrap` 创建系统即可，无需业务导入 `internal` 包。集群内部消息由框架注册编解码；跨节点发送业务自定义消息时，仍需按[远程通讯](/docs/config/remoting)配置外部 Codec 或消息注册。
 
 ## 加入种子节点
 

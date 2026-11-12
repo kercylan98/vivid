@@ -10,7 +10,7 @@ import (
 )
 
 func TestGetWriter_PutWriter(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	require.NotNil(t, w)
 	assert.Nil(t, w.buf)
 	assert.Nil(t, w.Err())
@@ -25,7 +25,7 @@ func TestGetWriter_PutWriter(t *testing.T) {
 }
 
 func TestWriter_Write_ByteAndIntegers(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(byte(0xAB))
@@ -50,7 +50,7 @@ func TestWriter_Write_ByteAndIntegers(t *testing.T) {
 }
 
 func TestWriter_Write_BoolAndFloat(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(true)
@@ -58,7 +58,7 @@ func TestWriter_Write_BoolAndFloat(t *testing.T) {
 	assert.NoError(t, w.Err())
 	assert.Equal(t, []byte{1, 0}, w.Bytes())
 
-	w2 := GetWriter(nil)
+	w2 := GetWriter()
 	defer PutWriter(w2)
 	w2.Write(float32(1.5))
 	w2.Write(float64(-2.5))
@@ -67,7 +67,7 @@ func TestWriter_Write_BoolAndFloat(t *testing.T) {
 }
 
 func TestWriter_Write_BytesAndString(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write([]byte("hello"))
@@ -84,7 +84,7 @@ func TestWriter_Write_BytesAndString(t *testing.T) {
 }
 
 func TestWriter_Write_Variadic(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(uint8(1), int16(2), uint32(3), "ok")
@@ -94,12 +94,12 @@ func TestWriter_Write_Variadic(t *testing.T) {
 }
 
 func TestWriter_Write_StopsOnError(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(struct{}{}) // unsupported in default writeReflect for empty struct without codec
 	// empty struct goes to field iteration, no error. Try a channel which is unsupported.
-	w2 := GetWriter(nil)
+	w2 := GetWriter()
 	defer PutWriter(w2)
 	w2.Write(make(chan int))
 	assert.Error(t, w2.Err())
@@ -113,7 +113,7 @@ func TestWriter_WriteReflect_StructPlain(t *testing.T) {
 		A int32
 		B string
 	}
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(S{A: 42, B: "hi"})
@@ -123,7 +123,7 @@ func TestWriter_WriteReflect_StructPlain(t *testing.T) {
 }
 
 func TestWriter_WriteReflect_SliceAndArray(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write([]int32{1, 2, 3})
@@ -131,7 +131,7 @@ func TestWriter_WriteReflect_SliceAndArray(t *testing.T) {
 	// 4B length(3) + 4*3
 	assert.Equal(t, uint32(3), binary.BigEndian.Uint32(w.Bytes()[0:4]))
 
-	w2 := GetWriter(nil)
+	w2 := GetWriter()
 	defer PutWriter(w2)
 	arr := [2]uint16{10, 20}
 	w2.Write(arr)
@@ -140,7 +140,7 @@ func TestWriter_WriteReflect_SliceAndArray(t *testing.T) {
 }
 
 func TestWriter_WriteReflect_Map(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	m := map[string]int32{"a": 1, "b": 2}
@@ -151,7 +151,7 @@ func TestWriter_WriteReflect_Map(t *testing.T) {
 
 func TestWriter_WriteReflect_PtrAndInterface(t *testing.T) {
 	x := int32(99)
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(&x)
@@ -159,7 +159,7 @@ func TestWriter_WriteReflect_PtrAndInterface(t *testing.T) {
 	assert.Equal(t, uint32(99), binary.BigEndian.Uint32(w.Bytes()[0:4]))
 
 	var i any = int64(100)
-	w2 := GetWriter(nil)
+	w2 := GetWriter()
 	defer PutWriter(w2)
 	w2.Write(i)
 	assert.NoError(t, w2.Err())
@@ -168,7 +168,7 @@ func TestWriter_WriteReflect_PtrAndInterface(t *testing.T) {
 
 func TestWriter_WriteReflect_CustomIntType(t *testing.T) {
 	type Status int32
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(Status(7))
@@ -177,7 +177,7 @@ func TestWriter_WriteReflect_CustomIntType(t *testing.T) {
 }
 
 func TestWriter_WriteReflect_UnsupportedType(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(make(chan int))
@@ -186,8 +186,7 @@ func TestWriter_WriteReflect_UnsupportedType(t *testing.T) {
 }
 
 func TestWriter_RoundtripWithReader_Primitives(t *testing.T) {
-	codec := NewVividCodec(nil)
-	w := GetWriter(codec)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(byte(1), int8(-2), uint16(3), int16(-4), uint32(5), int32(-6), uint64(7), int64(-8),
@@ -197,7 +196,7 @@ func TestWriter_RoundtripWithReader_Primitives(t *testing.T) {
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(codec, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var b byte
@@ -237,8 +236,7 @@ func TestWriter_RoundtripWithReader_StructSliceMap(t *testing.T) {
 		N   int32
 		Str string
 	}
-	codec := NewVividCodec(nil)
-	w := GetWriter(codec)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(S{N: 42, Str: "hello"})
@@ -249,7 +247,7 @@ func TestWriter_RoundtripWithReader_StructSliceMap(t *testing.T) {
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(codec, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var s S
@@ -266,7 +264,7 @@ func TestWriter_RoundtripWithReader_StructSliceMap(t *testing.T) {
 }
 
 func TestWriter_EnsureCapacity(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	for i := 0; i < 1000; i++ {
@@ -277,7 +275,7 @@ func TestWriter_EnsureCapacity(t *testing.T) {
 }
 
 func TestWriter_FloatBits(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(math.Float32bits(1.0))

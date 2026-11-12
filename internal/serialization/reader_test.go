@@ -10,7 +10,7 @@ import (
 
 func TestGetReader_PutReader(t *testing.T) {
 	data := []byte{1, 2, 3}
-	r := GetReader(nil, data)
+	r := GetReader(data)
 	require.NotNil(t, r)
 	assert.Equal(t, data, r.buf)
 	assert.Equal(t, 0, r.pos)
@@ -27,11 +27,11 @@ func TestGetReader_PutReader(t *testing.T) {
 }
 
 func TestReader_Read_RequiresNonNilPointer(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 	w.Write(uint32(1))
 
-	r := GetReader(nil, w.Bytes())
+	r := GetReader(w.Bytes())
 	defer PutReader(r)
 
 	var x int32
@@ -47,7 +47,7 @@ func TestReader_Read_RequiresNonNilPointer(t *testing.T) {
 func TestReader_Read_StopsOnError(t *testing.T) {
 	// data too short for uint32
 	data := []byte{0, 0}
-	r := GetReader(nil, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var u uint32
@@ -58,7 +58,7 @@ func TestReader_Read_StopsOnError(t *testing.T) {
 
 func TestReader_Read_EOF(t *testing.T) {
 	data := []byte{0, 0, 0, 1} // only 4 bytes, enough for uint32
-	r := GetReader(nil, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var a, b uint32
@@ -70,15 +70,14 @@ func TestReader_Read_EOF(t *testing.T) {
 }
 
 func TestReader_Read_Variadic(t *testing.T) {
-	codec := NewVividCodec(nil)
-	w := GetWriter(codec)
+	w := GetWriter()
 	defer PutWriter(w)
 	w.Write(uint32(10), uint32(20), "hello")
 	require.NoError(t, w.Err())
 
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
-	r := GetReader(codec, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var a, b uint32
@@ -91,13 +90,13 @@ func TestReader_Read_Variadic(t *testing.T) {
 }
 
 func TestReader_ReadReflect_InterfaceError(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 	w.Write(uint32(1))
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(nil, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var i interface{}
@@ -108,13 +107,13 @@ func TestReader_ReadReflect_InterfaceError(t *testing.T) {
 
 func TestReader_ReadReflect_ArrayLengthMismatch(t *testing.T) {
 	// write array length 3 and three int32s; read into [2]int32 -> length mismatch
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 	w.Write(uint32(3), int32(1), int32(2), int32(3))
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(nil, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var arr [2]int32
@@ -124,8 +123,7 @@ func TestReader_ReadReflect_ArrayLengthMismatch(t *testing.T) {
 }
 
 func TestReader_Roundtrip_AllPrimitives(t *testing.T) {
-	codec := NewVividCodec(nil)
-	w := GetWriter(codec)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	w.Write(
@@ -136,7 +134,7 @@ func TestReader_Roundtrip_AllPrimitives(t *testing.T) {
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(codec, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var b byte
@@ -173,8 +171,7 @@ func TestReader_Roundtrip_AllPrimitives(t *testing.T) {
 
 func TestReader_Roundtrip_PtrSliceMap(t *testing.T) {
 	type S struct{ V int32 }
-	codec := NewVividCodec(nil)
-	w := GetWriter(codec)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	x := int32(42)
@@ -185,7 +182,7 @@ func TestReader_Roundtrip_PtrSliceMap(t *testing.T) {
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(codec, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var p *int32
@@ -203,7 +200,7 @@ func TestReader_Roundtrip_PtrSliceMap(t *testing.T) {
 }
 
 func TestReader_Read_EmptyData(t *testing.T) {
-	r := GetReader(nil, []byte{})
+	r := GetReader([]byte{})
 	defer PutReader(r)
 
 	var u uint8
@@ -211,19 +208,19 @@ func TestReader_Read_EmptyData(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestReader_Read_NilCodecStructFallback(t *testing.T) {
+func TestReader_Read_PlainStructFallback(t *testing.T) {
 	type Plain struct {
 		A int32
 		B string
 	}
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 	w.Write(Plain{A: 1, B: "x"})
 	require.NoError(t, w.Err())
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(nil, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var p Plain
@@ -233,14 +230,14 @@ func TestReader_Read_NilCodecStructFallback(t *testing.T) {
 }
 
 func TestReader_FloatRoundtrip(t *testing.T) {
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 	w.Write(float32(math.Pi), float64(-math.E))
 	require.NoError(t, w.Err())
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(nil, data)
+	r := GetReader(data)
 	defer PutReader(r)
 
 	var f32 float32

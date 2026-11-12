@@ -88,7 +88,7 @@ func TestVividCodec_EncodeDecode_Roundtrip(t *testing.T) {
 	var sample Payload
 	assert.NoError(t, c.RegisterMessageWithEncoderAndDecoder("app", "Payload", &sample, enc, dec))
 
-	w := GetWriter(c)
+	w := GetWriter()
 	defer PutWriter(w)
 	msg := &Payload{N: 42, S: "hello"}
 	err := c.Encode(w, msg)
@@ -96,7 +96,7 @@ func TestVividCodec_EncodeDecode_Roundtrip(t *testing.T) {
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(c, data)
+	r := GetReader(data)
 	defer PutReader(r)
 	decoded, err := c.Decode(r)
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestVividCodec_EncodeDecode_Roundtrip(t *testing.T) {
 
 func TestVividCodec_Encode_UnregisteredReturnsError(t *testing.T) {
 	c := NewVividCodec(nil)
-	w := GetWriter(c)
+	w := GetWriter()
 	defer PutWriter(w)
 
 	type Unregistered struct{ X int32 }
@@ -116,13 +116,13 @@ func TestVividCodec_Encode_UnregisteredReturnsError(t *testing.T) {
 
 func TestVividCodec_Decode_UnregisteredFullnameReturnsError(t *testing.T) {
 	c := NewVividCodec(nil)
-	w := GetWriter(nil)
+	w := GetWriter()
 	defer PutWriter(w)
 	w.Write("unknown.Foo", int32(1)) // fullname + some body
 	data := make([]byte, len(w.Bytes()))
 	copy(data, w.Bytes())
 
-	r := GetReader(c, data)
+	r := GetReader(data)
 	defer PutReader(r)
 	_, err := c.Decode(r)
 	assert.Error(t, err)
@@ -159,4 +159,89 @@ func TestGenerateMessageDescFullname(t *testing.T) {
 	assert.Equal(t, "pkg", d.Class())
 	assert.Equal(t, "X", d.Name())
 	assert.Equal(t, "pkg.X", d.FullName())
+}
+
+type externalTestCodec struct {
+	encode func(*Writer, any) error
+	decode func(*Reader) (any, error)
+}
+
+func (c *externalTestCodec) Encode(w *Writer, message any) error { return c.encode(w, message) }
+func (c *externalTestCodec) Decode(r *Reader) (any, error)       { return c.decode(r) }
+
+func TestVividCodec_ExternalRoundtrip(t *testing.T) {
+	c := NewVividCodec(&externalTestCodec{
+		encode: func(w *Writer, message any) error { w.WriteInteger(message.(uint32)); return w.Err() },
+		decode: func(r *Reader) (any, error) { var value uint32; err := r.ReadInteger(&value); return value, err },
+	})
+	w := GetWriter()
+	defer PutWriter(w)
+	require.NoError(t, c.Encode(w, uint32(42)))
+	// 空类型名称标记后由外部 Codec 读写消息体。
+	assert.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 42}, w.Bytes())
+	r := GetReader(w.Bytes())
+	defer PutReader(r)
+	message, err := c.Decode(r)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(42), message)
+}
+
+func TestVividCodec_GenericRegisteredWithExternal(t *testing.T) {
+	type payload struct{ Value uint32 }
+	c := NewVividCodec(&externalTestCodec{
+		encode: func(w *Writer, message any) error { t.Error("unexpected external encoder"); return nil },
+		decode: func(r *Reader) (any, error) { t.Error("unexpected external decoder"); return nil, nil },
+	})
+	require.NoError(t, c.RegisterMessageWithEncoderAndDecoder("test", "payload", &payload{},
+		MessageEncoderFN(func(w *Writer, message any) error { w.Write(message); return w.Err() }),
+		MessageDecoderFN(func(r *Reader, message any) error { return r.Read(message) }),
+	))
+	w := GetWriter()
+	defer PutWriter(w)
+	require.NoError(t, c.Encode(w, &payload{42}))
+	r := GetReader(w.Bytes())
+	defer PutReader(r)
+	message, err := c.Decode(r)
+	require.NoError(t, err)
+	assert.Equal(t, &payload{42}, message)
+}
+
+func TestVividCodec_UnknownRegisteredName(t *testing.T) {
+	c := NewVividCodec(&externalTestCodec{decode: func(r *Reader) (any, error) {
+		t.Error("unexpected external decoder")
+		return nil, nil
+	}})
+	w := GetWriter()
+	defer PutWriter(w)
+	w.WriteString("unknown.payload")
+	r := GetReader(w.Bytes())
+	defer PutReader(r)
+	_, err := c.Decode(r)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not registered")
+}
+
+func TestVividCodec_ExternalStickyError(t *testing.T) {
+	c := NewVividCodec(&externalTestCodec{
+		encode: func(w *Writer, message any) error { w.Write(make(chan int)); return nil },
+		decode: func(r *Reader) (any, error) { var value uint64; r.ReadInteger(&value); return nil, nil },
+	})
+	w := GetWriter()
+	defer PutWriter(w)
+	require.Error(t, c.Encode(w, uint32(42)))
+	r := GetReader([]byte{0, 0, 0, 0, 1})
+	defer PutReader(r)
+	_, err := c.Decode(r)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "EOF")
+}
+
+func TestVividCodec_EncodeNilMessage(t *testing.T) {
+	c := NewVividCodec(nil)
+	for _, value := range []any{nil, (*uint32)(nil)} {
+		w := GetWriter()
+		assert.Error(t, c.Encode(w, value))
+		assert.Empty(t, w.Bytes())
+		PutWriter(w)
+	}
 }

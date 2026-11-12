@@ -3,9 +3,11 @@ package vivid
 import "github.com/kercylan98/vivid/internal/serialization"
 
 type (
-	MessageCodec   = serialization.MessageCodec
-	MessageEncoder = serialization.MessageEncoder
-	MessageDecoder = serialization.MessageDecoder
+	MessageCodec     = serialization.MessageCodec
+	MessageEncoder   = serialization.MessageEncoder
+	MessageDecoder   = serialization.MessageDecoder
+	MessageEncoderFN = serialization.MessageEncoderFN
+	MessageDecoderFN = serialization.MessageDecoderFN
 )
 
 type MessageRegister interface {

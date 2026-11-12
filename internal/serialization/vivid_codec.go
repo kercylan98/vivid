@@ -55,16 +55,28 @@ func (c *VividCodec) FindMessageDescByFullName(fullName string) *MessageDesc {
 }
 
 func (c *VividCodec) Encode(writer *Writer, message any) error {
-	messageDesc := c.FindMessageDescByType(reflect.TypeOf(message))
+	if err := writer.Err(); err != nil {
+		return err
+	}
+	typ := reflect.TypeOf(message)
+	if typ == nil || typ.Kind() == reflect.Ptr && reflect.ValueOf(message).IsNil() {
+		return fmt.Errorf("serialization: cannot Encode nil message")
+	}
+	messageDesc := c.FindMessageDescByType(typ)
 	if messageDesc == nil {
 		if c.externalCodec == nil {
 			return fmt.Errorf("message %s not registered", reflect.TypeOf(message).Name())
 		}
-		return c.externalCodec.Encode(writer, message)
+		// 空名称标识外部 Codec，消息分帧由框架统一负责。
+		writer.WriteString("")
+		if err := c.externalCodec.Encode(writer, message); err != nil {
+			return err
+		}
+		return writer.Err()
 	}
 
 	// 写入 FULL_NAME
-	writer.Write(messageDesc.FullName())
+	writer.WriteString(messageDesc.FullName())
 	// 写入 MESSAGE_BYTES
 	if err := messageDesc.Encode(writer, message); err != nil {
 		return err
@@ -75,16 +87,20 @@ func (c *VividCodec) Encode(writer *Writer, message any) error {
 
 func (c *VividCodec) Decode(reader *Reader) (any, error) {
 	var fullName string
-	if err := reader.Read(&fullName); err != nil {
+	if err := reader.ReadString(&fullName); err != nil {
 		return nil, err
 	}
 
+	if fullName == "" && c.externalCodec != nil {
+		message, err := c.externalCodec.Decode(reader)
+		if err == nil {
+			err = reader.Err()
+		}
+		return message, err
+	}
 	messageDesc := c.FindMessageDescByFullName(fullName)
 	if messageDesc == nil {
-		if c.externalCodec == nil {
-			return nil, fmt.Errorf("message %s not registered", fullName)
-		}
-		return c.externalCodec.Decode(reader)
+		return nil, fmt.Errorf("message %s not registered", fullName)
 	}
 
 	message := messageDesc.Instantiate()
@@ -92,5 +108,8 @@ func (c *VividCodec) Decode(reader *Reader) (any, error) {
 		return nil, err
 	}
 
+	if err := reader.Err(); err != nil {
+		return nil, err
+	}
 	return message, nil
 }
