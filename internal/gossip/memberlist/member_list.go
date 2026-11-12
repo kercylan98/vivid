@@ -3,7 +3,6 @@ package memberlist
 
 import (
 	"math/rand/v2"
-	"slices"
 	"sort"
 	"strings"
 
@@ -123,69 +122,46 @@ func (m *MemberList) Upsert(info *endpoint.Information) (isNew bool) {
 	return isNew
 }
 
-// Unseens 从列表中选取最多 limit 个 StatusUp 或 StatusLeaving 的节点（排除 local 自身），用于本轮 gossip 的 peer 选择。
+// Unseens 随机选取最多 limit 个可联络成员；Up 节点也会重试尚未发现的种子。
 func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef, limit int) []vivid.ActorRef {
-	// 随机打乱成员列表，避免每次选取的 peer 都相同
-	rand.Shuffle(len(m.members), func(i, j int) {
-		m.members[i], m.members[j] = m.members[j], m.members[i]
-	})
-
-	// 检查 peers 是否种子节点，如果不包含，需要将种子节点加入 peers，并且作为优先联络的节点，避免集群分裂
-	var out = make([]vivid.ActorRef, 0, len(m.members))
-	var peerSeeds = make(map[string]struct{})
-
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]vivid.ActorRef, 0, len(m.members)+len(seeds))
+	seen := make(map[string]struct{}, len(m.members)+len(seeds))
 	for _, member := range m.members {
-		// 排除本地节点
+		id := member.ID()
+		// 启动时收到的 Joining 快照可能已过期，Up 节点仍需通过种子重新联络。
+		if member.Status != endpoint.StatusJoining || local.Status != endpoint.StatusUp {
+			seen[id] = struct{}{}
+		}
 		if member.ActorRef.Equals(local.ActorRef) {
 			continue
 		}
-
-		// // 排除REMOVED状态节点
-		// if member.Status == endpoint.StatusRemoved {
-		// 	continue
-		// }
-
-		// 如果成员是种子节点，并且不是本地节点，则加入 peerSeeds
-		if slices.ContainsFunc(seeds, func(seed vivid.ActorRef) bool { return seed.Equals(member.ActorRef) }) && !member.ActorRef.Equals(local.ActorRef) {
-			peerSeeds[member.ID()] = struct{}{}
-		}
-
 		switch member.Status {
-		case endpoint.StatusJoining, endpoint.StatusRemoved:
-		default:
-			// m.logger.Debug("seen member", log.String("ref", member.ActorRef.String()), log.String("status", member.Status.String()))
+		case endpoint.StatusUp, endpoint.StatusLeaving, endpoint.StatusExiting:
 			out = append(out, member.ActorRef)
 		}
 	}
-
-	// 获取未加入 peerSeeds 的种子节点。排除已从成员列表移除的种子（REMOVED 且已被 cleanRemovedMembers 清理），
-	// 避免重复向死节点发送 Ping 导致 peers 永不为空、无法触发 maybeEmitConverged 进而卡住 phaseKill。
-	var notInPeerSeeds []vivid.ActorRef
-	for _, seed := range seeds {
-		if seed == nil {
-			continue
-		}
-		_, ok := peerSeeds[seed.String()]
-		if !ok {
-			// 若种子不在成员列表中，说明从未见过或已被移除，不再尝试联络
-			if m.Get(seed.String()) == nil {
+	// 未发现的种子只作为联络目标，不直接加入成员视图；退出期间不再发起新发现。
+	if local.Status == endpoint.StatusUp {
+		for _, seed := range seeds {
+			if seed == nil || seed.Equals(local.ActorRef) {
 				continue
 			}
-			notInPeerSeeds = append(notInPeerSeeds, seed)
-			// m.logger.Debug("not in peer seeds", log.String("ref", seed.String()), log.String("status", m.Get(seed.String()).Status.String()))
+			id := seed.String()
+			if _, exists := seen[id]; exists {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, seed)
 		}
 	}
-
-	// 如果 notInPeerSeeds 的长度大于 0，则将 notInPeerSeeds 添加到 out 的末尾
-	if len(notInPeerSeeds) > 0 {
-		out = append(notInPeerSeeds, out...)
-	}
-
-	// 如果 out 的长度大于等于 limit，则返回前 limit 个元素
-	if len(out) >= limit {
+	// 成员与未知种子一起抽样，避免少量固定目标占满每轮额度。
+	rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+	if len(out) > limit {
 		return out[:limit]
 	}
-
 	return out
 }
 

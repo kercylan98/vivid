@@ -61,6 +61,8 @@ system := bootstrap.NewActorSystem(
 
 未配置种子，或启动时所有种子加入尝试均失败，当前实现会自举为独立集群。因此 `Start()` 成功不代表已经加入目标集群，需结合日志和实际节点通信确认。
 
+节点进入 Up 后，会在周期 Gossip 中继续尝试尚未发现或仍处于 Joining 的种子。网络恢复后可重新发现对方；已明确标记为 Removed 的种子不会自动重新加入。配置种子时应确保各组节点之间存在可恢复的联络路径。
+
 ## 配置行为
 
 首次调用 `WithActorSystemClusterOptions(opts...)` 会初始化默认配置，再应用子选项；后续调用继续修改已有配置。`WithActorSystemClusterSeeds` 追加种子列表，其余内置子选项覆盖对应字段。不传子选项也会启用默认集群配置。
