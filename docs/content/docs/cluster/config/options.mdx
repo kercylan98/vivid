@@ -12,12 +12,14 @@ description: ActorSystemClusterOptions 的可用配置、默认值与调用方�
 | **WithActorSystemClusterSeeds** | `seeds ...string` | 空 | 追加种子广告地址，格式为 `host:port` |
 | **WithActorSystemClusterBootstrap** | `bool` | false | 显式独立启动；配置种子时也不等待加入 |
 | **WithActorSystemClusterJoinTimeout** | `time.Duration` | 3s | 每个去重后的非本地种子的加入总超时，包含有限重发 |
+| **WithActorSystemClusterProbeTimeout** | `time.Duration` | 3s | 一次直接往返的等待预算，重复发送不延长预算 |
+| **WithActorSystemClusterReachabilityTTL** | `time.Duration` | 10s | 成功或失败观察的有效期，过期回到 Unknown |
 | **WithActorSystemClusterLaunchDelay** | `time.Duration` | 随机 50–999ms | 启动 Gossip 前的延迟，分散节点同时启动的压力 |
 | **WithActorSystemClusterGossipInterval** | `time.Duration` | 200ms | 周期交换成员视图的间隔，应设置为正值 |
 | **WithActorSystemClusterGossipPeersCount** | `int` | 5 | 每轮 Gossip 选取的目标数量，应设置为正值 |
 | **WithActorSystemClusterGracefulShutdownTimeout** | `time.Duration` | 10s | 集群 Actor 多阶段退出的等待超时 |
 
-启动延迟必须非负；Gossip 周期、目标数量、加入超时和退出超时必须为正。种子须为可用的 `host:port` 地址，不能使用通配地址或省略端口。参数无效时 `Start()` 返回错误；仅配置自身种子而未显式 Bootstrap 也会失败。
+启动延迟必须非负；Gossip 周期、目标数量、加入超时、退出超时、探测预算和观察有效期必须为正。种子须为可用的 `host:port` 地址，不能使用通配地址或省略端口。参数无效时 `Start()` 返回错误；仅配置自身种子而未显式 Bootstrap 也会失败。
 
 ## 组合配置
 
@@ -43,4 +45,4 @@ system := bootstrap.NewActorSystem(
 
 无种子时独立启动；配置种子后默认必须加入成功，全部失败时保持 Joining 并返回初始加入失败结果。主动建立新组需使用 Bootstrap，结果通过 `system.ClusterReady()` 等待，见[启动与加入就绪](/docs/cluster/runtime/readiness)。
 
-Up 节点会持续联络配置的种子地址，和可联络成员一起按地址去重、随机选取目标，共享 `GossipPeersCount` 的每轮数量限制。旧实例退出不影响该种子地址的后续联络；退出期间不再探测种子。
+Up 节点会持续联络配置的种子地址，和可联络成员一起按地址去重、随机选取目标，共享 `GossipPeersCount` 的每轮数量限制。旧实例退出不影响该种子地址的后续联络；退出期间不再探测种子。直接往返观察复用相同 Gossip 消息，未完成的观察请求最多为 `GossipPeersCount` 个地址；额度满时仍交换成员视图。可达性使用与配置建议见[本地可达性](/docs/cluster/runtime/reachability)。

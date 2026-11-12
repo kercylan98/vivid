@@ -30,11 +30,12 @@ func NewPing(gossipType string, info *endpoint.Information, memberList *memberli
 
 // Ping 表示 gossip 请求：发送方用其视图（Info + MemberList + Version）向对端交换并请求对端视图。
 type Ping struct {
-	GossipType string                       //  gossip 类型，用于区分不同的 gossip 消息
-	Timestamp  time.Time                    // 发送时间，可用于延迟或调试
-	Info       *endpoint.Information        // 发送方端点信息
-	MemberList *memberlist.MemberList       // 发送方当前成员列表
-	Version    *versionvector.VersionVector // 发送方版本向量，用于因果比较与合并
+	ProbeSequence uint64                       // 直接往返请求序号，0 表示仅交换视图
+	GossipType    string                       //  gossip 类型，用于区分不同的 gossip 消息
+	Timestamp     time.Time                    // 发送时间，可用于延迟或调试
+	Info          *endpoint.Information        // 发送方端点信息
+	MemberList    *memberlist.MemberList       // 发送方当前成员列表
+	Version       *versionvector.VersionVector // 发送方版本向量，用于因果比较与合并
 }
 
 // NewPong 构造一条 Pong 响应，携带本节点信息与当前视图，供请求方合并与判断是否已加入。
@@ -50,9 +51,11 @@ func NewPong(gossipType string, info *endpoint.Information, memberList *memberli
 
 // Pong 表示 gossip 响应：回传本节点信息与视图，供请求方合并并可能触发状态迁移（如 Joining -> Up）。
 type Pong struct {
-	GossipType string //  gossip 类型，用于区分不同的 gossip 消息
-	Timestamp  time.Time
-	Info       *endpoint.Information
-	MemberList *memberlist.MemberList
-	Version    *versionvector.VersionVector
+	ProbeSequence uint64 // 回显直接往返请求序号
+	ProbeOriginID string // 发起观察的实例 ID，隔离同地址重启前的请求
+	GossipType    string //  gossip 类型，用于区分不同的 gossip 消息
+	Timestamp     time.Time
+	Info          *endpoint.Information
+	MemberList    *memberlist.MemberList
+	Version       *versionvector.VersionVector
 }

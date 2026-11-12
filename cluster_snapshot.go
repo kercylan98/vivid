@@ -2,6 +2,27 @@ package vivid
 
 import "time"
 
+// ClusterReachability 表示本节点最近一次直接往返观察，不代表写入资格。
+type ClusterReachability uint8
+
+const (
+	ClusterReachabilityUnknown     ClusterReachability = iota // 尚未观察、结果过期或不适用
+	ClusterReachabilityReachable                              // 在预算内收到该实例的直接应答
+	ClusterReachabilityUnreachable                            // 请求超时或该地址由其他实例应答
+)
+
+// String 返回本地可达性观察的名称。
+func (r ClusterReachability) String() string {
+	switch r {
+	case ClusterReachabilityReachable:
+		return "REACHABLE"
+	case ClusterReachabilityUnreachable:
+		return "UNREACHABLE"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 // ClusterMemberStatus 表示成员实例的生命周期，不代表实时可达性或写入资格。
 type ClusterMemberStatus uint8
 
@@ -34,14 +55,15 @@ func (s ClusterMemberStatus) String() string {
 
 // ClusterMember 是本地观察到的成员实例副本，同一地址可以保留多个实例。
 type ClusterMember struct {
-	ID        string              // 本次启动的实例 ID
-	Address   string              // Remoting 广告地址
-	Status    ClusterMemberStatus // 生命周期状态
-	Revision  uint64              // 该实例的状态版本
-	CreatedAt time.Time           // 实例报告的创建时间，不用于授予接管资格
+	ID           string              // 本次启动的实例 ID
+	Address      string              // Remoting 广告地址
+	Status       ClusterMemberStatus // 生命周期状态
+	Reachability ClusterReachability // 本地直接往返观察，与生命周期独立；自身及已退出实例为 Unknown
+	Revision     uint64              // 该实例的状态版本
+	CreatedAt    time.Time           // 实例报告的创建时间，不用于授予接管资格
 }
 
-// ClusterSnapshot 是本地成员视图的只读快照，仅供本地查询和事件使用。
+// ClusterSnapshot 是本地成员及可达性观察的只读快照，仅供本地查询和事件使用。
 // Revision 只在相同 LocalID 下比较，不表示全局版本或多数派确认。
 type ClusterSnapshot interface {
 	LocalID() string                        // 当前观察节点的实例 ID

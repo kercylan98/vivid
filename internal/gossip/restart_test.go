@@ -21,9 +21,10 @@ import (
 )
 
 type restartMember struct {
-	Address  string
-	Status   endpoint.Status
-	Revision uint64
+	Reachability vivid.ClusterReachability
+	Address      string
+	Status       endpoint.Status
+	Revision     uint64
 }
 
 type restartSnapshot struct {
@@ -127,10 +128,12 @@ func TestActor_GossipRestartProcess(t *testing.T) {
 		snapshot := result.(gossip.SnapshotResponse)
 		response := restartSnapshot{ID: snapshot.ID, Fingerprint: snapshot.View.Fingerprint(), Members: make(map[string]restartMember)}
 		for _, member := range snapshot.View.Members().List() {
+			observed, _ := snapshot.Snapshot.Member(member.ID())
 			response.Members[member.ID()] = restartMember{
-				Address:  member.ActorRef.GetAddress(),
-				Status:   member.Status,
-				Revision: snapshot.View.Version().Get(member.ID()),
+				Reachability: observed.Reachability,
+				Address:      member.ActorRef.GetAddress(),
+				Status:       member.Status,
+				Revision:     snapshot.View.Version().Get(member.ID()),
 			}
 		}
 		require.NoError(t, output.Encode(response))
@@ -156,7 +159,8 @@ func TestActor_GossipSameAddressRestart(t *testing.T) {
 			peer := startRestartProcess(t, addresses[1], addresses[0])
 			require.Eventually(t, func() bool {
 				a, b := seed.snapshot(t), peer.snapshot(t)
-				return len(a.Members) == 2 && a.Fingerprint == b.Fingerprint && a.Members[oldID].Status == endpoint.StatusUp
+				return len(a.Members) == 2 && a.Fingerprint == b.Fingerprint && a.Members[oldID].Status == endpoint.StatusUp &&
+					b.Members[oldID].Reachability == vivid.ClusterReachabilityReachable
 			}, 8*time.Second, 50*time.Millisecond)
 			seed.stop(t, graceful)
 			oldStatus := endpoint.StatusUp
@@ -177,7 +181,9 @@ func TestActor_GossipSameAddressRestart(t *testing.T) {
 				a, b := current.snapshot(t), peer.snapshot(t)
 				return len(a.Members) == 3 && a.Fingerprint == b.Fingerprint &&
 					a.Members[newID].Status == endpoint.StatusUp && a.Members[newID].Revision == 2 &&
-					a.Members[oldID].Status == oldStatus && a.Members[oldID].Revision == oldRevision
+					a.Members[oldID].Status == oldStatus && a.Members[oldID].Revision == oldRevision &&
+					b.Members[newID].Reachability == vivid.ClusterReachabilityReachable &&
+					b.Members[oldID].Reachability != vivid.ClusterReachabilityReachable
 			}, 8*time.Second, 50*time.Millisecond)
 			for _, process := range []*restartProcess{current, peer} {
 				snapshot := process.snapshot(t)

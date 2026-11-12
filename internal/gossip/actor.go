@@ -51,6 +51,7 @@ type Actor struct {
 	joinError            error                            // 最近一次加入失败
 	stopping             bool                             // 已开始停止，不再接受迟到的加入结果
 	membersChanged       bool                             // 本次合并是否接收了成员更新
+	reachability         *localReachability               // 与成员生命周期独立的本地直接往返观察
 }
 
 // FixedOptions implements [vivid.FixedOptionActor].
@@ -74,6 +75,7 @@ func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 	a.viewRevision = 0
 	a.snapshot = nil
 	a.membersChanged = false
+	a.reachability = newLocalReachability()
 
 	// 注册多阶段终止以支持优雅退出
 	a.phaseKillCompleted = make(chan struct{})
@@ -104,6 +106,7 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 	case joinReply:
 		a.onJoinReply(ctx, m)
 	case SnapshotRequest:
+		a.refreshReachability(ctx, time.Now())
 		ctx.Reply(a.currentSnapshot())
 	case *gossipmessages.Ping:
 		a.onPing(ctx, m)
@@ -178,11 +181,15 @@ func (a *Actor) onConverged(ctx vivid.ActorContext) {
 
 // onPing 接收实例成员记录及版本，并回复当前视图。
 func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
+	if ping == nil || ping.Info == nil || ping.Info.ActorRef == nil || ping.MemberList == nil || ping.Version == nil {
+		return
+	}
 	// 加入完成前不接收 Ping，避免向其他节点提供未就绪视图。
 	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining ||
 		ping.GossipType == gossipmessages.GossipTypeJoin && a.info.Status != endpoint.StatusUp {
 		return
 	}
+	a.refreshReachability(ctx, time.Now())
 
 	if a.mergeMember(ping.Info, ping.Version) {
 		ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeDiscoverNewNode))
@@ -198,15 +205,25 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 	maybeEmitConverged(ctx, a)
 
 	// 避免远程发送序列化过程中被修改。
-	ctx.Reply(a.preparePong(ping.GossipType))
+	pong := a.preparePong(ping.GossipType)
+	if ping.ProbeSequence != 0 {
+		pong.ProbeSequence, pong.ProbeOriginID = ping.ProbeSequence, ping.Info.ID()
+	}
+	ctx.Reply(pong)
 }
 
 // onPong 接收加入请求或周期同步得到的实例视图。
 func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
+	if pong == nil || pong.Info == nil || pong.Info.ActorRef == nil || pong.MemberList == nil || pong.Version == nil {
+		return
+	}
 	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining {
 		return
 	}
+	now := time.Now()
+	a.refreshReachability(ctx, now)
 	a.mergePong(ctx, pong)
+	a.observePong(ctx, pong, now)
 }
 
 func (a *Actor) mergePong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
@@ -236,6 +253,9 @@ func (a *Actor) mergeMember(info *endpoint.Information, version *versionvector.V
 	}
 	isNew := a.view.Members().Upsert(info)
 	a.view.Version().Update(id, remoteVersion)
+	if a.reachability != nil && !observableMember(info.Status) {
+		a.reachability.forget(id)
+	}
 	a.membersChanged = true
 	return isNew
 }
@@ -245,6 +265,10 @@ func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
 		return
 	}
 	a.stopping = true
+	if a.reachability != nil {
+		a.reachability.reset()
+		a.publishReachabilityChanged(ctx)
+	}
 	a.readiness.Stop()
 	if a.joinRequest != nil {
 		a.joinRequest.Close(vivid.ErrorActorSystemStopped)
@@ -289,6 +313,8 @@ func (a *Actor) onRemoved(ctx vivid.ActorContext) {
 
 // onSpreadGossip 按每轮目标数限制向可联络成员及种子发送 Ping。
 func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessages.SpreadGossip) {
+	now := time.Now()
+	a.refreshReachability(ctx, now)
 	peers := a.view.Members().Unseens(a.info, a.seeds, a.opts.GossipPeersCount)
 	if len(peers) == 0 {
 		maybeEmitConverged(ctx, a)
@@ -299,6 +325,16 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 	ping := a.preparePing(spreadGossip.GossipType)
 
 	for _, peer := range peers {
+		if a.reachability != nil && !a.stopping && a.info.Status == endpoint.StatusUp {
+			sequence := a.reachability.begin(peer, a.view.Members().List(), now, a.opts.ProbeTimeout, a.opts.GossipPeersCount)
+			if sequence != 0 {
+				// 多个目标共享只读视图，但各自保留独立的请求序号。
+				request := *ping
+				request.ProbeSequence = sequence
+				ctx.Tell(peer, &request)
+				continue
+			}
+		}
 		ctx.Tell(peer, ping)
 	}
 }

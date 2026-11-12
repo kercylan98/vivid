@@ -27,6 +27,8 @@ func TestWithActorSystemClusterOptions_Initialize(t *testing.T) {
 	assert.Equal(t, 3, opts.ClusterOptions.GossipPeersCount)
 	assert.Equal(t, 5*time.Second, opts.ClusterOptions.GracefulShutdownTimeout)
 	assert.Equal(t, 3*time.Second, opts.ClusterOptions.JoinTimeout)
+	assert.Equal(t, 3*time.Second, opts.ClusterOptions.ProbeTimeout)
+	assert.Equal(t, 10*time.Second, opts.ClusterOptions.ReachabilityTTL)
 }
 
 func TestWithActorSystemClusterOptions_Defaults(t *testing.T) {
@@ -54,6 +56,19 @@ func TestActorSystemClusterOptions_Validate(t *testing.T) {
 	assert.NoError(t, options.Validate())
 	assert.Equal(t, 5*time.Second, options.JoinTimeout)
 	assert.True(t, options.Bootstrap)
+	for _, invalid := range []time.Duration{0, -time.Second} {
+		options := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterProbeTimeout(invalid))
+		assert.ErrorIs(t, options.Validate(), vivid.ErrorIllegalArgument)
+		options = vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterReachabilityTTL(invalid))
+		assert.ErrorIs(t, options.Validate(), vivid.ErrorIllegalArgument)
+	}
+	valid := vivid.NewActorSystemClusterOptions(
+		vivid.WithActorSystemClusterProbeTimeout(2*time.Second),
+		vivid.WithActorSystemClusterReachabilityTTL(15*time.Second),
+	)
+	assert.NoError(t, valid.Validate())
+	assert.Equal(t, 2*time.Second, valid.ProbeTimeout)
+	assert.Equal(t, 15*time.Second, valid.ReachabilityTTL)
 	for _, address := range []string{"", "node", "node:0", "node:65536", "[::]:8080", "0.0.0.0:8080", "127.0.0.1:8080:/@gossip"} {
 		options.Seeds = []string{address}
 		assert.ErrorIs(t, options.Validate(), vivid.ErrorIllegalArgument, address)

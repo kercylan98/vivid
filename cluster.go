@@ -18,6 +18,8 @@ func NewActorSystemClusterOptions(options ...ActorSystemClusterOption) *ActorSys
 		GossipPeersCount:        5,
 		GracefulShutdownTimeout: 10 * time.Second,
 		JoinTimeout:             3 * time.Second,
+		ProbeTimeout:            3 * time.Second,
+		ReachabilityTTL:         10 * time.Second,
 	}
 	for _, option := range options {
 		option(opts)
@@ -33,6 +35,8 @@ type ActorSystemClusterOptions struct {
 	GossipPeersCount        int           // 周期向集群内节点交换视图 gossip 时，向每个节点发送 gossip 的数量，默认 5
 	GracefulShutdownTimeout time.Duration // 优雅退出超时时间，默认 10 秒
 	JoinTimeout             time.Duration // 每个种子的初始加入总超时，包含有限重发，默认 3 秒
+	ProbeTimeout            time.Duration // Gossip 直接往返的等待预算，默认 3 秒
+	ReachabilityTTL         time.Duration // 可达性观察结果的有效期，默认 10 秒
 }
 
 // Validate 校验集群参数，不修改调用方配置，也不解析 DNS。
@@ -40,8 +44,8 @@ func (o *ActorSystemClusterOptions) Validate() error {
 	if o == nil {
 		return ErrorIllegalArgument.WithMessage("cluster options are nil")
 	}
-	if o.LaunchDelay < 0 || o.GossipInterval <= 0 || o.GossipPeersCount <= 0 || o.GracefulShutdownTimeout <= 0 || o.JoinTimeout <= 0 {
-		return ErrorIllegalArgument.WithMessage("cluster launch delay must be non-negative; gossip interval, peers count, shutdown timeout and join timeout must be positive")
+	if o.LaunchDelay < 0 || o.GossipInterval <= 0 || o.GossipPeersCount <= 0 || o.GracefulShutdownTimeout <= 0 || o.JoinTimeout <= 0 || o.ProbeTimeout <= 0 || o.ReachabilityTTL <= 0 {
+		return ErrorIllegalArgument.WithMessage("cluster launch delay must be non-negative; gossip interval, peers count, shutdown timeout, join timeout, probe timeout and reachability TTL must be positive")
 	}
 	for _, seed := range o.Seeds {
 		address, ok := utils.NormalizeAddress(seed)
@@ -51,6 +55,16 @@ func (o *ActorSystemClusterOptions) Validate() error {
 		}
 	}
 	return nil
+}
+
+// WithActorSystemClusterProbeTimeout 设置一次 Gossip 直接往返的总等待预算，重复发送不延长预算。
+func WithActorSystemClusterProbeTimeout(timeout time.Duration) ActorSystemClusterOption {
+	return func(o *ActorSystemClusterOptions) { o.ProbeTimeout = timeout }
+}
+
+// WithActorSystemClusterReachabilityTTL 设置本地可达性观察的有效期，过期后回到 Unknown。
+func WithActorSystemClusterReachabilityTTL(ttl time.Duration) ActorSystemClusterOption {
+	return func(o *ActorSystemClusterOptions) { o.ReachabilityTTL = ttl }
 }
 
 // WithActorSystemClusterBootstrap 显式允许独立启动，并在 Up 后继续联络配置的种子。

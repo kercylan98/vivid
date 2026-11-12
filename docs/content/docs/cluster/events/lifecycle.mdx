@@ -24,7 +24,7 @@ description: 当前集群成员状态、退出与重新加入边界
 
 ## 故障与重新加入
 
-当前没有 Suspect、Unreachable 或 Down 成员状态，也没有成员故障检测。进程崩溃或网络分区不会自动将已有成员标记为 Removed；Up 不能作为健康检查或故障迁移的依据。
+生命周期不包含 Suspect、Unreachable 或 Down。`ClusterMember.Reachability` 单独表示本地直接往返观察，见[本地可达性](/docs/cluster/runtime/reachability)。进程崩溃或网络分区不会自动将已有成员标记为 Removed；Up 不能作为健康检查或故障迁移的依据。
 
 每次启动生成独立实例 ID，同地址重启使用新的成员记录及版本，旧实例的迟到状态不会覆盖新实例。种子是联络地址，旧实例的 Removed 记录不会阻止该地址上新实例的发现。
 

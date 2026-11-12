@@ -41,11 +41,12 @@ func (a *Actor) currentSnapshot() *clusterSnapshot {
 	members := make([]vivid.ClusterMember, len(a.view.Members().List()))
 	for i, member := range a.view.Members().List() {
 		members[i] = vivid.ClusterMember{
-			ID:        member.ID(),
-			Address:   member.ActorRef.GetAddress(),
-			Status:    member.Status,
-			Revision:  a.view.Version().Get(member.ID()),
-			CreatedAt: member.CreatedAt,
+			ID:           member.ID(),
+			Address:      member.ActorRef.GetAddress(),
+			Status:       member.Status,
+			Revision:     a.view.Version().Get(member.ID()),
+			CreatedAt:    member.CreatedAt,
+			Reachability: a.reachability.state(member.ID()),
 		}
 	}
 	slices.SortFunc(members, func(a, b vivid.ClusterMember) int { return strings.Compare(a.ID, b.ID) })
@@ -58,4 +59,5 @@ func (a *Actor) publishMembersChanged(ctx vivid.ActorContext) {
 	a.snapshot = nil
 	a.membersChanged = false
 	ctx.EventStream().Publish(ctx, ves.ClusterMembersChangedEvent{Snapshot: a.currentSnapshot()})
+	a.publishReachabilityChanged(ctx)
 }

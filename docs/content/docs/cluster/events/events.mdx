@@ -1,9 +1,9 @@
 ---
 title: 成员事件
-description: 订阅本地成员变更并处理快照与事件顺序
+description: 订阅本地成员与可达性变更，处理快照与事件顺序
 ---
 
-通过 `system.ClusterSnapshot()` 查询本地成员视图，通过 `ves.ClusterMembersChangedEvent` 订阅后续变更。这些结果反映本节点已知的信息，不表示实时健康、多数派确认或接管资格。
+通过 `system.ClusterSnapshot()` 查询本地成员视图，通过 `ves.ClusterMembersChangedEvent` 订阅成员变更，通过 `ves.ClusterReachabilityChangedEvent` 订阅可达性变化。这些结果反映本节点已知的信息，不表示实时健康、多数派确认或接管资格。
 
 查询方法及成员字段见[本地成员查询](/docs/cluster/runtime/context)。
 
@@ -18,6 +18,7 @@ func (a *Observer) OnReceive(ctx vivid.ActorContext) {
     switch message := ctx.Message().(type) {
     case *vivid.OnLaunch:
         ctx.EventStream().Subscribe(ctx, ves.ClusterMembersChangedEvent{})
+        ctx.EventStream().Subscribe(ctx, ves.ClusterReachabilityChangedEvent{})
         ctx.System().ClusterSnapshot(time.Second).PipeTo(ctx.Ref().ToActorRefs())
     case *vivid.PipeResult:
         if message.Error != nil {
@@ -28,13 +29,17 @@ func (a *Observer) OnReceive(ctx vivid.ActorContext) {
         ctx.Logger().Info("initial cluster snapshot", log.Uint64("revision", snapshot.Revision()), log.Int("members", snapshot.Len()))
     case ves.ClusterMembersChangedEvent:
         ctx.Logger().Info("cluster members changed", log.Uint64("revision", message.Snapshot.Revision()), log.Int("members", message.Snapshot.Len()))
+    case ves.ClusterReachabilityChangedEvent:
+        ctx.Logger().Info("cluster reachability changed", log.Uint64("revision", message.Snapshot.Revision()))
     }
 }
 ```
 
-事件的 `Snapshot` 是变更后的完整只读视图。本节点状态迁移、接收到更高版本的成员记录时发布；一批 Gossip 合并发布一次，重复或旧版本消息不会重复通知。事件通过本地 EventStream 投递到订阅者邮箱，不在 Gossip 处理中执行用户回调。
+两种事件的 `Snapshot` 均为变更后的完整只读视图，共用 LocalID 和本地 Revision。成员事件在本节点状态迁移、接收到更高版本的成员记录时发布；一批 Gossip 合并发布一次，重复或旧版本消息不会重复通知。事件通过本地 EventStream 投递到订阅者邮箱，不在 Gossip 处理中执行用户回调。
 
-先订阅，再查询初始快照。两者不是原子操作，事件可能先于查询结果到达；维护本地状态时，应在相同 LocalID 下保留 Revision 最大的视图，忽略较旧或重复结果。LocalID 变化表示观察实例改变，应重新查询建立基线，不能比较不同 LocalID 的序号。
+可达性事件在直接往返观察变化、结果过期或观察被清除时发布；连续成功只刷新有效期，不重复通知。观察不会传播到其他节点，含义见[本地可达性](/docs/cluster/runtime/reachability)。
+
+先订阅所需事件，再查询初始快照。两者不是原子操作，事件可能先于查询结果到达；维护本地状态时，应在相同 LocalID 下保留 Revision 最大的视图，忽略较旧或重复结果。LocalID 变化表示观察实例改变，应重新查询建立基线，不能比较不同 LocalID 的序号。
 
 订阅不回放历史事件，也不保证系统关闭前所有事件都已被消费。快照与事件用于本地观察，框架未为其注册跨节点传输编解码。
 

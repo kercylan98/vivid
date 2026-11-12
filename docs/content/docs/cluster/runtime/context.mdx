@@ -1,6 +1,6 @@
 ---
 title: 本地成员查询
-description: 使用 ClusterSnapshot 查询成员实例及生命周期
+description: 使用 ClusterSnapshot 查询成员实例、生命周期与本地可达性
 ---
 
 `system.ClusterSnapshot(timeout...)` 返回 `Future[vivid.ClusterSnapshot]`。Actor 内使用 `ctx.System().ClusterSnapshot()`；查询由本地 Gossip Actor 处理，不发起远程探测。
@@ -14,7 +14,7 @@ func printMembers(system vivid.ActorSystem) error {
         return err
     }
     for _, member := range snapshot.Members() {
-        fmt.Printf("%s %s %s\n", member.ID, member.Address, member.Status)
+        fmt.Printf("%s %s %s %s\n", member.ID, member.Address, member.Status, member.Reachability)
     }
     return nil
 }
@@ -28,7 +28,9 @@ func printMembers(system vivid.ActorSystem) error {
 | `Member(id)` | 按实例 ID 查询，返回 `ClusterMember` 值及是否存在 |
 | `Members()` | 按实例 ID 排序的独立切片 |
 
-`ClusterMember` 包含 `ID`、`Address`、`Status`、`Revision` 和 `CreatedAt`。成员的 Revision 是该实例的状态版本，与快照的本地观察序号含义不同。生命周期常量为 `vivid.ClusterMemberStatusNone`、`Joining`、`Up`、`Leaving`、`Exiting`、`Removed`，均使用 `ClusterMemberStatus` 前缀。
+`ClusterMember` 包含 `ID`、`Address`、`Status`、`Revision`、`CreatedAt` 和 `Reachability`。成员的 Revision 是该实例的状态版本，与快照的本地观察序号含义不同。生命周期常量为 `vivid.ClusterMemberStatusNone`、`Joining`、`Up`、`Leaving`、`Exiting`、`Removed`，均使用 `ClusterMemberStatus` 前缀。
+
+`Reachability` 是本地最近一次直接往返观察，与生命周期独立，详见[本地可达性](/docs/cluster/runtime/reachability)。快照的 Revision 在成员记录或可达性发生变化时递增。
 
 快照可安全保留，后续变更不会修改旧快照；修改返回的成员值或切片不会影响系统及其他订阅者。查询不发起远程探测，按 ID 查询单个成员可避免复制整个列表。
 

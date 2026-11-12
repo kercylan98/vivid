@@ -191,6 +191,8 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 					vivid.WithActorSystemClusterLaunchDelay(0),
 					vivid.WithActorSystemClusterGossipInterval(50*time.Millisecond),
 					vivid.WithActorSystemClusterGossipPeersCount(1),
+					vivid.WithActorSystemClusterProbeTimeout(150*time.Millisecond),
+					vivid.WithActorSystemClusterReachabilityTTL(3*time.Second),
 					vivid.WithActorSystemClusterGracefulShutdownTimeout(time.Second),
 				)
 				member := gossip.NewSnapshotActor(opts)
@@ -256,6 +258,30 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 				}, 8*time.Second, 50*time.Millisecond)
 				t.Logf("all four nodes have %d UP members", count)
 			}
+			waitReachability := func(state vivid.ClusterReachability) {
+				t.Helper()
+				require.Eventually(t, func() bool {
+					for i := range systems {
+						snapshot, ok := read(i)
+						if !ok {
+							return false
+						}
+						count := 0
+						for _, member := range snapshot.Snapshot.Members() {
+							if network.groups[member.Address] != i/2 {
+								count++
+								if member.Reachability != state || member.Status != vivid.ClusterMemberStatusUp {
+									return false
+								}
+							}
+						}
+						if count != 2 {
+							return false
+						}
+					}
+					return true
+				}, 8*time.Second, 50*time.Millisecond)
+			}
 			if initiallyBlocked {
 				waitMembers(2)
 				network.mu.Lock()
@@ -264,7 +290,9 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 				require.Positive(t, rejected, "必须确认跨机房连接确实被拦截")
 			} else {
 				waitMembers(4)
+				waitReachability(vivid.ClusterReachabilityReachable)
 				network.partition(true)
+				waitReachability(vivid.ClusterReachabilityUnreachable)
 			}
 			// 隔离稳定后记录跨机房 Ping 数；成员 UP 不代表链路可达。
 			time.Sleep(300 * time.Millisecond)
@@ -287,6 +315,7 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 			healedAt := time.Now()
 			network.partition(false)
 			waitMembers(4)
+			waitReachability(vivid.ClusterReachabilityReachable)
 			// 视图可能保留了旧成员，必须另外确认恢复后收到新的跨机房 Ping。
 			require.Eventually(t, func() bool {
 				for i := range systems {

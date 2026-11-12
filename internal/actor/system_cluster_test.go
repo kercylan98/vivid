@@ -140,9 +140,11 @@ func TestSystem_ClusterSnapshotEvents(t *testing.T) {
 			events = append(events, observation.snapshot)
 		}
 		require.Len(t, events, 2, "加入和 Up 各产生一次事件，重复周期同步不产生事件")
-		for j, snapshot := range events {
+		lastRevision := initial.Revision()
+		for _, snapshot := range events {
 			assert.Equal(t, initial.LocalID(), snapshot.LocalID())
-			assert.Equal(t, initial.Revision()+uint64(j)+1, snapshot.Revision())
+			assert.Greater(t, snapshot.Revision(), lastRevision, "可达性事件也使用本地序号，成员事件的序号无需连续")
+			lastRevision = snapshot.Revision()
 			assert.Equal(t, 2, snapshot.Len())
 			members := snapshot.Members()
 			members[0].Address = "subscriber mutation"
@@ -210,10 +212,64 @@ func TestSystem_ClusterSnapshotSubscriptionWindow(t *testing.T) {
 	released = true
 	select {
 	case revision := <-completed:
-		assert.Equal(t, latest.Revision(), revision, "首次查询应包含订阅窗口内已接受的变更")
+		assert.GreaterOrEqual(t, revision, latest.Revision(), "首次查询应包含订阅窗口内已接受的变更")
 	case <-time.After(time.Second):
 		t.Fatal("snapshot was not delivered")
 	}
+}
+
+func TestSystem_ClusterReachabilityEvents(t *testing.T) {
+	address := clusterTestAddress(t)
+	system := startClusterTestSystem(t, address, 0)
+	initial, err := system.ClusterSnapshot(time.Second).Result()
+	require.NoError(t, err)
+	var observations []chan vivid.ClusterSnapshot
+	for range 2 {
+		updates := make(chan vivid.ClusterSnapshot, 16)
+		subscribed := make(chan struct{})
+		_, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+			switch message := ctx.Message().(type) {
+			case *vivid.OnLaunch:
+				ctx.EventStream().Subscribe(ctx, ves.ClusterReachabilityChangedEvent{})
+				close(subscribed)
+			case ves.ClusterReachabilityChangedEvent:
+				updates <- message.Snapshot
+			}
+		}))
+		require.NoError(t, err)
+		select {
+		case <-subscribed:
+		case <-time.After(time.Second):
+			t.Fatal("reachability subscriber did not start")
+		}
+		observations = append(observations, updates)
+	}
+	peer := startClusterTestSystem(t, clusterTestAddress(t), 0, address)
+	remote, err := peer.ClusterSnapshot(time.Second).Result()
+	require.NoError(t, err)
+	var delivered []vivid.ClusterSnapshot
+	for _, updates := range observations {
+		select {
+		case snapshot := <-updates:
+			member, found := snapshot.Member(remote.LocalID())
+			require.True(t, found)
+			assert.Equal(t, vivid.ClusterReachabilityReachable, member.Reachability)
+			assert.Equal(t, vivid.ClusterMemberStatusUp, member.Status)
+			assert.Equal(t, uint64(2), member.Revision)
+			assert.Equal(t, initial.LocalID(), snapshot.LocalID())
+			assert.Greater(t, snapshot.Revision(), initial.Revision())
+			delivered = append(delivered, snapshot)
+		case <-time.After(3 * time.Second):
+			t.Fatal("direct response was not observed")
+		}
+	}
+	assert.Equal(t, delivered[0].Revision(), delivered[1].Revision())
+	copy := delivered[0].Members()
+	copy[0].Reachability = vivid.ClusterReachabilityUnreachable
+	assert.NotEqual(t, copy, delivered[1].Members())
+	assert.Equal(t, 1, initial.Len())
+	local, _ := delivered[0].Member(initial.LocalID())
+	assert.Equal(t, vivid.ClusterReachabilityUnknown, local.Reachability, "自身不参与远程往返观察")
 }
 
 func BenchmarkSystem_ClusterSnapshot(b *testing.B) {

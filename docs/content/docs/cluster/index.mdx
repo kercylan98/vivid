@@ -13,9 +13,9 @@ description: 基于 Gossip 的成员发现、视图同步与当前能力范围
 
 ## 当前能力范围
 
-当前实现提供成员发现、成员视图同步、退出状态传播，以及 `system.ClusterSnapshot()` 本地只读查询、初始加入结果等待和成员变更事件。连接认证使用 Remoting 的 TLS/mTLS。
+当前实现提供成员发现、成员视图同步、退出状态传播，以及初始加入结果等待。通过 `system.ClusterSnapshot()` 查询本地成员与直接往返观察，通过成员事件和可达性事件订阅变化。连接认证使用 Remoting 的 TLS/mTLS。
 
-成员状态、版本向量和本地视图稳定都不能作为实时健康或写入资格的依据。当前没有成员故障检测、Quorum、自动故障迁移或集群单例保证，跨机房业务需自行约束数据一致性与独占写入。
+成员状态、版本向量和本地视图稳定都不能作为实时健康或写入资格的依据。当前没有 Quorum、自动故障迁移或集群单例保证，跨机房业务需自行约束数据一致性与独占写入。
 
 ## 入门与配置
 
@@ -24,6 +24,7 @@ description: 基于 Gossip 的成员发现、视图同步与当前能力范围
 - [连接认证](/docs/cluster/auth/join-auth)：TLS/mTLS 的节点身份与接入边界。
 - [启动与加入就绪](/docs/cluster/runtime/readiness)：区分加入成功、独立启动与加入失败。
 - [本地成员查询](/docs/cluster/runtime/context)：读取实例身份与生命周期。
+- [本地可达性](/docs/cluster/runtime/reachability)：区分成员生命周期与直接往返观察。
 - [成员事件](/docs/cluster/events/events)：订阅本地成员视图的后续变更。
 - [配置选项](/docs/cluster/config/options)：实际可用的配置函数、默认值及组合行为。
 - [远程通讯](/docs/config/remoting)：地址、业务消息编解码与远程投递。

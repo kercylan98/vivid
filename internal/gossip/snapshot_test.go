@@ -1,6 +1,8 @@
 package gossip
 
 import (
+	"time"
+
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
@@ -15,6 +17,7 @@ type SnapshotActor struct {
 type TestSnapshotRequest struct{}
 
 type SnapshotResponse struct {
+	Snapshot  vivid.ClusterSnapshot
 	ID        string
 	Status    endpoint.Status
 	View      *ClusterView
@@ -28,11 +31,13 @@ func NewSnapshotActor(options *vivid.ActorSystemClusterOptions) *SnapshotActor {
 func (a *SnapshotActor) OnReceive(ctx vivid.ActorContext) {
 	switch message := ctx.Message().(type) {
 	case TestSnapshotRequest:
+		a.refreshReachability(ctx, time.Now())
 		counts := make(map[string]uint64, len(a.pingCount))
 		for key, count := range a.pingCount {
 			counts[key] = count
 		}
 		ctx.Reply(SnapshotResponse{
+			Snapshot:  a.currentSnapshot(),
 			ID:        a.info.ID(),
 			Status:    a.info.Status,
 			View:      &ClusterView{members: a.view.Members().Clone(), version: a.view.Version().Clone()},
