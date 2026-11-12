@@ -1,0 +1,438 @@
+// Package gossip 基于 Ping/Pong 的集群成员发现与视图同步。
+package gossip
+
+import (
+	"fmt"
+	"slices"
+	"sort"
+	"time"
+
+	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/gossip/endpoint"
+	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
+	"github.com/kercylan98/vivid/pkg/log"
+)
+
+const (
+	// singleSchedulerReference 单个调度器的引用，用于周期 gossip。
+	singleSchedulerReference = "single"
+	gossipActorName          = "@gossip"
+)
+
+var (
+	_ vivid.Actor            = (*Actor)(nil)
+	_ vivid.FixedOptionActor = (*Actor)(nil)
+	_ vivid.PrelaunchActor   = (*Actor)(nil)
+)
+
+// New 构造 gossip Actor。seeds 为可选种子节点引用，空时以单节点身份直接进入 Up；非空时进入 Joining 并向 seeds 发起加入。
+// logger 用于 ClusterView 内部成员变更等调试日志。
+func New(options *vivid.ActorSystemClusterOptions) *Actor {
+	return &Actor{
+		opts: options,
+	}
+}
+
+// Actor 实现基于 gossip 的集群发现与视图同步：维护本节点 Information、集群视图（成员列表+版本向量），
+// 通过状态机事件驱动生命周期，处理 Ping/Pong 与周期 gossip。
+type Actor struct {
+	opts                 *vivid.ActorSystemClusterOptions // 配置选项
+	seeds                []vivid.ActorRef                 // 种子节点引用列表
+	info                 *endpoint.Information            // 本节点的端点信息（Ref、Status、LastSeen），状态迁移与 Ping/Pong 时写回视图。
+	view                 *ClusterView                     // 本节点维护的集群视图：成员列表 + 版本向量，用于因果合并与 peer 选择。
+	lastViewFingerprint  string                           // 收敛检测：视图指纹连续不变时投递 Converged，视图变化后重置以便再次收敛时投递。
+	convergedEmitted     bool                             // 是否已经投递过 Converged 消息
+	stableRounds         int                              // 连续不变的轮次
+	phaseKillCompleted   chan struct{}                    // 多阶段终止流程完成信号。
+	coordinatorNodeID    string                           // 当前的协调者节点 ID
+	convergenceStartedAt time.Time                        // 最近一次视图变化的时间，用于计算收敛耗时
+}
+
+// FixedOptions implements [vivid.FixedOptionActor].
+func (a *Actor) FixedOptions(ctx vivid.FixedOptionContext) []vivid.ActorOption {
+	return []vivid.ActorOption{
+		vivid.WithActorName(gossipActorName),
+	}
+}
+
+// OnPrelaunch 在 Actor 启动前执行：创建本节点 Information 并加入本地视图的成员列表。
+func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
+	// 初始化 seeds
+	a.seeds = make([]vivid.ActorRef, 0, len(a.opts.Seeds))
+	for _, seed := range a.opts.Seeds {
+		seedRef, err := ctx.System().CreateRef(seed, "/"+gossipActorName)
+		if err != nil {
+			return err
+		}
+		a.seeds = append(a.seeds, seedRef)
+	}
+
+	// 创建集群视图
+	a.view = NewClusterView(ctx.Logger())
+
+	// 注册多阶段终止以支持优雅退出
+	a.phaseKillCompleted = make(chan struct{})
+	if err := ctx.WithPhaseKill(a.phaseKillCompleted, a.opts.GracefulShutdownTimeout, a.OnReceive); err != nil {
+		return err
+	}
+
+	// 创建本节点 Information 并加入本地视图的成员列表
+	a.info = endpoint.NewInformation(ctx.Ref(), time.Now().Add(a.opts.LaunchDelay))
+	if !a.view.Members().Upsert(a.info) {
+		return vivid.ErrorException.WithMessage("prelaunch failed, unexpected error")
+	}
+
+	// 初始化当前的协调者节点 ID
+	a.coordinatorNodeID = a.view.Members().GetCoordinatorNodeID()
+	return nil
+}
+
+// OnReceive 消息入口：分发 OnLaunch、Ping、Pong 及调度回调（func(vivid.ActorContext)）。
+func (a *Actor) OnReceive(ctx vivid.ActorContext) {
+	switch m := ctx.Message().(type) {
+	case *vivid.OnLaunch:
+		a.onLaunch(ctx)
+	case *gossipmessages.Ping:
+		a.onPing(ctx, m)
+	case *gossipmessages.Pong:
+		a.onPong(ctx, m)
+	case *gossipmessages.SpreadGossip:
+		a.onSpreadGossip(ctx, m)
+	case *gossipmessages.Converged:
+		a.onConverged(ctx)
+	case *vivid.OnKill:
+		a.onKill(ctx, m)
+	}
+}
+
+func (a *Actor) onStatusChanged(ctx vivid.ActorContext, status endpoint.Status) {
+	ctx.Logger().Debug("status changed", log.String("status", status.String()))
+
+	switch status {
+	case endpoint.StatusJoining:
+		a.onJoining(ctx)
+	case endpoint.StatusUp:
+		a.onUp(ctx)
+	case endpoint.StatusLeaving:
+		a.onLeaving(ctx)
+	case endpoint.StatusExiting:
+		a.onExiting(ctx)
+	case endpoint.StatusRemoved:
+		a.onRemoved(ctx)
+	default:
+	}
+}
+
+// onLaunch 根据是否有种子决定初始状态：无种子发 EventBootstrap 直接 Up，有种子发 EventJoinRequested 进入 Joining；并注册多阶段终止以支持优雅退出。
+func (a *Actor) onLaunch(ctx vivid.ActorContext) {
+	// 随机延迟启动，避免所有节点同时启动，导致集群瞬间压力过大
+	time.Sleep(a.opts.LaunchDelay)
+
+	// 固定种子节点顺序
+	sort.Slice(a.opts.Seeds, func(i, j int) bool {
+		aAddr := a.seeds[i].GetAddress()
+		bAddr := a.seeds[j].GetAddress()
+		return aAddr < bAddr
+	})
+
+	// 尝试加入
+	changeStatus(ctx, a, EventJoining)
+}
+
+func (a *Actor) onJoining(ctx vivid.ActorContext) {
+	if a.info.Status != endpoint.StatusJoining {
+		return
+	}
+
+	// 检查种子节点是否包含自己
+	seedsSelfIndex := slices.IndexFunc(a.seeds, func(seed vivid.ActorRef) bool { return seed.Equals(ctx.Ref()) })
+
+	if len(a.seeds) > 0 {
+		ctx.Logger().Debug("joining cluster", log.String("seeds", fmt.Sprintf("%v", a.seeds)))
+	}
+
+	// 尝试加入所有种子节点，避免远程发送序列化过程中被修改
+	ping := a.preparePing(gossipmessages.GossipTypeJoin)
+	for i, seed := range a.seeds {
+		// 如果种子节点是自己，则跳过
+		if i == seedsSelfIndex {
+			continue
+		}
+		result, err := ctx.Ask(seed, ping, a.opts.JoinTimeout).Result()
+		if err != nil {
+			ctx.Logger().Error("failed to join cluster, try next seed", log.String("seed", seed.String()), log.Any("error", err))
+			continue
+		}
+		pong, ok := result.(*gossipmessages.Pong)
+		if !ok {
+			ctx.Logger().Error("failed to join cluster, try next seed", log.String("seed", seed.String()), log.Any("result", result),
+				log.Any("error", vivid.ErrorFutureMessageTypeMismatch.WithMessage(fmt.Sprintf("expected *gossipmessages.Pong, got %T", result))))
+			continue
+		}
+		a.onPong(ctx, pong)
+		changeStatus(ctx, a, EventUp)
+		ctx.Logger().Debug("joined cluster", log.String("seed", seed.String()))
+		return
+	}
+
+	// 所有种子节点都失败了，自举为孤岛集群
+	ctx.Logger().Debug("bootstrapped cluster", log.String("seeds", fmt.Sprintf("%v", a.seeds)))
+	changeStatus(ctx, a, EventUp)
+}
+
+func (a *Actor) onUp(ctx vivid.ActorContext) {
+	// 注册周期任务，按 [GossipInterval] 向视图中节点发起 gossip。
+	spreadGossipMessage := gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeCycleSYNC)
+	if err := ctx.Scheduler().Loop(ctx.Ref(), a.opts.GossipInterval, spreadGossipMessage, vivid.WithSchedulerReference(singleSchedulerReference)); err != nil {
+		// 报告故障以可以支持监管者重启
+		ctx.Failed(vivid.ErrorGossipScheduleFailed.With(err).WithMessage("failed to schedule spread gossip"))
+	}
+}
+
+func (a *Actor) onConverged(ctx vivid.ActorContext) {
+	a.view.cleanRemovedMembers(a.info)
+
+	// 计算新的协调者
+	newCoordinator := a.view.Members().GetCoordinatorNodeID()
+
+	// 记录协调者变化
+	if newCoordinator != a.coordinatorNodeID {
+		ctx.Logger().Info("coordinator changed", log.String("old", a.coordinatorNodeID), log.String("new", newCoordinator))
+		a.coordinatorNodeID = newCoordinator
+	}
+
+	ctx.Logger().Debug("cluster converged",
+		log.String("coordinator", a.coordinatorNodeID),
+		log.Duration("convergence_duration", time.Since(a.convergenceStartedAt)),
+		log.String("status", a.info.Status.String()),
+	)
+
+	// 自身状态迁移
+	switch a.info.Status {
+	case endpoint.StatusLeaving:
+		changeStatus(ctx, a, EventExiting)
+	case endpoint.StatusExiting:
+		changeStatus(ctx, a, EventRemoved)
+	case endpoint.StatusRemoved:
+		close(a.phaseKillCompleted)
+	default:
+	}
+}
+
+// onPing 处理收到的 Ping 消息：
+//   - 仅当对方在该成员 key 上的版本不旧于本地时，才接受发送方的自描述（避免迟到 Ping 用旧状态覆盖已更新的视图）。
+//   - 若对方整体版本更新（IsBefore），则合并其整表成员与版本。
+//   - 最后回复 Pong，带上当前节点信息、成员列表和版本向量。
+func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
+	// 如果自身还处于 Joining 状态，不应该接受任何 Ping 消息
+	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining {
+		return
+	}
+
+	senderID := ping.Info.ID()
+	localVersion := a.view.Version()
+	remoteVersion := ping.Version
+
+	// 先处理发送方节点自身信息
+	senderLocalVer := localVersion.Get(senderID)
+	senderRemoteVer := remoteVersion.Get(senderID)
+	if senderRemoteVer >= senderLocalVer {
+		isNew := a.view.Members().Upsert(ping.Info)
+		// 只更新发送方节点的版本
+		if senderRemoteVer > senderLocalVer {
+			a.view.Version().Increment(senderID)
+		}
+		if isNew {
+			// 如果对方是新节点，则发送 SpreadGossip 消息
+			ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeDiscoverNewNode))
+		}
+	}
+
+	// 按节点比较版本，决定是否合并
+	for _, remoteMember := range ping.MemberList.List() {
+		nodeID := remoteMember.ID()
+
+		// 跳过发送方节点，已经处理过了
+		if nodeID == senderID {
+			continue
+		}
+
+		localMember := a.view.Members().Get(nodeID)
+		localVer := localVersion.Get(nodeID)
+		remoteVer := remoteVersion.Get(nodeID)
+
+		// 只接受版本更高的更新
+		if remoteVer > localVer {
+			// 如果本地有这个成员，记录状态变更
+			if localMember != nil && localMember.Status != remoteMember.Status {
+				ctx.Logger().Debug("member status changed by version",
+					log.String("ref", remoteMember.ActorRef.String()),
+					log.String("before", localMember.Status.String()),
+					log.String("current", remoteMember.Status.String()),
+					log.Uint64("localVersion", localVer),
+					log.Uint64("remoteVersion", remoteVer))
+			}
+			a.view.Members().Upsert(remoteMember)
+		} else if remoteVer == localVer && localMember != nil {
+			// 版本相同，但状态可能不同，需要解决冲突
+			a.resolveConflict(localMember, remoteMember, nodeID, ctx)
+		}
+		// 如果远程版本更低，忽略
+	}
+
+	// 合并版本向量（取最大值）并写回本节点信息
+	a.view.Version().Merge(ping.Version)
+	a.view.Members().Upsert(a.info)
+
+	// 检测收敛
+	maybeEmitConverged(ctx, a)
+
+	// ctx.Logger().Debug("received ping", log.String("sender", ctx.Sender().GetAddress()), log.String("gossip_type", ping.GossipType))
+
+	// 避免远程发送序列化过程中被修改
+	pong := a.preparePong(ping.GossipType)
+	ctx.Reply(pong)
+}
+
+// onPong 处理 Ask 得到的 Pong：若对方版本更新则合并其成员与版本；若本节点当前为 Joining 则发 EventJoined 迁到 Up。
+func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
+	senderID := pong.Info.ID()
+	localVersion := a.view.Version()
+	remoteVersion := pong.Version
+
+	// 先处理发送方节点自身信息
+	senderLocalVer := localVersion.Get(senderID)
+	senderRemoteVer := remoteVersion.Get(senderID)
+	if senderRemoteVer >= senderLocalVer {
+		a.view.Members().Upsert(pong.Info)
+		if senderRemoteVer > senderLocalVer {
+			a.view.Version().Increment(senderID)
+		}
+	}
+
+	// 按节点比较版本，决定是否合并
+	for _, remoteMember := range pong.MemberList.List() {
+		nodeID := remoteMember.ID()
+
+		// 跳过发送方节点，已经处理过了
+		if nodeID == senderID {
+			continue
+		}
+
+		localMember := a.view.Members().Get(nodeID)
+		localVer := localVersion.Get(nodeID)
+		remoteVer := remoteVersion.Get(nodeID)
+
+		// 只接受版本更高的更新
+		if remoteVer > localVer {
+			// 如果本地有这个成员，记录状态变更
+			if localMember != nil && localMember.Status != remoteMember.Status {
+				ctx.Logger().Debug("member status changed by version",
+					log.String("ref", remoteMember.ActorRef.String()),
+					log.String("before", localMember.Status.String()),
+					log.String("current", remoteMember.Status.String()),
+					log.Uint64("localVersion", localVer),
+					log.Uint64("remoteVersion", remoteVer))
+			}
+			a.view.Members().Upsert(remoteMember)
+		} else if remoteVer == localVer && localMember != nil {
+			// 版本相同，但状态可能不同，需要解决冲突
+			a.resolveConflict(localMember, remoteMember, nodeID, ctx)
+		}
+		// 如果远程版本更低，忽略
+	}
+
+	// 合并版本向量（取最大值）并写回本节点信息
+	a.view.Version().Merge(pong.Version)
+	a.view.Members().Upsert(a.info)
+
+	// 检测收敛
+	maybeEmitConverged(ctx, a)
+
+	// ctx.Logger().Debug("received pong", log.String("sender", ctx.Sender().GetAddress()), log.String("gossip_type", pong.GossipType))
+}
+
+// resolveConflict 解决版本冲突
+func (a *Actor) resolveConflict(local, remote *endpoint.Information, nodeID string, ctx vivid.ActorContext) {
+	// 版本相同时，使用确定性规则解决冲突
+	// 规则1: 优先使用更稳定的状态（UP > LEAVING > JOINING > REMOVED）
+	priority := map[endpoint.Status]int{
+		endpoint.StatusUp:      4,
+		endpoint.StatusLeaving: 3,
+		endpoint.StatusJoining: 2,
+		endpoint.StatusExiting: 1,
+		endpoint.StatusRemoved: 0,
+	}
+
+	localPriority := priority[local.Status]
+	remotePriority := priority[remote.Status]
+
+	if remotePriority > localPriority {
+		ctx.Logger().Debug("resolved conflict by status priority",
+			log.String("node", nodeID),
+			log.String("localStatus", local.Status.String()),
+			log.String("remoteStatus", remote.Status.String()))
+		a.view.Members().Upsert(remote)
+	} else if remotePriority == localPriority && remote.Status != local.Status {
+		// 状态相同但其他字段不同，使用节点ID字典序解决冲突
+		if remote.ID() > local.ID() {
+			ctx.Logger().Debug("resolved conflict by node ID",
+				log.String("node", nodeID),
+				log.String("localID", local.ID()),
+				log.String("remoteID", remote.ID()))
+			a.view.Members().Upsert(remote)
+		}
+	}
+	// 否则保留本地
+}
+
+func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
+	// 处理本节点告知即将离开集群
+	changeStatus(ctx, a, EventLeaving)
+}
+
+func (a *Actor) onLeaving(ctx vivid.ActorContext) {
+	// 处理即将离开集群
+	// 目前无需任何处理，gossip 的触发已经在状态变更时被处理了
+	ctx.Logger().Debug("leaving cluster")
+}
+
+func (a *Actor) onExiting(ctx vivid.ActorContext) {
+	// 处理即将离开集群
+	// 目前无需任何处理，gossip 的触发已经在状态变更时被处理了
+	ctx.Logger().Debug("exiting cluster")
+}
+
+func (a *Actor) onRemoved(ctx vivid.ActorContext) {
+	ctx.Logger().Debug("removed from cluster")
+}
+
+// onSpreadGossip 向 targets 发 Ping 并同步处理每个 Pong；targets 为空时从视图中取最多 GossipPeersLimit 个 Up 节点作为目标。
+func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessages.SpreadGossip) {
+	peers := a.view.Members().Unseens(a.info, a.seeds, a.opts.GossipPeersCount)
+	if len(peers) == 0 {
+		maybeEmitConverged(ctx, a)
+		return
+	}
+
+	// 避免远程发送序列化过程中被修改
+	ping := a.preparePing(spreadGossip.GossipType)
+
+	for _, peer := range peers {
+		ctx.Tell(peer, ping)
+	}
+}
+
+func (a *Actor) preparePing(gossipType string) *gossipmessages.Ping {
+	infoCopied := a.info.Clone()
+	memberListCopied := a.view.Members().Clone()
+	versionVectorCopied := a.view.Version().Clone()
+	return gossipmessages.NewPing(gossipType, infoCopied, memberListCopied, versionVectorCopied)
+}
+
+func (a *Actor) preparePong(gossipType string) *gossipmessages.Pong {
+	infoCopied := a.info.Clone()
+	memberListCopied := a.view.Members().Clone()
+	versionVectorCopied := a.view.Version().Clone()
+	return gossipmessages.NewPong(gossipType, infoCopied, memberListCopied, versionVectorCopied)
+}

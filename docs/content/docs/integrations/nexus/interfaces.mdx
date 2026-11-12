@@ -1,0 +1,55 @@
+---
+title: 核心接口
+description: Session、SessionContext、SessionActor、SessionReader 等接口约定
+---
+
+## 接口一览
+
+| 接口 | 说明 |
+|------|------|
+| **Session** | 底层连接抽象：`io.ReadWriteCloser` + `GetSessionId() string`，由接入层实现 |
+| **SessionContext** | 业务在回调中拿到的上下文：`vivid.ActorContext` + `GetSessionId` + `Close()` + `Send([]byte) error` |
+| **SessionActor** | 业务实现的会话逻辑：`OnConnected` / `OnDisconnected` / `OnMessage`，所有回调在单线程中串行执行 |
+| **SessionActorProvider** | 为每个新会话提供 SessionActor 实例；可用 **SessionActorProviderFN** 函数适配 |
+| **SessionReader** | 会话数据读取器，`Read() (n, data, err)`；返回的 data 仅在本轮返回到下次 Read 前有效，跨周期使用须拷贝 |
+| **SessionReaderProvider** | 为指定 Session 提供 SessionReader；可用 **SessionReaderProviderFN** 函数适配，未设置时使用默认按字节流读取 |
+
+## Session
+
+由接入层（TCP、WebSocket 等）实现，表示一条连接的抽象：
+
+- 实现 **io.ReadWriteCloser**（Read/Write/Close）。
+- **GetSessionId() string**：在该 Nexus 内唯一标识该会话，用于 Close(sessionId)、Send(sessionId, message) 及 sessions 映射；**同一 ID 的新连接会替换旧会话**。
+
+## SessionContext
+
+业务在 OnConnected、OnDisconnected、OnMessage 中拿到的上下文，组合了：
+
+- **vivid.ActorContext**：Tell、Logger、Spawn 等。
+- **GetSessionId() string**：本会话 ID。
+- **Close()**：关闭本会话（委托 Nexus 执行 Kill）。
+- **Send(message []byte) error**：向本会话写回数据，并发安全。
+
+所有回调均在 sessionActor 的邮箱线程中串行执行，可安全使用 ctx。
+
+## SessionActor
+
+由业务实现的会话逻辑，嵌入 **vivid.Actor**：
+
+- **OnConnected(ctx SessionContext)**：会话对应 Actor 启动后、读循环启动前调用，表示连接已就绪。
+- **OnDisconnected(ctx SessionContext)**：会话即将关闭时调用（Kill 处理中），之后底层 Session 会被 Close。
+- **OnMessage(ctx SessionContext, message []byte)**：每收到一条由 SessionReader 读取并投递到邮箱的 []byte 时调用。
+
+**message 生命周期**：仅在本次 OnMessage 调用内有效；如需异步或长期持有须自行拷贝（如 copy、bytes.Clone）。
+
+## SessionActorProvider
+
+为每个新会话提供一个 SessionActor 实例。Nexus 在创建 sessionActor 时调用 **Provide() (SessionActor, error)**；返回 nil 或 error 则会话不启动。可用 **SessionActorProviderFN(func() (SessionActor, error))** 适配。
+
+## SessionReader 与 SessionReaderProvider
+
+- **SessionReader**：`Read() (n int, data []byte, err error)`。在独立 goroutine 中循环调用，读一条 → 处理完 → 再读下一条。返回的 **data 仅保证在本处理周期内有效**，下一次 Read 可能复用缓冲区；跨周期或异步使用须拷贝。
+- **SessionReaderProvider**：**Provide(session Session) (SessionReader, error)**，在 sessionActor 的 Prelaunch 阶段调用；返回的 SessionReader 不可为 nil。未设置时 Nexus 使用默认按字节流读取实现。
+- **SessionReaderProviderFN**：函数式适配器，便于用 `func(session Session) (SessionReader, error)` 实现。
+
+详细约定与 []byte 所有权见 [pkg.go.dev](https://pkg.go.dev/github.com/kercylan98/vivid-nexus) 或源码注释。

@@ -2,6 +2,7 @@ package ves
 
 import (
 	"reflect"
+	"time"
 
 	"github.com/kercylan98/vivid"
 )
@@ -36,6 +37,8 @@ type ActorLaunchedEvent struct {
 	ActorRef vivid.ActorRef
 	// Type Actor 实例的类型
 	Type reflect.Type
+	// Duration 启动耗时
+	Duration time.Duration
 }
 
 // ActorKilledEvent 表示 Actor 被杀死的事件。
@@ -52,6 +55,8 @@ type ActorKilledEvent struct {
 	ActorRef vivid.ActorRef
 	// Type Actor 实例的类型
 	Type reflect.Type
+	// Duration 存活时长
+	Duration time.Duration
 }
 
 // ActorRestartingEvent 表示 Actor 开始重启的事件。

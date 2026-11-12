@@ -31,6 +31,34 @@ type HistogramSnapshot struct {
 	Values []float64 // 所有观察值（可选，用于详细分析）
 }
 
+// Empty 返回是否无观察值（Count == 0）。
+func (s HistogramSnapshot) Empty() bool {
+	return s.Count == 0
+}
+
+// HasSamples 返回是否至少有一次观察（Count > 0）。
+func (s HistogramSnapshot) HasSamples() bool {
+	return s.Count > 0
+}
+
+// Mean 返回平均值 Sum/Count；无观察时返回 0。
+func (s HistogramSnapshot) Mean() float64 {
+	if s.Count == 0 {
+		return 0
+	}
+	return s.Sum / float64(s.Count)
+}
+
+// MinOrZero 返回最小值；无观察时返回 0。
+func (s HistogramSnapshot) MinOrZero() float64 {
+	return s.Min
+}
+
+// MaxOrZero 返回最大值；无观察时返回 0。
+func (s HistogramSnapshot) MaxOrZero() float64 {
+	return s.Max
+}
+
 func newAtomicHistogram() *atomicHistogram {
 	return &atomicHistogram{
 		maxSize: 1000, // 默认最多存储 1000 个值

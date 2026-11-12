@@ -1,7 +1,6 @@
 package actor
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"runtime/debug"
@@ -15,7 +14,6 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/messages"
-	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/ves"
@@ -36,7 +34,7 @@ const (
 	killed
 )
 
-func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid.ActorOption) (*Context, error) {
+func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, options ...vivid.ActorOption) (*Context, error) {
 	ctx := &Context{
 		options: &vivid.ActorOptions{
 			DefaultAskTimeout: system.options.DefaultAskTimeout, // 默认继承系统默认的 Ask 超时时间
@@ -45,10 +43,11 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 		system:        system,
 		parent:        parent,
 		behaviorStack: NewBehaviorStack(),
+		launchTime:    time.Now(),
 	}
 	ctx.scheduler = newScheduler(ctx)
 
-	initializer := newContextInitializer(ctx, actor, options...)
+	initializer := newContextInitializer(ctx, actor, initContextOptions(ctx, actor, options)...)
 
 	if err := chain.New().
 		Append(chain.ChainFN(initializer.applyOptions)).
@@ -63,26 +62,52 @@ func NewContext(system *System, parent *Ref, actor vivid.Actor, options ...vivid
 	return ctx, nil
 }
 
+func initContextOptions(ctx *Context, actor vivid.Actor, userOptions []vivid.ActorOption) []vivid.ActorOption {
+	if fixedOptionActor, ok := actor.(vivid.FixedOptionActor); ok {
+		userOptions = append(userOptions, fixedOptionActor.FixedOptions(ctx)...)
+	}
+	var newUserOptions []vivid.ActorOption
+	for _, option := range userOptions {
+		if option == nil {
+			continue
+		}
+		newUserOptions = append(newUserOptions, option)
+	}
+	return newUserOptions
+}
+
 type Context struct {
 	options       *vivid.ActorOptions                // 当前 ActorContext 的选项
 	system        *System                            // 当前 ActorContext 所属的 ActorSystem
-	parent        *Ref                               // 父 Actor 引用，如果为 nil 则表示根 Actor
-	ref           *Ref                               // 当前 Actor 引用
+	parent        vivid.ActorRef                     // 父 Actor 引用，如果为 nil 则表示根 Actor
+	ref           vivid.ActorRef                     // 当前 Actor 引用
 	actor         vivid.Actor                        // 当前 Actor
 	behaviorStack *BehaviorStack                     // 行为栈
 	mailbox       vivid.Mailbox                      // 邮箱
 	children      map[vivid.ActorPath]vivid.ActorRef // 懒加载的子 Actor 引用
 	envelop       vivid.Envelop                      // 当前 ActorContext 的消息
+	launchTime    time.Time                          // Actor 启动时间
 	state         int32                              // 状态
 	zombie        bool                               // 是否为僵尸状态
 	restarting    *RestartMessage                    // 正在重启的消息
 	watchers      map[string]vivid.ActorRef          // 正在监听该 Actor 终止事件的 ActorRef，其中 key 为 ActorRef 的完整路径
 	stash         []vivid.Envelop                    // 暂存区
 	scheduler     *Scheduler                         // 调度器
+	phaseKill     *phaseKill                         // 多阶段终止流程
 }
 
-func (c *Context) Cluster() vivid.ClusterContext {
-	return c.system.Cluster()
+func (c *Context) WithPhaseKill(completed <-chan struct{}, timeout time.Duration, behavior vivid.Behavior) error {
+	if completed == nil {
+		return vivid.ErrorIllegalArgument.WithMessage("completed channel is required")
+	}
+	if timeout <= 0 {
+		return vivid.ErrorIllegalArgument.WithMessage("timeout is required and must be greater than 0")
+	}
+	if behavior == nil {
+		return vivid.ErrorIllegalArgument.WithMessage("behavior is required")
+	}
+	c.phaseKill = newPhaseKill(completed, timeout, behavior)
+	return nil
 }
 
 func (c *Context) Stash() {
@@ -103,7 +128,10 @@ func (c *Context) Unstash(num ...int) {
 	}
 
 	// 批量恢复
-	popCount := sugar.Max(sugar.Min(num[0], stashCount), 0)
+	popCount := num[0]
+	if popCount <= 0 || popCount > stashCount {
+		popCount = stashCount
+	}
 
 	for i := 0; i < popCount; i++ {
 		c.mailbox.Enqueue(c.stash[i])
@@ -124,8 +152,8 @@ func (c *Context) Metrics() metrics.Metrics {
 	return c.system.Metrics()
 }
 
-func (c *Context) MetricsEnabled() bool {
-	return c.system.MetricsEnabled()
+func (c *Context) IsMetricsEnabled() bool {
+	return c.system.IsMetricsEnabled()
 }
 
 func (c *Context) Logger() log.Logger {
@@ -204,18 +232,75 @@ func (c *Context) Reply(message vivid.Message) {
 }
 
 func (c *Context) TellSelf(message vivid.Message) {
+	if m, ok := c.mailbox.(*mailbox.UnboundedMailbox); ok {
+		ref := c.ref.(*Ref)
+		mailbox.EnqueueMessage(m, ref, ref, message)
+		return
+	}
 	c.mailbox.Enqueue(mailbox.NewEnvelop(false, c.ref, c.ref, message))
 }
 
 func (c *Context) Tell(recipient vivid.ActorRef, message vivid.Message) {
+	if recipient == nil {
+		c.system.mailbox.Enqueue(mailbox.NewEnvelop(false, c.ref, recipient, message))
+		return
+	}
+	// 已缓存的本地默认邮箱直接投递，远程及其他邮箱继续使用统一路由
+	sender := c.ref.(*Ref)
+	if ref, ok := recipient.(*Ref); ok && ref.address == sender.address {
+		if cached := ref.cache.Load(); cached != nil {
+			if m := cached.local; m != nil {
+				if _, ok := message.(*vivid.OnKill); !ok {
+					mailbox.EnqueueMessage(m, sender, ref, message)
+					return
+				}
+			}
+		}
+	}
+	if recipient.Equals(c.ref) {
+		c.TellSelf(message)
+		return
+	}
 	c.tell(false, recipient, message)
 }
 
 func (c *Context) tell(system bool, recipient vivid.ActorRef, message vivid.Message) {
-	envelop := mailbox.NewEnvelop(system, c.ref, recipient, message)
-	ref, _ := recipient.(*Ref)
-	receiverMailbox := c.system.findMailbox(ref)
+	if err := c.tellWithSender(system, c.ref, recipient, message); err != nil {
+		// 本地消息直接投递，不经过虚拟协调器，不返回错误
+		// 意外情况记录日志用于排查
+		c.Logger().Error("failed to tell", log.String("path", c.ref.GetPath()), log.String("recipient", recipient.GetPath()), log.Any("message", message), log.Any("error", err))
+	}
+}
+
+func (c *Context) enqueueToMailbox(recipient vivid.ActorRef, envelop vivid.Envelop) {
+	// 提前标记目标 Actor 是否即将被关闭
+	if _, ok := envelop.Message().(*vivid.OnKill); ok {
+		c.system.markActorAsClosing(recipient)
+	}
+
+	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
 	receiverMailbox.Enqueue(envelop)
+}
+
+func (c *Context) tellWithSender(system bool, sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message) (err error) {
+	if !recipient.IsVirtual() {
+		if _, ok := message.(*vivid.OnKill); ok {
+			c.system.markActorAsClosing(recipient)
+		}
+		receiverMailbox := c.system.findMailbox(recipient.(*Ref))
+		if !system {
+			if m, ok := receiverMailbox.(*mailbox.UnboundedMailbox); ok {
+				if senderRef, ok := sender.(*Ref); ok {
+					mailbox.EnqueueMessage(m, senderRef, recipient.(*Ref), message)
+					return
+				}
+			}
+		}
+		receiverMailbox.Enqueue(mailbox.NewEnvelop(system, sender, recipient, message))
+	} else {
+		err = c.system.virtualCoordinator.TellVirtual(sender, recipient, message)
+	}
+	return
 }
 
 func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
@@ -223,23 +308,30 @@ func (c *Context) Ask(recipient vivid.ActorRef, message vivid.Message, timeout .
 }
 
 func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
+	return c.askWithSender(system, c.ref, recipient, message, timeout...)
+}
+
+func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
 	var askTimeout = c.options.DefaultAskTimeout
 	if len(timeout) > 0 {
 		askTimeout = timeout[0]
 	}
 
-	// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
-	agentRef, _ := NewAgentRef(c.ref)
-	futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
-		c.system.removeFuture(agentRef)
-	})
-	c.system.appendFuture(agentRef, futureIns)
+	if !recipient.IsVirtual() {
+		// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
+		agentRef, _ := NewAgentRef(sender.(*Ref))
+		futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
+			c.system.removeFuture(agentRef)
+		})
+		c.system.appendFuture(agentRef, futureIns)
 
-	envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
-	receiverMailbox := c.system.findMailbox(recipient.(*Ref))
-	receiverMailbox.Enqueue(envelop)
+		envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
+		c.enqueueToMailbox(recipient, envelop)
 
-	return futureIns
+		return futureIns
+	} else {
+		return c.system.virtualCoordinator.AskVirtual(sender, recipient, message, timeout...)
+	}
 }
 
 func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.Future[vivid.Message] {
@@ -247,15 +339,21 @@ func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.F
 		return future.NewFutureFail[vivid.Message](vivid.ErrorFutureInvalid.WithMessage("no task to be executed"))
 	}
 
-	futureIns := future.NewFuture[vivid.Message](c, timeout, nil)
+	// 视为需要等待的 Future，避免 Future 还未结束 Actor 先关闭了
+	agentRef, _ := NewAgentRef(c.ref.(*Ref))
+	futureIns := future.NewFuture[vivid.Message](c, timeout, func() {
+		c.system.removeFuture(agentRef)
+	})
+	c.system.appendFuture(agentRef, futureIns)
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				switch r := r.(type) {
 				case error:
-					futureIns.Close(vivid.ErrorFutureUnexpectedError.With(r))
+					futureIns.Close(vivid.ErrorFutureUnexpected.With(r))
 				default:
-					futureIns.Close(vivid.ErrorFutureUnexpectedError.With(fmt.Errorf("unexpected error: %v", r)))
+					futureIns.Close(vivid.ErrorFutureUnexpected.With(fmt.Errorf("unexpected error: %v", r)))
 				}
 			}
 		}()
@@ -296,13 +394,30 @@ func (c *Context) PipeTo(recipient vivid.ActorRef, message vivid.Message, forwar
 	return pipeId
 }
 
+func (c *Context) Available() bool {
+	heartbeat, err := c.system.Probe(c.ref).Result()
+	if err != nil {
+		return false
+	}
+	return heartbeat.Available
+}
+
 func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// 非运行状态下：
 	// - 普通消息一律推入死信队列
 	// - 系统消息在 killing 阶段仍需要处理（例如子 Actor 的 OnKilled 事件），否则终止流程无法闭环
 	currentState := atomic.LoadInt32(&c.state)
 	killingOrKilled := (currentState == killed) || (!envelop.System() && currentState != running) // 是否处于停止中或死亡状态
-	if killingOrKilled && !c.zombie {                                                             // 是否处于僵尸状态
+	if killingOrKilled && !c.zombie {
+		// 如果是 killing 且多阶段终止流程，转由多阶段终止流程处理
+		if currentState == killing && c.phaseKill != nil && !c.phaseKill.completed {
+			c.handleMessage(envelop, c.phaseKill.behavior)
+			return
+		} // 是否处于僵尸状态
+		if _, ok := envelop.Message().(ves.DeathLetterEvent); ok {
+			// 避免在已终止阶段将死信再次投递给自己，形成无限递归的死信风暴。
+			return
+		}
 		c.system.TellSelf(ves.DeathLetterEvent{
 			Envelope: envelop,
 			Time:     time.Now(),
@@ -313,20 +428,19 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// 处理消息
 	// 对于僵尸状态，用户逻辑都是执行过的，不应该再继续执行，否则可能会导致异常状态扩散
 	// 僵尸状态的消息处理仅用作能正确的确保 Actor 被释放
-	c.envelop = envelop
 	behavior := c.behaviorStack.Peek()
 	if c.zombie {
 		behavior = emptyBehavior
 	}
 
-	switch message := c.envelop.Message().(type) {
+	c.handleMessage(envelop, behavior)
+}
+
+func (c *Context) handleMessage(envelop vivid.Envelop, behavior vivid.Behavior) {
+	c.envelop = envelop
+	switch message := c.Message().(type) {
 	case *vivid.OnLaunch:
-		c.executeBehaviorWithRecovery(behavior)
-		// 通知事件流
-		c.EventStream().Publish(c, ves.ActorLaunchedEvent{
-			ActorRef: c.ref,
-			Type:     reflect.TypeOf(c.actor),
-		})
+		c.onLaunch(message, behavior)
 	case *vivid.OnKill:
 		c.onKill(message, behavior)
 	case *vivid.OnKilled:
@@ -345,9 +459,21 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 		c.onUnwatch(message)
 	case *SchedulerMessage:
 		c.onScheduler(message, behavior)
+	case *phaseKill:
+		c.onPhaseKill()
 	default:
+		if c.IsMetricsEnabled() {
+			c.Metrics().Counter(metrics.MessagesProcessedTotalCounter).Inc()
+		}
 		c.executeBehaviorWithRecovery(behavior)
 	}
+}
+
+func (c *Context) onPhaseKill() {
+	// 多阶段终止流程结束
+	c.envelop = c.phaseKill.envelope // 恢复 OnKill 消息
+	c.phaseKill.completed = true
+	c.doKill(c.Message().(*vivid.OnKill), c.behaviorStack.Peek())
 }
 
 func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
@@ -376,13 +502,13 @@ func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 func (c *Context) onScheduler(message *SchedulerMessage, behavior vivid.Behavior) {
 	// 消息替换
 	c.envelop = newReplacedEnvelop(c.envelop, message.Message)
-
-	// 执行调度
+	if c.IsMetricsEnabled() {
+		c.Metrics().Counter(metrics.MessagesProcessedTotalCounter).Inc()
+	}
 	c.executeBehaviorWithRecovery(behavior)
 }
 
 func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
-	c.Logger().Debug("receive command", log.String("path", c.ref.GetPath()), log.String("command", message.Command.String()))
 	switch message.Command {
 	case messages.CommandPauseMailbox:
 		c.mailbox.Pause()
@@ -536,15 +662,30 @@ func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
 }
 
 func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
-	c.Logger().Debug("receive kill", log.String("path", c.ref.path), log.Bool("restarting", c.restarting != nil), log.Bool("zombie", c.zombie))
+	// c.Logger().Debug("receive kill",
+	// 	log.String("path", c.ref.GetPath()),
+	// 	log.Bool("restarting", c.restarting != nil),
+	// 	log.Bool("zombie", c.zombie),
+	// 	log.String("reason", message.Reason),
+	// )
+
+	// 检查是否存在多阶段终止流程，如果存在，此刻状态已为 killing，创建超时定时器后直接返回
+	if c.phaseKill != nil && !c.phaseKill.completed {
+		c.phaseKill.apply(c, c.envelop)
+		c.executeBehaviorWithRecovery(behavior)
+		c.Logger().Debug("phase kill applied", log.String("path", c.ref.GetPath()), log.Duration("timeout", c.phaseKill.timeout))
+		return
+	}
 
 	// 清理所有正在等待自身的 Future
 	c.system.removeFuturesByAgentPath(c.ref.GetPath(), vivid.ErrorActorDeaded)
 
 	// 等待所有子 Actor 结束，假设是重启，子 Actor 不应该跟随重启，应该由父节点决定是否重启
-	for _, child := range c.children {
-		c.Logger().Debug("notify child kill", log.String("path", child.GetPath()))
-		c.Kill(child, message.Poison, message.Reason)
+	// 多阶段终止时，子节点已在 apply 阶段通过 behavior（OnKill）通知过，此处不再重复发送 OnKill，避免死信
+	if c.phaseKill == nil || !c.phaseKill.completed {
+		for _, child := range c.children {
+			c.Kill(child, message.Poison, message.Reason)
+		}
 	}
 
 	// 宣告自己进入死亡中
@@ -558,7 +699,7 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 		}) {
 			logger.Warn("restart kill failed; resources may not have been properly released", log.String("path", c.ref.GetPath()), log.String("reason", c.restarting.Reason), log.Any("fault", c.restarting.Fault), log.String("stack", string(c.restarting.Stack)))
 		}
-	} else {
+	} else if c.phaseKill == nil {
 		c.executeBehaviorWithRecovery(behavior)
 	}
 
@@ -646,7 +787,7 @@ func (c *Context) failed(fault vivid.Message) {
 	// 记录第一现场，且挂起当前 Actor 的消息处理并且向父级 Actor 发送监督上下文以触发父级 Actor 的监督策略
 	c.mailbox.Pause()
 	supervisionContext := newSupervisionContext(c.ref, fault)
-	c.Logger().Error("supervision: actor failed", log.String("id", supervisionContext.ID()), log.String("path", c.ref.GetPath()), log.String("fault_type", fmt.Sprintf("%T", fault)), log.Any("fault", fault), log.Any("stack", errors.New(string(supervisionContext.FaultStack()))))
+	c.Logger().Error("supervision: actor failed", log.String("id", supervisionContext.ID()), log.String("path", c.ref.GetPath()), log.String("fault_type", fmt.Sprintf("%T", fault)), log.Any("fault", fault), log.Stack("stack", supervisionContext.FaultStack()))
 
 	c.tell(true, c.parent, supervisionContext)
 	// 通知事件流
@@ -705,4 +846,14 @@ var unwatchMessage = new(messages.UnwatchMessage)
 
 func (c *Context) Unwatch(ref vivid.ActorRef) {
 	c.tell(true, ref, unwatchMessage)
+}
+
+func (c *Context) onLaunch(_ *vivid.OnLaunch, behavior vivid.Behavior) {
+	c.executeBehaviorWithRecovery(behavior)
+	// 通知事件流
+	c.EventStream().Publish(c, ves.ActorLaunchedEvent{
+		ActorRef: c.ref,
+		Type:     reflect.TypeOf(c.actor),
+		Duration: time.Since(c.launchTime),
+	})
 }

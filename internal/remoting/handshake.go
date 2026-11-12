@@ -1,44 +1,45 @@
 package remoting
 
 import (
+	"errors"
 	"net"
 	"time"
-
-	"github.com/kercylan98/vivid/internal/messages"
 )
 
+const handshakeTimeout = 10 * time.Second
+
+var errExpectedHandshakeFrame = errors.New("expected handshake frame")
+
 type Handshake struct {
-	AdvertiseAddr string // 广告地址
+	AdvertiseAddr string
 }
 
 func (h *Handshake) Send(conn net.Conn) error {
-	writer := messages.NewWriterFromPool()
-	defer messages.ReleaseWriterToPool(writer)
-	if err := writer.WriteFrom(h.AdvertiseAddr); err != nil {
-		return err
-	}
-	data := writer.Bytes()
-	if err := conn.SetWriteDeadline(time.Now().Add(time.Second * 10)); err != nil {
-		return err
-	}
-
-	_, err := conn.Write(data)
+	_, err := NewHandshakeFrame(h.AdvertiseAddr).WriteTo(conn)
 	return err
 }
 
-func (h *Handshake) Wait(conn net.Conn) error {
-	var buf = make([]byte, 4096)
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second * 10)); err != nil {
+func (h *Handshake) Wait(conn net.Conn) (err error) {
+	if err = conn.SetReadDeadline(time.Now().Add(handshakeTimeout)); err != nil {
 		return err
 	}
+	defer func() {
+		if resetErr := conn.SetReadDeadline(time.Time{}); resetErr != nil {
+			err = errors.Join(err, resetErr)
+		}
+	}()
 
-	if _, err := conn.Read(buf); err != nil {
+	header := make([]byte, frameHeaderSize)
+	frame, err := ReadFrame(conn, header, FrameReadLimits{
+		MaxControlLen: maxFrameControlLen,
+		MaxDataLen:    maxHandshakeDataLen,
+	})
+	if err != nil {
 		return err
 	}
-	reader := messages.NewReaderFromPool(buf)
-	defer messages.ReleaseReaderToPool(reader)
-	if err := reader.ReadInto(&h.AdvertiseAddr); err != nil {
-		return err
+	if frame.Type != FrameCtrlHandshake {
+		return errExpectedHandshakeFrame
 	}
+	h.AdvertiseAddr = string(frame.Data)
 	return nil
 }

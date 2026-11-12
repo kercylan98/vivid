@@ -1,0 +1,168 @@
+package remoting
+
+import (
+	"bufio"
+	"io"
+	"time"
+
+	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/serialization"
+	"github.com/kercylan98/vivid/pkg/log"
+	"github.com/kercylan98/vivid/pkg/metrics"
+)
+
+var (
+	_ vivid.Actor = (*endpointReader)(nil)
+
+	endpointReadFrameMessage = endpointReadFrame{}
+)
+
+func newEndpointReader(availableSignal <-chan struct{}, associationID uint64, session *session, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, parentRef vivid.ActorRef, readTimeout time.Duration) *endpointReader {
+	return &endpointReader{
+		availableSignal: availableSignal,
+		associationID:   associationID,
+		session:         session,
+		codec:           codec,
+		envelopHandler:  envelopHandler,
+		parentRef:       parentRef,
+		readTimeout:     readTimeout,
+	}
+}
+
+type endpointReader struct {
+	availableSignal <-chan struct{}
+	associationID   uint64
+	session         *session
+	codec           *serialization.VividCodec
+	envelopHandler  NetworkEnvelopHandler
+	parentRef       vivid.ActorRef
+	reader          *bufio.Reader
+	header          []byte
+	readTimeout     time.Duration
+}
+
+type endpointReadFrame struct{}
+
+func (e *endpointReader) OnReceive(ctx vivid.ActorContext) {
+	switch ctx.Message().(type) {
+	case *vivid.OnLaunch:
+		e.onLaunch(ctx)
+	case endpointReadFrame:
+		e.onReadFrame(ctx)
+	}
+}
+
+func (e *endpointReader) onLaunch(ctx vivid.ActorContext) {
+	conn := e.session.Conn()
+	if conn == nil {
+		if !e.session.isClosed() {
+			ctx.Tell(e.parentRef, endpointReaderStopped{
+				associationID: e.associationID,
+				reader:        ctx.Ref(),
+				err:           io.ErrClosedPipe,
+			})
+		}
+		return
+	}
+	e.reader = bufio.NewReader(conn)
+	e.header = make([]byte, frameHeaderSize)
+
+	// 此时如果 ActorSystem 尚未完全就绪，提前接收到的消息可能会在 Actor 启动前就被放入死信队列，故需要监听启动完成信号
+	<-e.availableSignal
+	ctx.Tell(ctx.Ref(), endpointReadFrameMessage)
+}
+
+func (e *endpointReader) onReadFrame(ctx vivid.ActorContext) {
+	conn := e.session.Conn()
+	if conn == nil {
+		if !e.session.isClosed() {
+			ctx.Tell(e.parentRef, endpointReaderStopped{
+				associationID: e.associationID,
+				reader:        ctx.Ref(),
+				err:           io.ErrClosedPipe,
+			})
+		}
+		return
+	}
+	if e.readTimeout > 0 {
+		if err := conn.SetReadDeadline(time.Now().Add(e.readTimeout)); err != nil {
+			if !e.session.isClosed() {
+				ctx.Tell(e.parentRef, endpointReaderStopped{
+					associationID: e.associationID,
+					reader:        ctx.Ref(),
+					err:           err,
+				})
+			}
+			return
+		}
+	}
+	frame, err := ReadFrame(e.reader, e.header, FrameReadLimits{
+		MaxControlLen: maxFrameControlLen,
+		MaxDataLen:    maxFrameDataLen,
+	})
+	if err != nil {
+		// 如果 session 已被父 Actor 主动关闭，无需通知父 Actor（它已在关闭流程中），
+		// 也无需自杀（框架会通过 Kill 消息处理）。
+		if e.session.isClosed() {
+			return
+		}
+		if err == io.EOF {
+			ctx.Tell(e.parentRef, endpointReaderStopped{
+				associationID: e.associationID,
+				reader:        ctx.Ref(),
+				peerClosed:    true,
+			})
+			return
+		}
+		ctx.Logger().Warn("endpoint read frame failed", log.String("address", e.session.address), log.Any("error", err))
+		ctx.Tell(e.parentRef, endpointReaderStopped{
+			associationID: e.associationID,
+			reader:        ctx.Ref(),
+			err:           err,
+		})
+		return
+	}
+
+	switch frame.Type {
+	case FrameCtrlData:
+		if len(frame.Data) == 0 {
+			if ctx.Available() {
+				ctx.Tell(ctx.Ref(), endpointReadFrameMessage)
+			}
+			return
+		}
+		system, sender, receiver, messageInstance, decodeErr := decodeEnvelop(e.codec, frame.Data)
+		if decodeErr != nil {
+			ctx.Logger().Warn("endpoint decode envelop failed", log.String("sender", e.session.address), log.Any("error", decodeErr), log.String("raw", string(frame.Data)))
+			ctx.Tell(e.parentRef, endpointReaderStopped{
+				associationID: e.associationID,
+				reader:        ctx.Ref(),
+				err:           decodeErr,
+			})
+			return
+		}
+		frameBytes := uint64(frameHeaderSize + len(frame.ControlData) + len(frame.Data))
+		ctx.Metrics().Counter(metrics.RemotingBytesReceivedTotalCounter).Add(frameBytes)
+		ctx.Metrics().Counter(metrics.RemotingEnvelopReceivedTotalCounter).Inc()
+		ctx.Metrics().Histogram(metrics.RemotingEnvelopSizeBytesHistogram).Observe(float64(len(frame.Data)))
+		if handleErr := e.envelopHandler.HandleRemotingEnvelop(system, sender, receiver, messageInstance); handleErr != nil {
+			ctx.Logger().Warn("handle remoting envelop failed", log.String("address", e.session.address), log.Any("error", handleErr))
+		}
+	case FrameCtrlClose:
+		if !e.session.isClosed() {
+			ctx.Tell(e.parentRef, endpointReaderStopped{
+				associationID: e.associationID,
+				reader:        ctx.Ref(),
+				peerClosed:    true,
+			})
+		}
+		return
+	case FrameCtrlHeartbeat, FrameCtrlHandshake:
+	default:
+		ctx.Logger().Warn("endpoint received unknown frame type", log.String("address", e.session.address), log.Any("ctrl_type", frame.Type))
+	}
+
+	if ctx.Available() {
+		ctx.Tell(ctx.Ref(), endpointReadFrameMessage)
+	}
+}

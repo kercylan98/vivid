@@ -1,6 +1,7 @@
 {
     "title": "文档",
     "pages": [
+        "design-principles",
         "---入门---",
         "index",
         "introduction/what-is-vivid",
@@ -41,6 +42,7 @@
         "config/complex-combination-actor",
         "config/ping",
         "---集成---",
-        "integrations/vivid-proto"
+        "integrations/vivid-proto",
+        "integrations/nexus"
     ]
 }

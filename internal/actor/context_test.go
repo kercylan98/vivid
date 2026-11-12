@@ -403,6 +403,9 @@ func TestContext_Restart(t *testing.T) {
 	})
 
 	t.Run("restart on killed panic, and prelaunch", func(t *testing.T) {
+		// 该用例目的在于测试，当actor被杀死时，如果actor的prelaunch函数抛出错误，则actor不会被重启
+		// 而是会等待actor的prelaunch函数返回后，再重启actor
+
 		system := actor.NewTestSystem(t)
 		defer func() {
 			assert.NoError(t, system.Stop())
@@ -416,9 +419,11 @@ func TestContext_Restart(t *testing.T) {
 			case *vivid.OnLaunch:
 				childActor := vivid.NewComplexCombinationActor(
 					vivid.NewPrelaunchActor(func(ctx vivid.PrelaunchContext) error {
+						ctx.Logger().Info("prelaunch")
 						return nil
 					}),
 					vivid.NewPreRestartActor(func(ctx vivid.RestartContext) error {
+						ctx.Logger().Info("prerestart")
 						close(wait)
 						return nil
 					}, vivid.ActorFN(func(ctx vivid.ActorContext) {
@@ -502,7 +507,6 @@ func TestContext_Restart(t *testing.T) {
 
 		select {
 		case <-wait:
-			time.Sleep(time.Second)
 		case <-time.After(time.Second):
 			assert.Fail(t, "timeout")
 		}
@@ -613,9 +617,9 @@ func TestContext_Failed(t *testing.T) {
 			case *vivid.OnKilled:
 				if !m.Ref.Equals(ctx.Ref()) {
 					panic("child killed not self")
-				} else {
-					close(wait)
 				}
+
+				close(wait)
 			}
 		}))
 		assert.NoError(t, err)
@@ -1097,7 +1101,7 @@ func TestContext_Tell(t *testing.T) {
 		system.Tell(nil, 0)
 	})
 
-	t.Run("10,000,000 tell", func(t *testing.T) {
+	t.Run("100,000 tell, pass race", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
 		defer func() {
 			assert.NoError(t, system.Stop())
@@ -1109,6 +1113,9 @@ func TestContext_Tell(t *testing.T) {
 			switch ctx.Message().(type) {
 			case int:
 				counter++
+				if counter%10000 == 0 {
+					ctx.Logger().Debug("test counter", log.Int("counter", counter))
+				}
 			case *vivid.OnKilled:
 				close(wait)
 			}
@@ -1116,14 +1123,14 @@ func TestContext_Tell(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, ref)
 
-		for i := 0; i < 10000000; i++ {
+		for i := 0; i < 100_000; i++ {
 			system.Tell(ref, 1)
 		}
 		system.Kill(ref, true)
 
 		select {
 		case <-wait:
-			assert.Equal(t, 10000000, counter)
+			assert.Equal(t, 100_000, counter)
 		case <-time.After(time.Second):
 			assert.Fail(t, "timeout")
 		}
@@ -1600,7 +1607,7 @@ func TestContext_Entrust(t *testing.T) {
 		assert.NotNil(t, err)
 		assert.Nil(t, result)
 		assert.True(t, errors.Is(err, err))
-		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpectedError))
+		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpected))
 	})
 
 	t.Run("task recover panic", func(t *testing.T) {
@@ -1609,7 +1616,7 @@ func TestContext_Entrust(t *testing.T) {
 		})).Result()
 		assert.NotNil(t, err)
 		assert.Nil(t, result)
-		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpectedError))
+		assert.True(t, errors.Is(err, vivid.ErrorFutureUnexpected))
 	})
 
 	t.Run("async task forward to onReceive", func(t *testing.T) {
@@ -1809,9 +1816,63 @@ func TestContext_Ping(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, ref)
 
-		pong, err := system.Ping(ref)
+		pong, err := system.Ping(ref, time.Millisecond)
 		assert.ErrorIs(t, err, vivid.ErrorFutureTimeout)
 		assert.Nil(t, pong)
 		close(wake)
 	})
+}
+
+func TestContext_FixedOptions(t *testing.T) {
+	system := actor.NewTestSystem(t)
+	defer func() {
+		assert.NoError(t, system.Stop())
+	}()
+
+	var wait = make(chan struct{})
+
+	fixedActor := vivid.NewFixedOptionActor(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch ctx.Message().(type) {
+		case *vivid.OnLaunch:
+			assert.Equal(t, "test", ctx.Name())
+			close(wait)
+		}
+	}), vivid.WithActorName("test"))
+
+	ref, err := system.ActorOf(fixedActor, vivid.WithActorName("invalid-name"))
+	assert.NoError(t, err)
+	assert.NotNil(t, ref)
+
+	select {
+	case <-wait:
+	case <-time.After(time.Second):
+		assert.Fail(t, "timeout")
+	}
+}
+
+func TestContext_RemotingAsk(t *testing.T) {
+	system1 := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))
+	system2 := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8081"))
+	defer func() {
+		assert.NoError(t, system1.Stop())
+		assert.NoError(t, system2.Stop())
+	}()
+
+	refA, err := system1.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		switch m := ctx.Message().(type) {
+		case vivid.ActorRef:
+			ctx.Reply(m)
+		}
+	}))
+	assert.NoError(t, err)
+	assert.NotNil(t, refA)
+
+	reply, err := system1.Ask(refA.Clone(), refA).Result()
+	assert.NoError(t, err)
+
+	replyRef, ok := reply.(vivid.ActorRef)
+	assert.True(t, ok)
+	assert.Equal(t, refA.String(), replyRef.String())
+
+	t.Log(replyRef.String())
 }

@@ -3,6 +3,7 @@ package actor
 import (
 	"reflect"
 	"sync/atomic"
+	"time"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/mailbox"
@@ -33,12 +34,17 @@ func (h *killedHandler) handleChildDeath() {
 	if !h.message.Ref.Equals(h.ctx.ref) {
 		delete(h.ctx.children, h.message.Ref.GetPath())
 		h.ctx.executeBehaviorWithRecovery(h.behavior)
-		h.ctx.Logger().Debug("child death", log.Int("children_count", len(h.ctx.children)), log.String("ref", h.ctx.ref.GetPath()), log.String("child", h.message.Ref.GetPath()))
+		// h.ctx.Logger().Debug("child death", log.Int("children_count", len(h.ctx.children)), log.String("ref", h.ctx.ref.GetPath()), log.String("child", h.message.Ref.GetPath()))
 	}
 }
 
 // checkAndMarkKilled 检查并标记为 killed
 func (h *killedHandler) checkAndMarkKilled() {
+	// 多阶段终止尚未完成时，不标记为 killed，等待 phaseKill 消息触发最终死亡流程
+	if h.ctx.phaseKill != nil && !h.ctx.phaseKill.completed {
+		h.shouldContinue = false
+		return
+	}
 	// 如果还有子 Actor，则不处理自身死亡
 	if len(h.ctx.children) != 0 || !atomic.CompareAndSwapInt32(&h.ctx.state, killing, killed) {
 		h.shouldContinue = false
@@ -105,6 +111,7 @@ func (h *killedHandler) cleanupIfNotRestarting() {
 	h.ctx.EventStream().Publish(h.ctx, ves.ActorKilledEvent{
 		ActorRef: h.ctx.ref,
 		Type:     reflect.TypeOf(h.ctx.actor),
+		Duration: time.Since(h.ctx.launchTime),
 	})
 }
 
@@ -162,6 +169,7 @@ func (h *killedHandler) handleRestart() {
 		h.ctx.mailbox.Resume()
 	} else {
 		h.ctx.restarting = nil
+		h.ctx.system.unmarkActorAsClosing(h.ctx.ref)
 		atomic.StoreInt32(&h.ctx.state, running)
 		h.ctx.tell(true, h.ctx.parent, new(vivid.OnLaunch))
 		h.ctx.mailbox.Resume()

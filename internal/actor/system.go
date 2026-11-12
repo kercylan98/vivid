@@ -2,18 +2,20 @@ package actor
 
 import (
 	"context"
-	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/bridge"
 	"github.com/kercylan98/vivid/internal/chain"
-	"github.com/kercylan98/vivid/internal/cluster"
 	"github.com/kercylan98/vivid/internal/future"
-	"github.com/kercylan98/vivid/internal/mailbox"
+	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/internal/scheduler"
+	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/sugar"
+	"github.com/kercylan98/vivid/internal/virtual"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/ves"
@@ -26,9 +28,16 @@ const (
 )
 
 var (
-	_ vivid.ActorSystem              = (*System)(nil)
-	_ vivid.EnvelopHandler           = (*System)(nil)
-	_ remoting.NetworkEnvelopHandler = (*System)(nil)
+	_ vivid.ActorSystem                 = (*System)(nil)
+	_ vivid.EnvelopHandler              = (*System)(nil)
+	_ remoting.ActorSystemEnvelopTarget = (*System)(nil)
+	_ vivid.SystemStateProvider         = (*System)(nil)
+	_ vivid.MetricsProvider             = (*System)(nil)
+	_ bridge.VirtualActorSystem         = (*System)(nil)
+)
+
+var (
+	heartbeatMessage = &vivid.Heartbeat{}
 )
 
 func NewSystem(options ...vivid.ActorSystemOption) *System {
@@ -45,48 +54,110 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 	system.options.Context, system.cancel = context.WithCancel(system.options.Context)
 
 	system.eventStream = newEventStream(system)
+	system.remotingEnvelopHandler = remoting.NewActorSystemEnvelopHandler(system, system)
 	return system
 }
 
 type System struct {
-	*Context                                                            // ActorSystem 本身就表示了根 Actor
-	actorOfLock       sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
-	options           *vivid.ActorSystemOptions                         // 系统选项
-	actorContexts     sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
-	futureAgents      map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
-	futureLock        sync.Mutex                                        // Future 的锁，保证 Future 的并发安全
-	guardClosedSignal chan struct{}                                     // 用于通知系统关闭的信号
-	remotingServer    *remoting.ServerActor                             // 远程服务器
-	eventStream       vivid.EventStream                                 // 事件流
-	metrics           metrics.Metrics                                   // 指标收集器
-	scheduler         *scheduler.Scheduler                              // 调度器
-	status            int32                                             // 系统状态
-	statusLock        sync.Mutex                                        // 系统状态锁
-	clusterContext    *cluster.Context                                  // 集群上下文
-	cancel            context.CancelFunc                                // 上下文停止函数
+	*Context                                                                 // ActorSystem 本身就表示了根 Actor
+	codec                  *serialization.VividCodec                         // 内部消息编解码器
+	actorOfLock            sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
+	options                *vivid.ActorSystemOptions                         // 系统选项
+	actorContexts          sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
+	futureAgents           map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
+	futureLock             sync.RWMutex                                      // Future 的锁，保证 Future 的并发安全
+	guardClosedSignal      chan struct{}                                     // 用于通知系统关闭的信号
+	remotingRef            vivid.ActorRef                                    // 远程服务器引用
+	remotingEnvelopHandler remoting.NetworkEnvelopHandler                    // 远程信封处理器
+	eventStream            vivid.EventStream                                 // 事件流
+	metrics                metrics.Metrics                                   // 指标收集器
+	scheduler              *scheduler.Scheduler                              // 调度器
+	status                 int32                                             // 系统状态
+	statusLock             sync.Mutex                                        // 系统状态锁
+	cancel                 context.CancelFunc                                // 上下文停止函数
+	startTime              time.Time                                         // 启动时间，Start() 时记录
+	gossipRef              vivid.ActorRef                                    // 集群 gossip 引用
+	virtualCoordinator     bridge.VirtualCoordinator                         // 虚拟协调器
+	closingActors          sync.Map                                          // 即将被关闭的 Actor
 }
 
-func (s *System) Cluster() vivid.ClusterContext {
-	return s.clusterContext
+func (s *System) markActorAsClosing(ref vivid.ActorRef) {
+	if ref.GetAddress() != s.Ref().GetAddress() {
+		return
+	}
+	s.closingActors.Store(ref.GetPath(), struct{}{})
 }
 
-func (s *System) HandleRemotingEnvelop(system bool, senderAddr, senderPath, receiverAddr, receiverPath string, messageInstance any) error {
-	var sender, receiver *Ref
-	var err error
-	sender, err = NewRef(senderAddr, senderPath)
-	if err != nil {
-		s.Logger().Warn("invalid sender ref", log.String("address", senderAddr), log.String("path", senderPath), log.Any("err", err))
-		return fmt.Errorf("%w: invalid sender ref, %s/%s", err, senderAddr, senderPath)
+func (s *System) unmarkActorAsClosing(ref vivid.ActorRef) {
+	if ref.GetAddress() != s.Ref().GetAddress() {
+		return
 	}
-	receiver, err = NewRef(receiverAddr, receiverPath)
-	if err != nil {
-		s.Logger().Warn("invalid receiver ref", log.String("address", receiverAddr), log.String("path", receiverPath), log.Any("err", err))
-		return fmt.Errorf("%w: invalid receiver ref, %s/%s", err, receiverAddr, receiverPath)
+	s.closingActors.Delete(ref.GetPath())
+}
+
+func (s *System) HeartbeatProbe(ref vivid.ActorRef) *vivid.Heartbeat {
+	heartbeat := &vivid.Heartbeat{
+		Ref: ref,
 	}
-	receiverMailbox := s.findMailbox(receiver)
-	envelop := mailbox.NewEnvelop(system, sender, receiver, messageInstance)
-	receiverMailbox.Enqueue(envelop)
-	return nil
+
+	// 是否存在
+	value, exists := s.actorContexts.Load(ref.GetPath())
+	if !exists {
+		return heartbeat
+	}
+
+	// 是否即将被关闭
+	_, closing := s.closingActors.Load(ref.GetPath())
+	if closing {
+		// 如果是上下文，还需检查是否处于多阶段停止中
+		ctx, ok := value.(*Context)
+		if ok {
+			// 是否处于多阶段停止中，还可收到消息
+			if ctx.phaseKill != nil && !ctx.phaseKill.completed {
+				heartbeat.Available = true
+				return heartbeat
+			}
+
+			// 状态是否是 running
+			if atomic.LoadInt32(&ctx.state) == running {
+				heartbeat.Available = true
+				return heartbeat
+			}
+		}
+
+		return heartbeat
+	}
+
+	heartbeat.Available = true
+	return heartbeat
+}
+
+func (s *System) Probe(ref vivid.ActorRef, timeout ...time.Duration) vivid.Future[*vivid.Heartbeat] {
+	if ref.GetAddress() != s.Ref().GetAddress() {
+		return vivid.NewTypedFuture[vivid.Message, *vivid.Heartbeat](s.Ask(ref, heartbeatMessage))
+	}
+
+	f := future.NewFuture[*vivid.Heartbeat](s, 0, nil)
+	f.EnqueueMessage(s.HeartbeatProbe(ref))
+	return f
+}
+
+func (s *System) GetSystemBasicState() vivid.SystemBasicState {
+	remotingEnabled := s.options.RemotingBindAddress != ""
+	addr := ""
+	if remotingEnabled {
+		addr = s.options.RemotingAdvertiseAddress
+		if addr == "" {
+			addr = s.options.RemotingBindAddress
+		}
+	}
+	return vivid.SystemBasicState{
+		StartTime:       s.startTime,
+		Version:         vivid.Version,
+		RemotingEnabled: remotingEnabled,
+		RemotingAddress: addr,
+		MetricsEnabled:  s.options.EnableMetrics,
+	}
 }
 
 func (s *System) HandleFailedRemotingEnvelop(envelop vivid.Envelop) {
@@ -99,6 +170,14 @@ func (s *System) HandleFailedRemotingEnvelop(envelop vivid.Envelop) {
 
 func (s *System) Logger() log.Logger {
 	return s.options.Logger
+}
+
+func (s *System) ResolveMailbox(receiver vivid.ActorRef) vivid.Mailbox {
+	ref, ok := receiver.(*Ref)
+	if !ok {
+		return s.Mailbox()
+	}
+	return s.findMailbox(ref)
 }
 
 func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {
@@ -128,13 +207,19 @@ func (s *System) Start() error {
 		return stateError
 	}
 
+	s.startTime = time.Now()
 	s.Logger().Debug("actor system starting")
 
+	availableSignal := make(chan struct{})
+	defer close(availableSignal)
+	systemChains := newSystemChains(availableSignal)
 	startErr := chain.New(chain.WithContext(s.options.Context)).
+		Append(systemChains.initializeCodec(s)).
 		Append(systemChains.spawnGuardActor(s)).
 		Append(systemChains.initializeMetrics(s)).
 		Append(systemChains.initializeRemoting(s)).
 		Append(systemChains.initializeCluster(s)).
+		Append(systemChains.initializeVirtualCoordinator(s)).
 		Run()
 
 	if startErr != nil {
@@ -147,8 +232,6 @@ func (s *System) Start() error {
 	// 守护系统上下文
 	go func() {
 		<-s.options.Context.Done()
-		s.statusLock.Lock()
-		defer s.statusLock.Unlock()
 		_ = s.stop(false) // 无意义错误
 	}()
 	return nil
@@ -182,24 +265,28 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 		return stateError
 	}
 
-	// 优先离开集群（未启用集群时 clusterContext 为 nil）
-	if s.clusterContext != nil {
-		s.clusterContext.Leave()
-	}
-
 	var stopTimeout = sugar.Max(sugar.FirstOrDefault(timeout, s.options.StopTimeout), 0)
 	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
 
 	if s.Context != nil {
-		s.Context.Kill(s.Context.Ref(), true, "actor system stop")
-		s.cancel()
+		s.TellSelf(&guard.Stop{})
 		select {
 		case <-s.guardClosedSignal:
+			s.cancel()
 			break
-		case <-time.After(stopTimeout):
+		case <-func() <-chan time.Time {
+			if stopTimeout > 0 {
+				return time.After(stopTimeout)
+			}
+			// 如果永不超时，则返回一个永不关闭的通道
+			return make(chan time.Time)
+		}():
+			s.cancel()
 			s.Logger().Error("actor system stop failed", log.Duration("timeout", stopTimeout))
 			return vivid.ErrorActorSystemStopFailed.With(context.DeadlineExceeded)
 		}
+	} else {
+		s.cancel()
 	}
 
 	// 清理调度器
@@ -260,6 +347,7 @@ func (s *System) appendActorContext(ctx *Context) bool {
 // removeActorContext 用于移除指定路径的 ActorContext。
 func (s *System) removeActorContext(ctx *Context) {
 	s.actorContexts.Delete(ctx.Ref().GetPath())
+	s.unmarkActorAsClosing(ctx.Ref())
 }
 
 // FindActor 根据引用字符串查找本节点上已存在的 Actor 并返回其引用。
@@ -292,53 +380,82 @@ func (s *System) CreateRef(address string, path string) (vivid.ActorRef, error) 
 
 func (s *System) Metrics() metrics.Metrics {
 	if !s.options.EnableMetrics {
-		s.Logger().Warn("metrics not enabled, returning temporary metrics collector, should use vivid.WithActorSystemEnableMetrics to enable metrics")
-		return metrics.NewDefaultMetrics()
+		return getDiscordMetrics()
 	}
 	return s.metrics
 }
 
-func (s *System) MetricsEnabled() bool {
+func (s *System) IsMetricsEnabled() bool {
 	return s.options.EnableMetrics
 }
 
 // findMailbox 负责根据给定的 ActorRef 查找并返回对应的邮箱（Mailbox）。
 func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 	if ref == nil {
-		// 若传入的引用为 nil，直接返回系统根 Actor 的邮箱作为兜底。
 		return s.Mailbox()
 	}
 
+	isRemoteRef := ref.GetAddress() != s.Ref().GetAddress()
+
 	// 尝试优先从 Ref 的 cache 字段中读取 Mailbox 指针，如果存在则直接返回，减少 map 查找的开销。
 	if ptr := ref.cache.Load(); ptr != nil {
-		return *ptr
+		cached := ptr.mailbox
+		cacheRemote := isRemoteMailbox(cached)
+		if cacheRemote == isRemoteRef {
+			return cached
+		}
 	}
 
 	// 检查是否为远程地址，使用远程邮箱
-	if ref.GetAddress() != s.Ref().GetAddress() {
+	if isRemoteRef {
 		// 当系统上下文已关闭，直接返回系统根 Actor 的 Mailbox 作为兜底
 		if s.options.Context.Err() != nil {
 			return s.Mailbox()
 		}
-		if s.remotingServer == nil {
+		if s.remotingRef == nil {
 			s.Logger().Warn("remote disabled, remote actor ref not allowed", log.String("ref", ref.String()))
 			return s.Mailbox()
 		}
-		return s.remotingServer.GetRemotingMailboxCentral().GetOrCreate(ref.address, s)
+		return vivid.Mailbox(remoting.NewMailbox(s.options.Context, s, s.remotingRef, s))
 	}
 
 	// 在 actorContexts 中查找指定路径（GetPath）对应的 Context，并尝试获取其邮箱（Mailbox）。
 	if value, ok := s.actorContexts.Load(ref.GetPath()); ok {
 		switch v := value.(type) {
 		case *Context:
-			// 利用 CompareAndSwap 保证仅存储一次 Mailbox 指针到 cache，提升后续命中率，防止多线程下的闭包问题。
 			m := v.Mailbox()
-			ref.cache.CompareAndSwap(nil, &m)
+			ref.cacheMailbox(m)
 			return m
 		case *future.Future[vivid.Message]:
 			return v
 		}
 	}
-	// 若上述皆未命中，返回系统根 Actor 的 Mailbox 作为默认兜底方案，保证 Mailbox 一定可用。
-	return s.Mailbox()
+	m := s.Mailbox()
+	ref.cacheMailbox(m)
+	return m
+}
+
+func isRemoteMailbox(m vivid.Mailbox) bool {
+	switch m.(type) {
+	case *remoting.Mailbox:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *System) GetVirtualActorProvider(kind string) vivid.ActorProvider {
+	return s.options.VirtualActorProviders[kind]
+}
+
+func (s *System) TellWithSender(sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message) {
+	s.tellWithSender(false, sender, recipient, message)
+}
+
+func (s *System) AskWithSender(sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
+	return s.askWithSender(false, sender, recipient, message, timeout...)
+}
+
+func (s *System) VirtualRef(kind string, name string) vivid.ActorRef {
+	return virtual.NewIdentity(kind, name)
 }

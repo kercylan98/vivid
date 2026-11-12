@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/kercylan98/vivid/internal/messages"
+	"github.com/kercylan98/vivid/internal/serialization"
 )
 
 // 系统与资源相关错误。可用 errors.Is 判定并做兜底或日志处理。
@@ -27,17 +27,17 @@ var (
 
 // Future 与消息相关错误。
 var (
-	ErrorFutureTimeout             = RegisterError(110000, "future timeout")               // Result/Wait 超时未收到应答
-	ErrorFutureMessageTypeMismatch = RegisterError(110001, "future message type mismatch") // 应答类型与泛型声明不一致
-	ErrorFutureUnexpectedError     = RegisterError(110002, "future unexpected error")      // 收到非预期错误
-	ErrorFutureInvalid             = RegisterError(110003, "future invalid", ErrorIllegalArgument)               // 创建时 timeout 非法
-	ErrorInvalidMessageLength      = RegisterError(110004, "invalid message length", ErrorIllegalArgument)       // 消息长度非法
-	ErrorReadMessageBufferFailed   = RegisterError(110005, "read message buffer failed")   // 读消息缓冲失败
+	ErrorFutureTimeout             = RegisterError(110000, "future timeout")                               // Result/Wait 超时未收到应答
+	ErrorFutureMessageTypeMismatch = RegisterError(110001, "future message type mismatch")                 // 应答类型与泛型声明不一致
+	ErrorFutureUnexpected          = RegisterError(110002, "future unexpected error")                      // 收到非预期错误
+	ErrorFutureInvalid             = RegisterError(110003, "future invalid", ErrorIllegalArgument)         // 创建时 timeout 非法
+	ErrorInvalidMessageLength      = RegisterError(110004, "invalid message length", ErrorIllegalArgument) // 消息长度非法
+	ErrorReadMessageBuffer         = RegisterError(110005, "read message buffer failed")                   // 读消息缓冲失败
 )
 
 // 参数、调度与状态相关错误。
 var (
-	ErrorIllegalArgument = RegisterError(120000, "illegal argument")       // 参数无效或缺失
+	ErrorIllegalArgument = RegisterError(120000, "illegal argument")                            // 参数无效或缺失
 	ErrorCronParse       = RegisterError(120001, "parse cron expression", ErrorIllegalArgument) // Cron 表达式解析失败
 	//ErrorTriggerExpired          = RegisterError(120002, "trigger has expired")        // 触发器已过期
 	//ErrorIllegalState            = RegisterError(120003, "illegal state")              // 违反当前状态或上下文
@@ -50,7 +50,7 @@ var (
 
 // ActorRef 相关错误。
 var (
-	ErrorRefEmpty          = RegisterError(130001, "actor ref is empty", ErrorNotFound)                      // ActorRef 为空
+	ErrorRefEmpty          = RegisterError(130001, "actor ref is empty", ErrorNotFound)                             // ActorRef 为空
 	ErrorRefFormat         = RegisterError(130002, "actor ref must contain address and path", ErrorIllegalArgument) // 缺少 address 或 path
 	ErrorRefInvalidAddress = RegisterError(130003, "actor ref address is invalid", ErrorIllegalArgument)            // 地址非法
 	ErrorRefInvalidPath    = RegisterError(130004, "actor ref path is invalid", ErrorIllegalArgument)               // 路径非法
@@ -59,33 +59,32 @@ var (
 
 // Remoting 相关错误。
 var (
-	ErrorRemotingMessageSendFailed   = RegisterError(140000, "remote message send failed")   // 消息发送失败
-	ErrorRemotingMessageEncodeFailed = RegisterError(140001, "remote message encode failed") // 消息编码失败
-	ErrorRemotingMessageDecodeFailed = RegisterError(140002, "remote message decode failed") // 消息解码失败
-	ErrorRemotingMessageHandleFailed = RegisterError(140003, "remote message handle failed") // 消息处理失败
-	ErrorRemotingHandshakeFailed     = RegisterError(140004, "remote handshake failed")      // 握手失败
+	ErrorRemotingStopped                = RegisterError(140000, "remoting stopped")                                  // 远程通信已停止
+	ErrorRemotingListen                 = RegisterError(140001, "listen failed", ErrorException)                     // 监听失败
+	ErrorRemotingAccept                 = RegisterError(140002, "accept endpoint session failed", ErrorException)    // 接受连接失败
+	ErrorRemotingEndpointUnableToCreate = RegisterError(140003, "unable to create endpoint", ErrorActorSpawnFailed)  // 无法创建端点
+	ErrorRemotingEndpointSendData       = RegisterError(140004, "failed to send data to remote endpoint")            // 发送数据到远程端点失败
+	ErrorRemotingHandshake              = RegisterError(140005, "handshake negotiation with remote endpoint failed") // 与远程端点握手协商失败
 )
 
-// Cluster 相关错误。
+// Virtual 相关错误。
 var (
-	ErrorClusterNameMismatch            = RegisterError(150000, "cluster name mismatch")             // 集群名称不匹配
-	ErrorClusterDisabled                = RegisterError(150001, "cluster disabled")                  // 集群已禁用
-	ErrorClusterNodeStatusMismatch      = RegisterError(150002, "cluster node status mismatch")      // 节点状态不匹配
-	ErrorClusterNotInQuorum             = RegisterError(150003, "cluster not in quorum")             // 当前不在多数派，拒绝加入/决策
-	ErrorClusterJoinAuthFailed          = RegisterError(150004, "cluster join auth failed")          // Join 认证失败（Token 无效或缺失）
-	ErrorClusterJoinRateLimited         = RegisterError(150005, "cluster join rate limited")         // Join 请求被限流
-	ErrorClusterProtocolVersionMismatch = RegisterError(150006, "cluster protocol version mismatch") // 集群协议版本不兼容
-	ErrorClusterJoinNotAllowed          = RegisterError(150007, "cluster join not allowed")          // 地址或 DC 不在白名单
-	ErrorClusterAdminAuthFailed         = RegisterError(150008, "cluster admin auth failed")         // 管理操作 Token 无效
+	ErrorVirtualActorProviderNotFound = RegisterError(160000, "virtual actor provider not found", ErrorNotFound) // 虚拟 Actor 种类未找到
+	ErrorVirtualRecipientException    = RegisterError(160001, "virtual recipient exception", ErrorException)     // 虚拟 Actor 接收者异常，该错误通常是框架内部逻辑错误，正常不应该产生
 )
 
-var _ error = (*Error)(nil)
-var codeOfError = make(map[int32]*Error)
-var codeOfErrorMu sync.RWMutex
+// Gossip 相关错误。
+var (
+	ErrorGossipScheduleFailed = RegisterError(170000, "gossip schedule failed")                            //  gossip 调度失败
+	ErrorGossipRequires       = RegisterError(170001, "gossip missing required dependency", ErrorNotFound) // gossip 缺少必要内容
+)
 
-func init() {
-	messages.RegisterInternalMessage[*Error]("Error", errorReader, errorWriter)
-}
+var (
+	_             error                      = (*Error)(nil)
+	_             serialization.MessageCodec = (*Error)(nil)
+	codeOfError                              = make(map[int32]*Error)
+	codeOfErrorMu sync.RWMutex
+)
 
 // RegisterError 在全局注册一个错误类型并返回其实例。
 //
@@ -132,16 +131,16 @@ type Error struct {
 	err  error  // 包装的底层错误（不参与序列化）
 }
 
-// errorReader 从 reader 反序列化 Error 的 code 与 msg 到 message，供内部消息框架使用。
-func errorReader(message any, reader *messages.Reader, codec messages.Codec) error {
-	m := message.(*Error)
-	return reader.ReadInto(&m.code, &m.msg)
+// Decode implements [serialization.MessageCodec].
+func (e *Error) Decode(reader *serialization.Reader, message any) error {
+	err := message.(*Error)
+	return reader.Read(&err.code, &err.msg)
 }
 
-// errorWriter 将 Error 的 code 与 msg 序列化写入 writer，供内部消息框架使用。
-func errorWriter(message any, writer *messages.Writer, codec messages.Codec) error {
-	m := message.(*Error)
-	return writer.WriteFrom(m.code, m.msg)
+// Encode implements [serialization.MessageCodec].
+func (e *Error) Encode(writer *serialization.Writer, message any) error {
+	err := message.(*Error)
+	return writer.Write(err.code, err.msg).Err()
 }
 
 // Error 实现 error 接口，返回格式为 "[vivid: <code>] <msg>" 的字符串。
@@ -231,4 +230,16 @@ func (e *Error) As(target any) bool {
 		return errors.As(e.err, target)
 	}
 	return false
+}
+
+// ParseError 解析错误，若 err 为 nil 则返回 nil。若 err 为 *Error 实例则返回该实例，否则返回 ErrorException 包装的实例。
+func ParseError(err error) *Error {
+	if err == nil {
+		return nil
+	}
+	var e *Error
+	if errors.As(err, &e) {
+		return e
+	}
+	return ErrorException.With(err)
 }

@@ -189,26 +189,6 @@ type ActorContext interface {
 	//   ctx.UnBecome(WithBehaviorOption(...))   // 搭配自定义恢复策略
 	UnBecome(options ...BehaviorOption)
 
-	// TellSelf 向当前 Actor 自身发送消息，通常用于在当前 ActorContext 内部进行消息传递或促进事件循环。
-	//
-	// 功能说明：
-	//   - 该方法等同于 Tell(ctx.Ref(), message) 的快捷方式，用于向当前 Actor 自身发送消息。
-	//   - 由于是投递给自己，无需再次查找邮箱，因此性能优于 Tell(ctx.Ref(), message)。
-	//   - 消息会被异步投递到当前 Actor 的消息队列中，按照消息处理顺序依次处理。
-	//
-	// 典型应用场景：
-	//   - 在当前消息处理完成后，触发后续处理逻辑（如状态机转换后的首次消息处理）。
-	//   - 实现 Actor 内部的异步任务分解，将复杂任务拆分为多个消息逐步处理。
-	//   - 在条件满足时，通过向自身发送消息来触发下一阶段的处理流程。
-	//
-	// 参数说明：
-	//   - message: 要发送给自身的消息内容（任何类型，推荐结构体以增强类型安全）。
-	//
-	// 注意事项：
-	//   - 消息是异步投递的，不会立即处理，会在当前消息处理完成后按顺序处理。
-	//   - 应避免在消息处理中无限循环地向自身发送消息，可能导致消息队列堆积。
-	TellSelf(message Message)
-
 	// Name 返回当前 Actor 的名称。
 	//
 	// 功能说明：
@@ -332,6 +312,11 @@ type ActorContext interface {
 	// 返回值：
 	//   - int：stash 区中当前暂存的消息数量，若没有暂存消息则返回 0。
 	StashCount() int
+
+	// Available 是基于 [ActorSystem.Probe] 检查 Actor 自身是否还处于可用状态的函数。
+	//
+	// 当 Actor 处于可用状态时意味着投递消息任能被处理，否则将进入死信。
+	Available() bool
 }
 
 // actorRace 抽象出 Actor 的子 Actor 创建能力，为 ActorContext 内部复用。
@@ -374,22 +359,6 @@ type actorRace interface {
 // 不建议业务方直接实现或调用，建议通过 ActorContext 间接获得各项能力。
 type actorBasic interface {
 	ActorLiaison
-
-	// Cluster 获取集群上下文（ClusterContext）实例，用于访问当前 Actor 所处的集群管理功能。
-	//
-	// 功能说明：
-	//   - 提供对当前集群内所有节点的可见视图及相关操作（如节点发现、成员管理等）。
-	//   - 可通过 ClusterContext 获取集群节点列表，支持应用于分布式场景的 Actor 协作与消息路由。
-	//   - 当 Actor 运行于集群模式下，该方法返回实际的集群上下文对象；若系统未启用集群功能，返回值可能为 nil，应做好判空处理。
-	//
-	// 典型应用场景：
-	//   - 构建分布式 Actor 架构，需感知其他节点信息进行负载均衡、服务发现等。
-	//   - 对集群成员变更进行监听，实现动态扩缩容或弹性调度。
-	//   - 通过集群能力实现跨节点 ActorRef 的消息传递和协作处理。
-	//
-	// 返回值：
-	//   - ClusterContext：当前 ActorContext 的集群上下文对象。
-	Cluster() ClusterContext
 
 	// Kill 请求指定 Actor 终止运行，支持优雅停机（poison=false）或立即销毁（poison=true）两种模式。
 	//
@@ -452,11 +421,11 @@ type actorBasic interface {
 	//   - 如果你在未启用（未配置）全局指标采集时调用本方法，采集到的数据不会被纳入集中观察与管理，建议只在开发或测试场景下采用。
 	Metrics() metrics.Metrics
 
-	// MetricsEnabled 方法用于判断当前 ActorContext 是否启用指标收集功能。
+	// IsMetricsEnabled 方法用于判断当前 ActorContext 是否启用指标收集功能。
 	//
 	// 返回值：
 	//   - bool: 若启用指标收集则返回 true，否则返回 false。
-	MetricsEnabled() bool
+	IsMetricsEnabled() bool
 
 	// Ping 向目标 ActorRef 发送系统级 Ping 消息，并同步等待返回其 Pong 响应，用于可达性检测与时延评估。
 	//
@@ -611,6 +580,24 @@ type ActorLiaison interface {
 	Logger() log.Logger
 }
 
+// FixedOptionContext 定义了 Actor 固定选项（FixedOption）的上下文接口，用于在 Actor 启动时提供固定的选项配置。
+//
+// 功能说明：
+//   - 该上下文在 Actor 启动时提供，允许在 Actor 启动时访问固定的选项配置。
+//   - 主要用于 Actor 的启动过程中，进行必要的配置、资源准备等操作。
+//   - 与 ActorContext 不同，FixedOptionContext 不提供消息发送、子 Actor 管理等运行时能力，仅提供基础的系统访问接口。
+type FixedOptionContext interface {
+	// Logger 返回日志记录器。
+	//
+	// 功能说明：
+	//   - 返回当前 FixedOptionContext 可用的日志记录器实例，用于在 Actor 启动时进行日志输出。
+	//   - 日志记录器的返回策略与 ActorContext.Logger() 相同，优先返回 Actor 专用日志记录器，否则返回系统全局日志记录器。
+	//
+	// 返回值：
+	//   - log.Logger：当前上下文可用的日志记录器实例，保证非 nil。
+	Logger() log.Logger
+}
+
 // PrelaunchContext 定义了 Actor 启动前（Pre-launch）阶段的上下文接口，用于在 Actor 正式启动前进行初始化配置。
 //
 // 功能说明：
@@ -623,6 +610,15 @@ type ActorLiaison interface {
 //   - 订阅系统事件流，在 Actor 启动前注册事件监听器。
 //   - 获取自身 ActorRef，用于后续初始化配置或传递给其他组件。
 type PrelaunchContext interface {
+	// System 返回 ActorSystem 实例。
+	//
+	// 功能说明：
+	//   - 返回当前 PrelaunchContext 所在的 ActorSystem 实例，用于在 Actor 启动前访问系统资源。
+	//
+	// 返回值：
+	//   - ActorSystem：当前 ActorSystem 实例，保证非 nil。
+	System() ActorSystem
+
 	// Logger 返回日志记录器。
 	//
 	// 功能说明：
@@ -659,6 +655,25 @@ type PrelaunchContext interface {
 	// 返回值：
 	//   - ActorRef：当前 Actor 的引用实例，保证非 nil。
 	Ref() ActorRef
+
+	// WithPhaseKill 为当前 Actor 注册多阶段终止：收到 [OnKill] 后先进入“等待阶段”，再执行真正终止。
+	//
+	// 功能说明：
+	//   - 调用后，当本 Actor 收到 [OnKill] 时不会立即执行终止（不停止子 Actor、不执行任何后续终止行为、不进入 [OnKilled]）。
+	//   - 进入等待阶段：仅当 completed 被关闭或经过 timeout 后，框架会向自身投递内部信号，随后执行真正的终止流程（杀子、执行 OnKill 行为、[OnKilled] 等）。
+	//   - 在等待阶段内，本 Actor 处于“正在终止”状态，期间收到的所有消息（除重复的 [OnKill] 被忽略外）均由传入的 behavior 处理，便于做优雅收尾（如排空队列、回复 Ask、通知集群离开等）。
+	//
+	// 参数说明：
+	//   - completed：只读 channel。由调用方在“优雅收尾完成”时关闭；若不关闭，则依赖 timeout 触发后续终止。
+	//   - timeout：等待阶段的最长时长，超时后同样会进入真正终止；必须大于 0。
+	//   - behavior：在等待阶段内用于处理每条消息的函数；可在此逻辑中决定何时关闭 completed，或仅做收尾处理。
+	//
+	// 典型应用场景：
+	//   - 下线前先向集群发送“离开”并等待收敛，再执行终止。
+	//   - 终止前排空内部队列或完成未完成的请求后再退出。
+	//
+	// 返回值：参数非法时返回错误（completed 为 nil、timeout <= 0、behavior 为 nil）。
+	WithPhaseKill(completed <-chan struct{}, timeout time.Duration, behavior Behavior) error
 }
 
 // RestartContext 定义了 Actor 重启（Restart）阶段的上下文接口，用于在 Actor 重启过程中进行必要的清理和恢复操作。

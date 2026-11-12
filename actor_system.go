@@ -2,9 +2,9 @@ package vivid
 
 import (
 	"context"
-	"crypto/tls"
 	"time"
 
+	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
@@ -65,6 +65,12 @@ type ActorSystem interface {
 
 	// ActorOf 该方法的效果与 ActorContext.ActorOf 相同，但是它是并发安全的。
 	ActorOf(actor Actor, options ...ActorOption) (ActorRef, error)
+
+	// VirtualRef 创建一个虚拟 Actor 的引用。
+	VirtualRef(kind string, name string) ActorRef
+
+	// Probe 探测指定 Actor 心跳状态
+	Probe(ref ActorRef, timeout ...time.Duration) Future[*Heartbeat]
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。
@@ -159,6 +165,37 @@ type ActorSystemOptions struct {
 
 	// SupervisionStrategy 指定 ActorSystem 默认的监督策略。
 	SupervisionStrategy SupervisionStrategy
+
+	// VirtualActorProviders 指定虚拟 Actor 的提供者。
+	//
+	// 其中 key 为虚拟 Actor 的种类，value 为 VirtualActorProvider。
+	VirtualActorProviders map[string]ActorProvider
+
+	// MessageRegister 指定消息注册器。
+	MessageRegister []MessageRegister
+
+	// ClusterOptions 指定 ActorSystem 的集群选项。
+	ClusterOptions *ActorSystemClusterOptions
+}
+
+// SystemBasicState 当前 ActorSystem 的基本状态，供控制台等展示；不含集群名称（仅集群有集群名）。
+type SystemBasicState struct {
+	StartTime       time.Time `json:"startTime"`       // 启动时间
+	Version         string    `json:"version"`         // Vivid 库版本号，来自包常量 Version
+	RemotingEnabled bool      `json:"remotingEnabled"` // 是否开启远程
+	RemotingAddress string    `json:"remotingAddress"` // 远程广告地址，未开启时为空
+	MetricsEnabled  bool      `json:"metricsEnabled"`  // 是否启用指标收集（WithActorSystemEnableMetrics）
+}
+
+// SystemStateProvider 可由 ActorSystem 实现，用于提供系统基本状态（启动时间、版本、是否开启远程等）。
+type SystemStateProvider interface {
+	GetSystemBasicState() SystemBasicState
+}
+
+// MetricsProvider 可由 ActorSystem 实现，用于提供指标收集器；配合 EnableMetricsUpdatedNotify 实现指标展示。
+type MetricsProvider interface {
+	IsMetricsEnabled() bool
+	Metrics() metrics.Metrics
 }
 
 // WithActorSystemSupervisionStrategy 返回一个 ActorSystemOption，用于指定 ActorSystem 的监督策略。
@@ -312,9 +349,9 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 
 // WithActorSystemRemoting 提供 ActorSystemOption，用于配置远程通信组件的监听及广告地址。
 //
-// 注意：如果需要跨网络进行消息序列化，必须通过 WithCodec 显式指定 Codec，
+// 注意：如果需要跨网络进行消息序列化，必须通过 WithActorSystemCodec 显式指定 Codec，
 //
-//	或者为所有自定义消息通过 RegisterCustomMessage 注册对应的消息读写器，
+//	或者为所有自定义消息通过 WithActorSystemMessageRegister 注册对应的消息读写器，
 //	否则消息无法被正确地序列化和反序列化，导致分布式或远程通信失败。
 //
 // 用途说明：
@@ -327,21 +364,30 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 func WithActorSystemRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		opts.RemotingBindAddress = bindAddr
-		if len(advertiseAddr) > 0 {
-			opts.RemotingAdvertiseAddress = advertiseAddr[0]
-		} else {
-			opts.RemotingAdvertiseAddress = bindAddr
-		}
+		opts.RemotingAdvertiseAddress = sugar.FirstOrDefault(advertiseAddr, bindAddr)
 		if utils.IsAddrMissingPort(opts.RemotingAdvertiseAddress) && !utils.IsDomainName(opts.RemotingAdvertiseAddress) {
 			panic("ActorSystem advertise address must be a domain when missing port")
 		}
 	}
 }
 
+// WithActorSystemClusterOption 返回一个 ActorSystemOption，用于配置 ActorSystem 的集群选项。
+//
+// 参数：
+//   - options: 期望设置的集群选项。
+func WithActorSystemgClusterOption(options ...ActorSystemClusterOption) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		if opts.ClusterOptions == nil {
+			return
+		}
+		opts.ClusterOptions = NewActorSystemClusterOptions(options...)
+	}
+}
+
 // WithActorSystemCodec 提供 ActorSystemOption，用于配置远程消息的序列化与反序列化 Codec。
 //
 // 如果希望 ActorSystem 支持跨网络或分布式消息传递，必须通过本选项显式设置 Codec，
-// 否则需要对所有自定义消息类型调用 RegisterCustomMessage 注册对应的消息读写器。
+// 否则需要对所有自定义消息类型调用 WithActorSystemMessageRegister 注册对应的消息读写器。
 // 否则系统无法完成消息的跨节点编解码，导致远程通信失败。
 //
 // 参数：
@@ -349,251 +395,39 @@ func WithActorSystemRemoting(bindAddr string, advertiseAddr ...string) ActorSyst
 func WithActorSystemCodec(codec Codec) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		if codec == nil {
-			panic("ActorSystem Codec (WithCodec) must not be nil: required for cross-network message serialization or register custom message readers/writers with RegisterCustomMessage.")
+			panic("ActorSystem Codec (WithActorSystemCodec) must not be nil: required for cross-network message serialization or register custom message readers/writers with WithActorSystemMessageRegister.")
 		}
 		opts.RemotingCodec = codec
 	}
 }
 
-// ActorSystemRemotingConnectionReadFailedHandler 定义远程连接读取失败的处理器接口。
-// 实现该接口的类型可用于自定义当系统检测到远程连接读取操作发生错误时的处理逻辑，例如网络异常、对端断开连接等，
-// 以实现自定义的重试、报警或容错策略。
-//
-// 方法说明：
-//   - HandleRemotingConnectionReadFailed: 当远程连接读取失败时被调用；
-//   - fatal: 表示此次错误是否为致命错误，若为 true 通常需要采取断开连接、关闭 ActorSystem 或自定义降级策略；
-//   - err:   捕获到的具体错误对象；
-//
-// 返回值：对于非致命错误（fatal=false），若返回非 nil error，系统会将当前远程连接停止，并将该 error 作为停止原因(StopReason)。
-//   - 若 fatal=true，error 作为致命错误处理（如关闭整个 ActorSystem）；
-//   - 可返回 nil 跳过后续处理。
-type ActorSystemRemotingConnectionReadFailedHandler interface {
-	HandleRemotingConnectionReadFailed(fatal bool, err error) error
-}
-
-// ActorSystemRemotingConnectionReadFailedHandlerFN 是适配函数式处理器的类型。
-// 允许使用函数直接实现 ActorSystemRemotingConnectionReadFailedHandler 接口，提升易用性和灵活性。
-type ActorSystemRemotingConnectionReadFailedHandlerFN func(fatal bool, err error) error
-
-// HandleRemotingConnectionReadFailed 调用底层函数本体，实现接口契约。
-func (h ActorSystemRemotingConnectionReadFailedHandlerFN) HandleRemotingConnectionReadFailed(fatal bool, err error) error {
-	return h(fatal, err)
-}
-
-// ActorSystemRemotingOption 定义一个用来配置 ActorSystemRemotingOptions 的函数签名。
-// 开发者可通过一组链式 Option 函数灵活配置远程通信相关的高级参数，实现高度可扩展的定制能力。
-type ActorSystemRemotingOption func(options *ActorSystemRemotingOptions)
-
-func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSystemRemotingOptions {
-	options := &ActorSystemRemotingOptions{
-		ReconnectLimit:        10,
-		ReconnectInitialDelay: 500 * time.Millisecond,
-		ReconnectMaxDelay:     10 * time.Second,
-		ReconnectFactor:       2.5,
-		ReconnectJitter:       true,
-		ClusterOptions:        nil,
-	}
-	for _, opt := range opts {
-		opt(options)
-	}
-	return *options
-}
-
-// ActorSystemRemotingOptions 封装了 ActorSystem 远程通信组件在运行时的选项参数。
-// 新增远程相关的可扩展参数时，建议集中在本结构体内按需扩展，以实现更好的向前兼容和配置集中管理。
-type ActorSystemRemotingOptions struct {
-	// ConnectionReadFailedHandler 用于处理系统级的远程连接读取失败事件。
-	// 可设置为自定义实现，或使用 ActorSystemRemotingConnectionReadFailedHandlerFN。
-	ConnectionReadFailedHandler ActorSystemRemotingConnectionReadFailedHandler
-
-	// ReconnectLimit 用于配置远程连接的重试次数。小于 1 则不进行重试。
-	ReconnectLimit int
-
-	// ReconnectInitialDelay 用于配置远程连接的重试初始延迟时间。
-	ReconnectInitialDelay time.Duration
-
-	// ReconnectMaxDelay 用于配置远程连接的重试最大延迟时间。
-	ReconnectMaxDelay time.Duration
-
-	// ReconnectFactor 用于配置远程连接的重试退避因子。
-	ReconnectFactor float64
-
-	// ReconnectJitter 用于配置远程连接的重试退避抖动。
-	ReconnectJitter bool
-
-	// TLSConfig 可选；非空时 Remoting 服务端使用 TLS 监听，跨 DC/公网部署时建议启用以保证传输加密与身份校验（如 mTLS）。
-	TLSConfig *tls.Config
-
-	// ClusterOptions 用于配置集群通信相关的选项。
-	ClusterOptions *ClusterOptions
-}
-
-// WithActorSystemRemotingOptions 返回一个 ActorSystemOption，用于批量配置 ActorSystem 远程通信的高级选项。
-//
-// 用法说明：
-//   - 首个参数为一个 ActorSystemRemotingOptions 结构体，用于初始化远程选项的默认值；
-//   - 其余可变参数为 ActorSystemRemotingOption 函数，可链式定制具体配置；
-//   - 推荐通过该方法集中配置包括远程异常、错误处理、重连、连接池等扩展能力。
-//
-// 典型用法：
-//
-//	WithActorSystemRemotingOptions(
-//	    ActorSystemRemotingOptions{
-//	        ConnectionReadFailedHandler: myHandler,
-//	    },
-//	    func(opt *ActorSystemRemotingOptions) { /* 其它自定义扩展 */ },
-//	)
+// WithActorSystemVirtualActorProvider 返回一个 ActorSystemOption，用于配置虚拟 Actor 的提供者。
 //
 // 参数：
-//   - options:            远程通信选项的初始配置。
-//   - opts ...ActorSystemRemotingOption: 可选参数，链式扩展远程通信选项。
+//   - kind: 虚拟 Actor 的种类。
+//   - provider: 虚拟 Actor 的提供者。
 //
-// 返回值：
-//   - ActorSystemOption:  可传给 NewActorSystem 或其它配置参数的 Option 函数。
-func WithActorSystemRemotingOptions(options ActorSystemRemotingOptions, opts ...ActorSystemRemotingOption) ActorSystemOption {
-	return func(o *ActorSystemOptions) {
-		o.RemotingOptions = &options
-		for _, opt := range opts {
-			opt(o.RemotingOptions)
+// 如果 kind 已存在，将会发生 panic。
+func WithActorSystemVirtualActorProvider(kind string, provider ActorProvider) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		if provider == nil {
+			return
 		}
-	}
-}
-
-// WithActorSystemRemotingOption 返回一个 ActorSystemOption，用于批量配置 ActorSystem 远程通信相关选项。
-//
-// 用法说明：
-//   - 支持传入多个 ActorSystemRemotingOption，实现远程相关配置的链式定制。
-//   - 该方法不会覆盖已设置的 RemotingOptions 结构体，仅对现有字段进行增量更新。
-//
-// 参数：
-//   - opts ...ActorSystemRemotingOption: 远程通信配置项。
-//
-// 返回值：
-//   - ActorSystemOption: 可传给 NewActorSystem 或其它配置参数的 Option 函数。
-func WithActorSystemRemotingOption(opts ...ActorSystemRemotingOption) ActorSystemOption {
-	return func(o *ActorSystemOptions) {
-		for _, opt := range opts {
-			opt(o.RemotingOptions)
+		if opts.VirtualActorProviders == nil {
+			opts.VirtualActorProviders = make(map[string]ActorProvider)
 		}
-	}
-}
-
-// WithActorSystemRemotingReconnectLimit 返回一个 ActorSystemRemotingOption，用于配置远程连接的重试次数。
-//
-// 参数：
-//   - limit: 重试次数；小于 1 则不进行重试。
-func WithActorSystemRemotingReconnectLimit(limit int) ActorSystemRemotingOption {
-	return func(opts *ActorSystemRemotingOptions) {
-		if limit >= 0 {
-			opts.ReconnectLimit = limit
+		if _, ok := opts.VirtualActorProviders[kind]; ok {
+			panic("virtual actor provider already exists for kind: " + kind)
 		}
+		opts.VirtualActorProviders[kind] = provider
 	}
 }
 
-// WithActorSystemRemotingReconnectInitialDelay 返回一个 ActorSystemRemotingOption，用于配置远程连接的重试初始延迟时间。
-//
-// 参数：
-//   - delay: 初始延迟时间；大于 0 时生效。
-func WithActorSystemRemotingReconnectInitialDelay(delay time.Duration) ActorSystemRemotingOption {
-	return func(opts *ActorSystemRemotingOptions) {
-		if delay > 0 {
-			opts.ReconnectInitialDelay = delay
+func WithActorSystemMessageRegister(register MessageRegister) ActorSystemOption {
+	return func(opts *ActorSystemOptions) {
+		if register == nil {
+			return
 		}
+		opts.MessageRegister = append(opts.MessageRegister, register)
 	}
 }
-
-// WithActorSystemRemotingReconnectMaxDelay 返回一个 ActorSystemRemotingOption，用于配置远程连接的重试最大延迟时间。
-//
-// 参数：
-//   - delay: 最大延迟时间；大于 0 时生效。
-func WithActorSystemRemotingReconnectMaxDelay(delay time.Duration) ActorSystemRemotingOption {
-	return func(opts *ActorSystemRemotingOptions) {
-		if delay > 0 {
-			opts.ReconnectMaxDelay = delay
-		}
-	}
-}
-
-// WithActorSystemRemotingReconnectFactor 返回一个 ActorSystemRemotingOption，用于配置远程连接的重试退避因子。
-//
-// 参数：
-//   - factor: 退避因子；大于 0 时生效（通常取 2.0 等值实现指数退避）。
-func WithActorSystemRemotingReconnectFactor(factor float64) ActorSystemRemotingOption {
-	return func(opts *ActorSystemRemotingOptions) {
-		if factor > 0 {
-			opts.ReconnectFactor = factor
-		}
-	}
-}
-
-// WithActorSystemRemotingReconnectJitter 返回一个 ActorSystemRemotingOption，用于配置远程连接的重试退避是否启用抖动。
-//
-// 参数：
-//   - jitter: 是否启用抖动，用于缓解重连雷群效应。
-func WithActorSystemRemotingReconnectJitter(jitter bool) ActorSystemRemotingOption {
-	return func(opts *ActorSystemRemotingOptions) {
-		opts.ReconnectJitter = jitter
-	}
-}
-
-// WithActorSystemRemotingReconnect 返回一个 ActorSystemRemotingOption，用于批量配置远程连接的重试策略。
-//
-// 参数：
-//   - limit: 重试次数；小于 1 则不进行重试。
-//   - initialDelay: 初始延迟时间。
-//   - maxDelay: 最大延迟时间。
-//   - factor: 退避因子，通常为 2.0。
-//   - jitter: 是否启用抖动。
-func WithActorSystemRemotingReconnect(limit int, initialDelay, maxDelay time.Duration, factor float64, jitter bool) ActorSystemRemotingOption {
-	return func(opts *ActorSystemRemotingOptions) {
-		if limit >= 0 {
-			opts.ReconnectLimit = limit
-		}
-		if initialDelay > 0 {
-			opts.ReconnectInitialDelay = initialDelay
-		}
-		if maxDelay > 0 {
-			opts.ReconnectMaxDelay = maxDelay
-		}
-		if factor > 0 {
-			opts.ReconnectFactor = factor
-		}
-		opts.ReconnectJitter = jitter
-	}
-}
-
-// WithActorSystemRemotingTLSConfig 返回一个 ActorSystemRemotingOption，用于配置 Remoting 服务端 TLS。
-// 非空时服务端使用 TLS 监听；跨 DC/公网部署时建议配置以保证传输加密，可选配合 mTLS 做节点身份校验。
-func WithActorSystemRemotingTLSConfig(cfg *tls.Config) ActorSystemRemotingOption {
-	return func(opts *ActorSystemRemotingOptions) {
-		opts.TLSConfig = cfg
-	}
-}
-
-// WithActorSystemRemotingClusterOptions 返回一个 ActorSystemRemotingOption，用于配置集群通信相关的选项。
-//
-// 参数：
-//   - options: 集群通信选项。
-//
-// 返回值：
-//   - ActorSystemRemotingOption: 可传给 NewActorSystemRemotingOptions 或其它配置参数的 Option 函数。
-func WithActorSystemRemotingClusterOptions(options *ClusterOptions) ActorSystemRemotingOption {
-	return func(opts *ActorSystemRemotingOptions) {
-		opts.ClusterOptions = options
-	}
-}
-
-// WithActorSystemRemotingClusterOption 返回一个 ActorSystemRemotingOption，用于配置集群通信相关的选项。
-//
-// 参数：
-//   - opts ...ClusterOption: 集群通信选项。
-//
-// 返回值：
-//   - ActorSystemRemotingOption: 可传给 NewActorSystemRemotingOptions 或其它配置参数的 Option 函数。
-func WithActorSystemRemotingClusterOption(opts ...ClusterOption) ActorSystemRemotingOption {
-	clusterOptions := NewClusterOptions(opts...)
-	return func(opts *ActorSystemRemotingOptions) {
-		opts.ClusterOptions = clusterOptions
-	}
-}
-

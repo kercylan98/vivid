@@ -1,74 +1,27 @@
 ---
 title: 集群概览
-description: Vivid 集群架构、NodeActor、成员发现与 ClusterContext
+description: 基于 Gossip 的成员发现、视图同步与当前能力范围
 ---
 
-集群功能在启用 [远程通讯](/docs/config/remoting) 的前提下，通过 **ActorSystemRemotingOptions.ClusterOptions** 开启。启用后，系统会创建 **NodeActor**（名称为 `@cluster`，远程访问路径为 `/@cluster`），维护成员视图、故障检测与选主，并通过 **ClusterContext** 暴露给业务：获取成员、多数派状态及成员变更事件等。
+集群依赖 [远程通讯](/docs/config/remoting)，通过 **WithActorSystemClusterOptions** 启用。框架创建内部 `@gossip` Actor，利用 Ping/Pong 交换成员视图和版本向量，并在系统停止时执行多阶段退出。
 
-## 架构概览
+## 启动与通信
 
-<Mermaid diagram={`flowchart TB
-  subgraph 业务层
-    Ctx["ctx.Cluster() / system.Cluster()"]
-    Ctx --> GetMembers["GetMembers()"]
-    Ctx --> InQuorum["InQuorum()"]
-    Ctx --> Leave["Leave()"]
-  end
-  subgraph 集群层
-    NA["NodeActor (@cluster)"]
-    CV["ClusterView\n成员视图 + VersionVector"]
-    NA --> CV
-    GetMembers --> NA
-    InQuorum --> NA
-    Leave --> NA
-  end
-  subgraph Remoting
-    NA --> Gossip["Gossip / Join / GetView"]
-    Gossip --> 网络
-  end
-`} title="集群与业务、Remoting 关系" />
+每个节点使用 Remoting 的广告地址作为网络身份。配置种子后，启动时向种子发起加入；没有种子或所有加入尝试失败时，会自举为独立集群。启动成功不等于已加入目标集群。
 
-- **NodeActor**：集群核心 Actor，由框架在初始化时创建，**名称为 `@cluster`**，节点间通信使用路径 **`/@cluster`**。负责 Gossip 协议、成员发现、故障检测、选主与视图合并。
-- **ClusterView**：每个节点持有本地成员视图，通过 Gossip 与种子发现周期性同步，版本向量（VersionVector）用于合并时的因果顺序与脑裂防护。
-- **ClusterContext**：供业务在 Actor 内通过 `ctx.Cluster()` 访问，提供 GetMembers、InQuorum、Leave 等 API。
-- **依赖关系**：集群依赖 Remoting 的地址与编解码进行节点间通信；`advertiseAddr` 需与种子/成员使用的地址一致。
+集群内部消息的编解码由框架注册。跨节点业务消息仍使用常规 Tell、Ask 等 API，并需要配置业务消息的编解码。业务无需导入 `internal` 包。
 
-<Callout type="info" title="nil 检查">
-未设置 **ClusterOptions** 时，**ctx.Cluster()** 与 **system.Cluster()** 为 **nil**，使用前应做 nil 判断。若在未启用集群时调用 ClusterContext 的方法，会得到 **ErrorClusterDisabled**。
+## 当前能力范围
+
+当前实现提供成员发现、成员视图同步及退出状态传播。公开接口未提供 `ClusterContext`、`ctx.Cluster()`、`system.Cluster()`、Quorum、加入认证或集群单例能力；版本向量用于视图合并，不能据此推导多数派或脑裂防护保证。
+
+<Callout type="warn" title="文档适用范围">
+本页、快速开始、配置选项和多数据中心已按当前实现修正。集群栏目其余旧页面仍包含未实现的接口与配置，接入时以这些页面和当前公共 API 为准。
 </Callout>
 
-## 核心能力
+## 入门与配置
 
-| 能力 | 说明 |
-|------|------|
-| **成员发现** | 通过 Seeds、SeedsByDC 与周期性 Gossip 收敛成员视图 |
-| **故障检测** | 超时未刷新的成员从视图剔除；支持 Suspect 确认以减少跨 DC 误判 |
-| **多数派（Quorum）** | 支持全局多数、多数 DC、每 DC 至少一票等策略 |
-| **优雅退出** | Leave() 广播离开视图，多轮广播支持多 DC 收敛 |
-| **加入控制** | JoinSecret 认证、JoinAllowDCs/JoinAllowAddresses 白名单、协议版本校验 |
-
-## 文档导航
-
-### 入门与配置
-- [快速开始](/docs/cluster/quick-start) — 启用集群与最小配置
-- [集群部署](/docs/cluster/deployment) — 部署拓扑、加入/发现/退出流程与图示
-- [配置选项](/docs/cluster/config/options) — ClusterOptions 完整配置说明
-- [加入认证](/docs/cluster/auth/join-auth) — JoinSecret、ComputeJoinToken、AuthToken
-- [加入白名单](/docs/cluster/auth/join-allowlist) — JoinAllowDCs、JoinAllowAddresses、CIDR
-
-### 运行时与事件
-- [ClusterContext](/docs/cluster/runtime/context) — 运行时 API：GetMembers、InQuorum、Leave、SingletonRef
-- [集群单例](/docs/cluster/singleton) — 集群内唯一 Actor、WithClusterSingleton、SingletonRef（本地代理）
-- [集群事件](/docs/cluster/events/events) — 成员变更、Leader、Quorum、View、DC 健康、Leave 完成
-- [节点生命周期](/docs/cluster/events/lifecycle) — Starting → Joining → Active → Leaving → Exiting
-
-### 拓扑与法定人数
-- [多数据中心](/docs/cluster/topology/multi-datacenter) — DC/Rack/Region/Zone、跨 DC 超时与 Gossip
-- [法定人数](/docs/cluster/topology/quorum) — QuorumStrategy、RequiredDCsForQuorum
-
-### 安全与排错
-- [管理操作](/docs/cluster/auth/admin) — AdminSecret、ComputeAdminToken、强制下线
-- [集群错误](/docs/cluster/errors) — 预定义错误码与处理
-
-### 与 Remoting
-- [与 Remoting 的关系](/docs/cluster/remoting) — 依赖、地址与编解码
+- [快速开始](/docs/cluster/quick-start)：可运行的单节点示例、种子加入与退出。
+- [配置选项](/docs/cluster/config/options)：实际可用的配置函数、默认值及组合行为。
+- [远程通讯](/docs/config/remoting)：地址、业务消息编解码与远程投递。
+- [多数据中心](/docs/cluster/topology/multi-datacenter)：跨机房连接、分区恢复及当前能力边界。

@@ -6,11 +6,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/mailbox"
+	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/utils"
 )
 
 var (
-	_ vivid.ActorRef = (*Ref)(nil)
+	_ vivid.ActorRef             = (*Ref)(nil)
+	_ serialization.MessageCodec = (*Ref)(nil)
+	_ serialization.MessageCodec = (*AgentRef)(nil)
 )
 
 const agentFutureMarker = "@future@"
@@ -50,9 +54,20 @@ func ParseRef(value string) (*Ref, error) {
 }
 
 type Ref struct {
-	address string
-	path    string
-	cache   atomic.Pointer[vivid.Mailbox]
+	address     string
+	path        string
+	cache       atomic.Pointer[refMailbox]
+	stringCache atomic.Pointer[string]
+}
+
+type refMailbox struct {
+	mailbox vivid.Mailbox             // 完整邮箱接口，用于统一路由
+	local   *mailbox.UnboundedMailbox // 本地默认邮箱，避免热路径重复类型断言
+}
+
+func (r *Ref) cacheMailbox(m vivid.Mailbox) {
+	local, _ := m.(*mailbox.UnboundedMailbox)
+	r.cache.Store(&refMailbox{mailbox: m, local: local})
 }
 
 func (r *Ref) GetPath() string {
@@ -64,10 +79,8 @@ func (r *Ref) GetAddress() string {
 }
 
 func (r *Ref) Equals(other vivid.ActorRef) bool {
-	if other == nil {
-		return false
-	}
-	return r.GetAddress() == other.GetAddress() && r.GetPath() == other.GetPath()
+	ref, ok := other.(*Ref)
+	return ok && r.GetPath() == ref.GetPath() && r.GetAddress() == ref.GetAddress()
 }
 
 func (r *Ref) Clone() vivid.ActorRef {
@@ -82,7 +95,29 @@ func (r *Ref) ToActorRefs() vivid.ActorRefs {
 }
 
 func (r *Ref) String() string {
-	return utils.FormatRefString(r.GetAddress(), r.GetPath())
+	ptr := r.stringCache.Load()
+	if ptr == nil {
+		ptr = new(string)
+		*ptr = utils.FormatRefString(r.GetAddress(), r.GetPath())
+		r.stringCache.CompareAndSwap(nil, ptr)
+	}
+	return *ptr
+}
+
+func (r *Ref) IsVirtual() bool {
+	return false
+}
+
+// Encode implements [serialization.MessageCodec].仅序列化 address、path，不包含 cache。
+func (r *Ref) Encode(writer *serialization.Writer, message any) error {
+	ref := message.(*Ref)
+	return writer.Write(ref.GetAddress(), ref.GetPath()).Err()
+}
+
+// Decode implements [serialization.MessageCodec].
+func (r *Ref) Decode(reader *serialization.Reader, message any) error {
+	ref := message.(*Ref)
+	return reader.Read(&ref.address, &ref.path)
 }
 
 func NewAgentRef(agent *Ref) (*AgentRef, error) {
@@ -112,4 +147,16 @@ func (r *Ref) Child(path string) (*Ref, error) {
 		return nil, vivid.ErrorRefInvalidPath
 	}
 	return NewRef(r.address, utils.JoinPath(r.path, path))
+}
+
+// Encode implements [serialization.MessageCodec].仅序列化 ref、agent，不包含 cache。
+func (a *AgentRef) Encode(writer *serialization.Writer, message any) error {
+	agent := message.(*AgentRef)
+	return writer.Write(agent.ref, agent.agent).Err()
+}
+
+// Decode implements [serialization.MessageCodec].
+func (a *AgentRef) Decode(reader *serialization.Reader, message any) error {
+	agent := message.(*AgentRef)
+	return reader.Read(&agent.ref, &agent.agent)
 }

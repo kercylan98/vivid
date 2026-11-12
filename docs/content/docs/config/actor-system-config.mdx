@@ -18,11 +18,12 @@ description: ActorSystemOptions 与系统级选项一览
 | **WithActorSystemMetrics** | 自定义指标收集器。详见 [指标](/docs/config/metrics) |
 | **WithActorSystemEnableMetricsUpdatedNotify** | 指标更新通知策略：&lt;0 不推送，0 每次变更推送，&gt;0 按间隔推送。详见 [指标](/docs/config/metrics) |
 | **WithActorSystemRemoting** | 启用远程通讯：bindAddr 必填，advertiseAddr 可选。详见 [远程通讯](/docs/config/remoting) |
-| **WithActorSystemCodec** | 远程消息编解码器；与 RegisterCustomMessage 二选一。可使用 [vivid-proto](https://github.com/kercylan98/vivid-proto) 作为 Proto Codec。详见 [远程通讯](/docs/config/remoting) |
-| **WithActorSystemRemotingOptions** | 远程高级选项（如 ConnectionReadFailedHandler、重试策略）。详见 [远程通讯](/docs/config/remoting) |
+| **WithActorSystemCodec** | 未注册业务类型的外部编解码器，可与消息注册同时使用。详见 [远程通讯](/docs/config/remoting) |
+| **WithActorSystemMessageRegister** | 注册业务消息类型与字段编解码器，已注册类型优先于外部 Codec。详见 [远程通讯](/docs/config/remoting) |
+| **WithActorSystemRemotingOptions** | 远程高级选项（如重试策略、读取超时、解码预算）。详见 [远程通讯](/docs/config/remoting) |
 | **WithActorSystemRemotingOption** | 远程选项的链式增量配置（如 ReconnectLimit、ReconnectInitialDelay 等），可传多个 Option。详见 [远程通讯](/docs/config/remoting) |
-| **WithActorSystemRemotingClusterOption** | 通过 ClusterOption 列表启用并配置集群（需同时启用 Remoting）。详见 [集群](/docs/cluster/index) |
-| **WithActorSystemRemotingClusterOptions** | 通过 *ClusterOptions 启用并配置集群（需同时启用 Remoting）。详见 [集群](/docs/cluster/index) |
+| **WithActorSystemRemotingDecodeLimits** | 单个接收信封的解码预算，通过 WithActorSystemRemotingOption 传入；默认 64 层、累计 1048576 个集合元素和 64 MiB 分配预算。详见 [远程通讯](/docs/config/remoting) |
+| **WithActorSystemClusterOptions** | 配置并启用集群，需同时启用 Remoting。详见 [集群](/docs/cluster/index) |
 | **WithActorSystemOptions** | 一次性应用整份 ActorSystemOptions |
 
 ## 使用方式

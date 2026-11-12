@@ -1,55 +1,24 @@
 ---
 title: 多数据中心
-description: DC、Rack、Region、Zone 与跨 DC Gossip
+description: 跨机房连接、网络分区恢复与当前能力边界
 ---
 
-集群支持多数据中心（Multi-Datacenter）部署，通过拓扑标签区分节点所在位置，并针对跨 DC 场景做超时与 Gossip 优化。
+当前节点可通过可达的 Remoting 广告地址跨机房通信，但集群不区分数据中心、地域或可用区，也没有按机房选择成员、路由或调整超时的配置。
 
-## 拓扑标签
+## 地址与种子
 
-在 ClusterOptions 中设置，会写入 NodeState.Labels 并随 Gossip 传播：
+每个节点使用其他节点能够访问的广告地址；种子填写广告地址，格式为 `host:port`。部署方式见[快速开始](/docs/cluster/quick-start)，连接配置见[远程通讯](/docs/config/remoting)。
 
-| 标签 | 选项 | 说明 |
-|------|------|------|
-| **datacenter** | WithClusterDatacenter | 数据中心标识 |
-| **rack** | WithClusterRack | 机架标识 |
-| **region** | WithClusterRegion | 区域标识（同 Region 优先 Gossip） |
-| **zone** | WithClusterZone | 可用区标识 |
+若希望隔离的两组节点在链路恢复后重新发现对方，至少需要一侧保留指向另一侧的种子地址。种子之间无需全部互联，但不能让两组节点的成员与种子都完全独立。
 
-GetMembers() 返回的 ClusterMemberInfo 包含 Datacenter、Rack、Region、Zone。
+节点启动时联系不上种子，会自举为独立集群。进入 Up 后，周期 Gossip 会继续尝试未知或仍处于 Joining 的种子，并与已有成员共享每轮目标数。链路恢复且地址可达时，成员视图可继续交换；随机抽样、Gossip 周期与连接重试会影响恢复耗时。已明确标记 Removed 的种子不属于自动重新发现对象。
 
-## 种子按 DC 分组
+## 分区期间的行为
 
-使用 **WithClusterSeedsByDC** 按 DC 分组种子，加入时优先尝试本 DC 种子：
+网络不可达不等于节点已离开集群。当前实现没有成员故障检测，视图中的 Up 状态不能作为实时健康、可达性或写入资格的依据。
 
-```go
-vivid.WithClusterSeedsByDC(map[string][]string{
-    "dc1": []string{"seed-dc1-a:8080", "seed-dc1-b:8080"},
-    "dc2": []string{"seed-dc2-a:8080", "seed-dc2-b:8080"},
-}),
-```
+成员视图恢复也不代表业务消息必达、业务数据合并或全局唯一 Actor 恢复。系统没有 Quorum、租约、写入隔离或跨节点虚拟 Actor 唯一激活保证；关键写入需由业务使用具备相应一致性能力的存储或协调服务约束。
 
-SeedsByDC 可与 Seeds 同时存在，合并使用；全球部署时建议每 DC 至少配置一种子。
+## 部署前验证
 
-## 跨 DC 故障检测
-
-- **CrossDCFailureDetectionTimeout**：跨 DC 成员的故障检测超时。若 >0 则对其它 DC 的成员使用此超时；为 0 时默认采用 FailureDetectionTimeout 的 2 倍（推荐跨 DC 显式配置为 2–3 倍同 DC 超时）。
-- **CrossDCDiscoveryInterval**：跨 DC Gossip 的轮次间隔。若 >0 则额外启动一轮仅向跨 DC 目标发送的 Gossip，降低跨 DC 带宽与误判；0 表示不单独调度。
-
-## 跨 DC Gossip 目标数
-
-**MaxDiscoveryTargetsPerTickCrossDC**：跨 DC 每轮 Gossip 最大目标数；>0 时跨 DC 轮次使用此值，否则使用 MaxDiscoveryTargetsPerTick。
-
-## 必须参与 Quorum 的 DC
-
-**RequiredDCsForQuorum**：必须参与 quorum 的 DC 列表；非空时这些 DC 中每个至少需有 1 个健康节点才满足 quorum，用于关键 DC 必须参与的多活。
-
-## Gossip 选择优先级
-
-GossipTargetSelector 按优先级选择目标：同 Region 同 DC 优先，再同 Region 跨 DC，再跨 Region；减少跨 DC 流量、加快本 DC 收敛。
-
-## 多 DC 下的优雅退出
-
-多 DC 时建议：
-- **LeaveBroadcastDelay** 增大至 1–2s，给跨 DC 传播留足时间。
-- **LeaveBroadcastRounds** 设为 >1，多轮广播以提高高延迟 DC 收敛概率。
+按业务可接受的时间设置 Gossip 周期和远程连接超时，至少验证启动时隔离、已有连接中断及链路恢复后的双向通信。跨机房传输还需验证延迟、丢包和单向故障；单机上的多节点演练不能替代真实地域网络测试。

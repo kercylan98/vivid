@@ -1,0 +1,40 @@
+---
+title: 配置
+description: Nexus Options、SessionReaderProvider、SendErrorHandler
+---
+
+## Options
+
+通过 **nexus.New(provider, options...)** 传入可选配置。使用 **NewOptions(opts...)** 构造 Options，默认会设置 **SessionReaderProvider** 为按字节流读取实现。
+
+| 选项 | 说明 |
+|------|------|
+| **NewOptions(opts...)** | 构造 Options；默认带 SessionReaderProvider 为按字节流读取 |
+| **WithSessionReaderProvider(provider)** | 自定义读取器提供方；nil 时不修改（保留原有或默认值） |
+| **WithOptions(options)** | 从已有 Options 克隆；若源 SessionReaderProvider 为 nil 会补默认实现 |
+
+## 示例
+
+```go
+opts := nexus.NewOptions(
+    nexus.WithSessionReaderProvider(myReaderProvider),
+)
+n, err := nexus.New(provider, opts)
+```
+
+使用 WithOptions 克隆时，若源 Options 的 SessionReaderProvider 为 nil，会先赋默认实现再复制，避免目标得到 nil Provider。
+
+## SendErrorHandler（SendTo / Broadcast）
+
+在 **SendTo**、**Broadcast** 中，任一会话发送失败时可传入错误处理函数：
+
+```go
+type SendErrorHandler = func(sessionId string, sessionContext SessionContext, err error) (abort bool)
+```
+
+- **sessionId**：当前发送的会话 ID。
+- **sessionContext**：在 Broadcast 中目前传 nil。
+- **err**：本次 Write 的错误。
+- **abort**：返回 true 时停止向后续会话发送，false 时继续。
+
+可选参数，不传则发送失败不影响其余会话的发送。
