@@ -2,6 +2,7 @@ package vivid
 
 import (
 	"crypto/tls"
+	"math"
 	"time"
 )
 
@@ -31,7 +32,7 @@ func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSyste
 // ActorSystemRemotingOptions 封装了 ActorSystem 远程通信组件在运行时的选项参数。
 // 新增远程相关的可扩展参数时，建议集中在本结构体内按需扩展，以实现更好的向前兼容和配置集中管理。
 type ActorSystemRemotingOptions struct {
-	// ReconnectLimit 用于配置远程连接的重试次数。小于 1 则不进行重试。
+	// ReconnectLimit 用于配置首次连接失败后的重试次数；0 表示不重试。
 	ReconnectLimit int
 
 	// ReconnectInitialDelay 用于配置远程连接的重试初始延迟时间。
@@ -40,10 +41,10 @@ type ActorSystemRemotingOptions struct {
 	// ReconnectMaxDelay 用于配置远程连接的重试最大延迟时间。
 	ReconnectMaxDelay time.Duration
 
-	// ReconnectFactor 用于配置远程连接的重试退避因子。
+	// ReconnectFactor 用于配置远程连接的重试退避因子；1 表示固定间隔。
 	ReconnectFactor float64
 
-	// ReconnectJitter 用于配置远程连接的重试退避抖动。
+	// ReconnectJitter 启用时，在当前退避间隔的 50% 到 100% 之间随机选择延迟。
 	ReconnectJitter bool
 
 	// MaxPendingEnvelops 单个远程地址的最大待发送信封数；超过后新消息将直接失败。
@@ -116,7 +117,7 @@ func WithActorSystemRemotingOption(opts ...ActorSystemRemotingOption) ActorSyste
 // WithActorSystemRemotingReconnectLimit 返回一个 ActorSystemRemotingOption，用于配置远程连接的重试次数。
 //
 // 参数：
-//   - limit: 重试次数；小于 1 则不进行重试。
+//   - limit: 首次连接失败后的重试次数；0 表示不重试，负值忽略。
 func WithActorSystemRemotingReconnectLimit(limit int) ActorSystemRemotingOption {
 	return func(opts *ActorSystemRemotingOptions) {
 		if limit >= 0 {
@@ -152,10 +153,10 @@ func WithActorSystemRemotingReconnectMaxDelay(delay time.Duration) ActorSystemRe
 // WithActorSystemRemotingReconnectFactor 返回一个 ActorSystemRemotingOption，用于配置远程连接的重试退避因子。
 //
 // 参数：
-//   - factor: 退避因子；大于 0 时生效（通常取 2.0 等值实现指数退避）。
+//   - factor: 有限且不小于 1 时生效；1 表示固定间隔，通常取 2.0 等值实现指数退避。
 func WithActorSystemRemotingReconnectFactor(factor float64) ActorSystemRemotingOption {
 	return func(opts *ActorSystemRemotingOptions) {
-		if factor > 0 {
+		if factor >= 1 && !math.IsInf(factor, 0) {
 			opts.ReconnectFactor = factor
 		}
 	}
@@ -174,10 +175,10 @@ func WithActorSystemRemotingReconnectJitter(jitter bool) ActorSystemRemotingOpti
 // WithActorSystemRemotingReconnect 返回一个 ActorSystemRemotingOption，用于批量配置远程连接的重试策略。
 //
 // 参数：
-//   - limit: 重试次数；小于 1 则不进行重试。
+//   - limit: 首次连接失败后的重试次数；0 表示不重试，负值忽略。
 //   - initialDelay: 初始延迟时间。
 //   - maxDelay: 最大延迟时间。
-//   - factor: 退避因子，通常为 2.0。
+//   - factor: 有限且不小于 1 的退避因子；1 表示固定间隔。
 //   - jitter: 是否启用抖动。
 func WithActorSystemRemotingReconnect(limit int, initialDelay, maxDelay time.Duration, factor float64, jitter bool) ActorSystemRemotingOption {
 	return func(opts *ActorSystemRemotingOptions) {
@@ -190,7 +191,7 @@ func WithActorSystemRemotingReconnect(limit int, initialDelay, maxDelay time.Dur
 		if maxDelay > 0 {
 			opts.ReconnectMaxDelay = maxDelay
 		}
-		if factor > 0 {
+		if factor >= 1 && !math.IsInf(factor, 0) {
 			opts.ReconnectFactor = factor
 		}
 		opts.ReconnectJitter = jitter

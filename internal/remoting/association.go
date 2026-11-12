@@ -94,7 +94,7 @@ func closeEndpointSession(ctx vivid.ActorContext, address string, target *sessio
 		return
 	}
 	if graceful {
-		if err := target.Write(closeFrameBytes); err != nil &&
+		if err := target.writeClose(); err != nil &&
 			!errors.Is(err, net.ErrClosed) &&
 			!errors.Is(err, io.ErrClosedPipe) {
 			ctx.Logger().Warn("endpoint close frame write failed",

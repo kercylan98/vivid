@@ -3,6 +3,8 @@ package remoting
 import (
 	"errors"
 	"fmt"
+	"math"
+	"math/rand/v2"
 	"net"
 	"time"
 
@@ -19,31 +21,27 @@ var (
 
 const dialTimeout = 10 * time.Second
 
-const (
-	defaultEndpointConnectRetryLimit         = 5
-	defaultEndpointConnectRetryInitialDelay  = 500 * time.Millisecond
-	defaultEndpointConnectRetryMaxDelay      = 10 * time.Second
-	defaultEndpointConnectRetryBackoffFactor = 2
-)
-
 type endpointRetryPolicy struct {
 	limit        int           // 重试次数限制
 	initialDelay time.Duration // 初始重试延迟
 	maxDelay     time.Duration // 最大重试延迟
 	backoff      float64       // 重试延迟倍数
+	jitter       bool          // 在退避间隔的后半段随机取值
 }
 
 func newEndpointRetryPolicy(opts *vivid.ActorSystemRemotingOptions) endpointRetryPolicy {
-	policy := endpointRetryPolicy{
-		limit:        defaultEndpointConnectRetryLimit,
-		initialDelay: defaultEndpointConnectRetryInitialDelay,
-		maxDelay:     defaultEndpointConnectRetryMaxDelay,
-		backoff:      defaultEndpointConnectRetryBackoffFactor,
-	}
+	defaults := vivid.NewActorSystemRemotingOptions()
 	if opts == nil {
-		return policy
+		opts = &defaults
 	}
-	if opts.ReconnectLimit > 0 {
+	policy := endpointRetryPolicy{
+		limit:        defaults.ReconnectLimit,
+		initialDelay: defaults.ReconnectInitialDelay,
+		maxDelay:     defaults.ReconnectMaxDelay,
+		backoff:      defaults.ReconnectFactor,
+		jitter:       opts.ReconnectJitter,
+	}
+	if opts.ReconnectLimit >= 0 {
 		policy.limit = opts.ReconnectLimit
 	}
 	if opts.ReconnectInitialDelay > 0 {
@@ -52,26 +50,26 @@ func newEndpointRetryPolicy(opts *vivid.ActorSystemRemotingOptions) endpointRetr
 	if opts.ReconnectMaxDelay > 0 {
 		policy.maxDelay = opts.ReconnectMaxDelay
 	}
-	if opts.ReconnectFactor > 1 {
+	if opts.ReconnectFactor >= 1 && !math.IsInf(opts.ReconnectFactor, 0) {
 		policy.backoff = opts.ReconnectFactor
 	}
 	return policy
 }
 
 func (p endpointRetryPolicy) delayFor(retry int) time.Duration {
-	if retry <= 0 {
-		return p.initialDelay
+	delay := min(p.initialDelay, p.maxDelay)
+	if retry > 0 && p.backoff > 1 && delay < p.maxDelay {
+		next := float64(delay) * math.Pow(p.backoff, float64(retry))
+		// 转换为 Duration 前截断，避免浮点溢出或舍入为负值。
+		if next >= float64(p.maxDelay) {
+			delay = p.maxDelay
+		} else {
+			delay = time.Duration(next)
+		}
 	}
-	delay := p.initialDelay
-	for i := 0; i < retry; i++ {
-		next := time.Duration(float64(delay) * p.backoff)
-		if next <= delay {
-			return p.maxDelay
-		}
-		delay = next
-		if delay >= p.maxDelay {
-			return p.maxDelay
-		}
+	if p.jitter && delay > 1 {
+		lower := delay/2 + delay%2
+		return lower + time.Duration(rand.Int64N(int64(delay-lower)+1))
 	}
 	return delay
 }
@@ -129,6 +127,7 @@ type endpoint struct {
 	stopping          bool
 	connecting        bool
 	connectAttempt    uint64 // 当前尝试向该端点发起连接尝试的单调递增计数
+	connectTask       *pendingConnection
 	writing           bool
 	retryCount        int  // 当前重试次数
 	retryScheduled    bool // 是否已调度重试
@@ -173,6 +172,10 @@ func (e *endpoint) onPipeUnexpectedResult(ctx vivid.ActorContext, message vivid.
 	if pipeErr != nil {
 		ctx.Logger().Warn("endpoint received unexpected pipe error", log.String("address", e.address), log.String("type", fmt.Sprintf("%T", message)), log.Any("error", pipeErr))
 		if e.connecting {
+			if e.connectTask != nil {
+				e.connectTask.close()
+				e.connectTask = nil
+			}
 			e.connecting = false
 			e.scheduleRetry(ctx, pipeErr)
 		}
@@ -210,6 +213,10 @@ func (e *endpoint) onAttachSession(ctx vivid.ActorContext, message endpointAttac
 	e.cancelRetry(ctx)
 	e.inboundSession = message.session
 	e.connectAttempt++
+	if e.connectTask != nil {
+		e.connectTask.close()
+		e.connectTask = nil
+	}
 	e.connecting = false
 	ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
 		response := &Handshake{AdvertiseAddr: message.session.localAddress}
@@ -245,7 +252,7 @@ func (e *endpoint) ensureSession(ctx vivid.ActorContext) {
 	if e.stopping {
 		return
 	}
-	if e.association != nil || e.connecting || e.inboundSession != nil {
+	if e.association != nil || e.connecting || e.inboundSession != nil || e.retryScheduled {
 		return
 	}
 	if e.outboundBuffer.Empty() {
@@ -255,9 +262,12 @@ func (e *endpoint) ensureSession(ctx vivid.ActorContext) {
 	e.connecting = true
 	e.connectAttempt++
 	attempt := e.connectAttempt
+	task := e.endpointManager.newPendingConnection(dialTimeout + handshakeTimeout)
+	e.connectTask = task
 	ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
-		conn, err := e.dial()
+		conn, err := e.dial(task)
 		if err != nil {
+			task.close()
 			return &endpointConnectCompleted{
 				attempt: attempt,
 				err:     err,
@@ -268,19 +278,24 @@ func (e *endpoint) ensureSession(ctx vivid.ActorContext) {
 		if localAddr == "" {
 			localAddr = conn.LocalAddr().String()
 		}
+		session := newSession(e.address, localAddr, conn, sessionRoleOutbound)
+		session.pending = task
 		return &endpointConnectCompleted{
 			attempt: attempt,
-			session: newSession(e.address, localAddr, conn, sessionRoleOutbound),
+			session: session,
 		}, nil
 	})).PipeTo(ctx.Ref().ToActorRefs())
 }
 
-func (e *endpoint) dial() (net.Conn, error) {
+func (e *endpoint) dial(task *pendingConnection) (net.Conn, error) {
 	addr := e.address
 	dialer := net.Dialer{Timeout: dialTimeout}
-	conn, err := dialer.Dial("tcp", addr)
+	conn, err := dialer.DialContext(task.ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
+	}
+	if !task.attach(conn) {
+		return nil, task.ctx.Err()
 	}
 	h := &Handshake{AdvertiseAddr: e.advertiseAddr}
 	if err := h.Send(conn); err != nil {
@@ -351,8 +366,10 @@ func (e *endpoint) onConnectCompleted(ctx vivid.ActorContext, completed *endpoin
 	}
 
 	e.connecting = false
+	e.connectTask = nil
 
 	if pipeErr != nil {
+		e.closeSession(ctx, completed.session, false, "connect task failed")
 		e.scheduleRetry(ctx, pipeErr)
 		return
 	}
@@ -511,6 +528,10 @@ func (e *endpoint) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
 
 func (e *endpoint) onKill(ctx vivid.ActorContext) {
 	e.stopping = true
+	if e.connectTask != nil {
+		e.connectTask.close()
+		e.connectTask = nil
+	}
 	ctx.Metrics().Gauge(metrics.RemotingOutboundEndpointsGauge).Dec()
 	e.cancelRetry(ctx)
 	e.failPending(ctx)
@@ -554,6 +575,10 @@ func (e *endpoint) trySend(ctx vivid.ActorContext) {
 }
 
 func (e *endpoint) activateSession(ctx vivid.ActorContext, next *session) error {
+	if next.pending != nil && !next.pending.release() {
+		e.closeSession(ctx, next, false, "connection task canceled")
+		return vivid.ErrorRemotingHandshake.WithMessage("connection task canceled")
+	}
 	e.cancelRetry(ctx)
 	e.connecting = false
 	e.retryCount = 0

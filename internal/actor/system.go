@@ -339,10 +339,14 @@ func (s *System) removeFuture(agentRef *AgentRef) {
 
 func (s *System) removeFuturesByAgentPath(agentPath vivid.ActorPath, err error) {
 	s.futureLock.Lock()
-	refs := s.futureAgents[agentPath]
+	// 完成回调会并发移除 Future，先在锁内复制路径，再在锁外执行关闭。
+	refs := make([]vivid.ActorPath, 0, len(s.futureAgents[agentPath]))
+	for ref := range s.futureAgents[agentPath] {
+		refs = append(refs, ref)
+	}
 	s.futureLock.Unlock()
 
-	for ref := range refs {
+	for _, ref := range refs {
 		if ctx, ok := s.actorContexts.Load(ref); ok {
 			if f, ok := ctx.(*future.Future[vivid.Message]); ok {
 				f.Close(err)
