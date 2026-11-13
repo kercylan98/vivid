@@ -137,6 +137,8 @@ type endpoint struct {
 	retryAttempt      uint64 // 当前重试调度代次，不随重试次数预算重置
 	associationSeq    uint64
 	received          uint64 // 已处理的外部信封与接入会话数量，与管理器投递计数对应
+	stopReceived      uint64 // 解绑路由前已保留的投递总数
+	stopReason        string // 等待已有投递处理完毕后终止自身
 }
 
 func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
@@ -173,7 +175,33 @@ func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
 			e.onPipeUnexpectedResult(ctx, message, msg.Error)
 		}
 	}
-	e.retireIfIdle(ctx)
+	if e.stopping {
+		e.finishStop(ctx)
+	} else {
+		e.retireIfIdle(ctx)
+	}
+}
+
+// stop 先移除路由并处理待发消息，保留 Actor 直到已预留的投递全部到达。
+func (e *endpoint) stop(ctx vivid.ActorContext, reason string) {
+	if e.stopping {
+		return
+	}
+	e.stopping = true
+	e.stopReceived = max(e.received, e.endpointManager.detachEndpoint(e.address, ctx.Ref()))
+	e.stopReason = reason
+	e.cancelRetry(ctx)
+	e.failPending(ctx)
+	e.finishStop(ctx)
+}
+
+func (e *endpoint) finishStop(ctx vivid.ActorContext) {
+	if e.stopReason == "" || e.received != e.stopReceived {
+		return
+	}
+	reason := e.stopReason
+	e.stopReason = ""
+	ctx.Kill(ctx.Ref(), false, reason)
 }
 
 // retireIfIdle 在消息线程确认无业务与连接任务后，原子移除路由，再结束自身。
@@ -581,6 +609,8 @@ func (e *endpoint) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
 
 func (e *endpoint) onKill(ctx vivid.ActorContext) {
 	e.stopping = true
+	e.stopReason = ""
+	e.endpointManager.unregisterEndpoint(e.address, ctx.Ref())
 	if e.connectTask != nil {
 		e.connectTask.close()
 		e.connectTask = nil
@@ -599,7 +629,6 @@ func (e *endpoint) onKill(ctx vivid.ActorContext) {
 		e.association.closeSession(ctx, e.address, true, "endpoint closing")
 		e.association = nil
 	}
-	e.endpointManager.unregisterEndpoint(e.address, ctx.Ref())
 	ctx.Logger().Debug("endpoint closing", log.String("address", e.address))
 }
 
@@ -691,8 +720,7 @@ func (e *endpoint) scheduleRetry(ctx vivid.ActorContext, cause error) {
 	})
 	if e.retryCount >= e.retryPolicy.limit {
 		ctx.Logger().Warn("endpoint retries exhausted", log.String("address", e.address), log.Any("error", cause), log.Any("pending", e.outboundBuffer.Len()))
-		e.failPending(ctx)
-		ctx.Kill(ctx.Ref(), false, "endpoint retries exhausted")
+		e.stop(ctx, "endpoint retries exhausted")
 		return
 	}
 
@@ -703,8 +731,7 @@ func (e *endpoint) scheduleRetry(ctx vivid.ActorContext, cause error) {
 	if err := ctx.Scheduler().Once(ctx.Ref(), delay, endpointRetryConnect{attempt: e.retryAttempt}, vivid.WithSchedulerReference(e.retryScheduleReference())); err != nil {
 		e.retryScheduled = false
 		ctx.Logger().Warn("endpoint schedule retry failed", log.String("address", e.address), log.Any("error", err))
-		e.failPending(ctx)
-		ctx.Kill(ctx.Ref(), false, "endpoint retry scheduling failed")
+		e.stop(ctx, "endpoint retry scheduling failed")
 	}
 }
 

@@ -33,6 +33,18 @@ func (e *EndpointManager) unregisterEndpoint(address string, endpoint vivid.Acto
 	}
 }
 
+// detachEndpoint 阻止新路由选中旧端点，并返回该端点必须处理的投递总数。
+func (e *EndpointManager) detachEndpoint(address string, endpoint vivid.ActorRef) uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current := e.endpoints[address]
+	if current.ref == nil || !current.ref.Equals(endpoint) {
+		return 0
+	}
+	delete(e.endpoints, address)
+	return current.dispatched
+}
+
 func (e *EndpointManager) Stop() {
 	e.mu.Lock()
 	e.stopped = true
