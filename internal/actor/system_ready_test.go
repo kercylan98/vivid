@@ -209,6 +209,9 @@ func TestSystem_ClusterInvalidOptions(t *testing.T) {
 		{"zero_join", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterJoinTimeout(0)}},
 		{"invalid_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("node-without-port")}},
 		{"wildcard_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("0.0.0.0:8080")}},
+		{"wildcard_ipv6_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("[0:0:0:0:0:0:0:0]:8080")}},
+		{"wildcard_mapped_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("[::ffff:0.0.0.0]:8080")}},
+		{"signed_port_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("node:+8080")}},
 	} {
 		t.Run(options.name, func(t *testing.T) {
 			address := clusterTestAddress(t)

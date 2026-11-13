@@ -2,8 +2,6 @@ package vivid
 
 import (
 	"math/rand/v2"
-	"net"
-	"strings"
 	"time"
 
 	"github.com/kercylan98/vivid/internal/utils"
@@ -58,9 +56,7 @@ func (o *ActorSystemClusterOptions) Validate() error {
 		return ErrorIllegalArgument.WithMessage("cluster launch delay must be non-negative; gossip interval, peers count, max concurrent probes, shutdown timeout, join timeout, probe timeout and reachability TTL must be positive")
 	}
 	for _, seed := range o.Seeds {
-		address, ok := utils.NormalizeAddress(seed)
-		host, _, err := net.SplitHostPort(address)
-		if !ok || err != nil || strings.TrimSpace(host) == "" || host == "0.0.0.0" || host == "::" {
+		if _, ok := utils.NormalizeRemoteAddress(seed); !ok {
 			return ErrorIllegalArgument.WithMessage("invalid cluster seed address: " + seed)
 		}
 	}

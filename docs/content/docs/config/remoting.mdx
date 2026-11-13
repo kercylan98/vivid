@@ -36,7 +36,9 @@ description: Remoting 启用、消息注册、Codec 与位置透明
 通过 **WithActorSystemRemoting(bindAddr, advertiseAddr?)** 启用：
 
 - **bindAddr**（必填）：本机监听地址，如 `"0.0.0.0:8080"`。框架在此地址上启动 Listener 接受连接。
-- **advertiseAddr**（可选）：其他节点可访问的地址，例如 `"node1.example.com:8080"`。不传则使用 bindAddr；监听所有网卡或使用端口映射时，应显式设置可访问的地址与端口。
+- **advertiseAddr**（可选）：其他节点可访问的地址，例如 `"node1.example.com:8080"`。不传则使用 bindAddr；通配监听（如 `0.0.0.0:8080`、`[::]:8080`）必须显式设置广告地址，使用端口映射时也应配置映射后的地址与端口。
+
+广告地址必须使用非通配主机和 `1–65535` 的十进制端口，IPv6 使用方括号，如 `[2001:db8::1]:8080`；首尾空白会被裁剪。地址格式错误由 `Start()` 返回，可使用 `errors.Is(err, vivid.ErrorIllegalArgument)` 判断。格式校验不解析 DNS，也不保证远端可达。
 
 Remoting 使用 TCP 通信。启用后，`Start()` 成功返回表示本地监听已创建；端口占用、监听配置错误会使启动失败，可使用 `errors.Is(err, vivid.ErrorRemotingListen)` 判断，并通过 `errors.As` 获取底层原因。启动失败的实例不可重启，应修正配置后重新创建系统。
 

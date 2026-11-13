@@ -23,6 +23,6 @@ func (a *Actor) validMember(info *endpoint.Information) bool {
 	if info.DataCenter != "" && !utils.IsValidClusterLabel(info.DataCenter) {
 		return false
 	}
-	normalized, ok := utils.NormalizeAddress(address)
+	normalized, ok := utils.NormalizeRemoteAddress(address)
 	return ok && normalized == address
 }

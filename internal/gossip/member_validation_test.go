@@ -33,6 +33,16 @@ func invalidMember(info *endpoint.Information, field string) *endpoint.Informati
 		info.ActorRef = &tombstoneRef{address: "bad host:0"}
 	case "padded_address":
 		info.ActorRef = &tombstoneRef{address: " remote:10002 "}
+	case "missing_port":
+		info.ActorRef = &tombstoneRef{address: "remote.example"}
+	case "wildcard_address":
+		info.ActorRef = &tombstoneRef{address: "0.0.0.0:10002"}
+	case "wildcard_ipv6":
+		info.ActorRef = &tombstoneRef{address: "[0:0:0:0:0:0:0:0]:10002"}
+	case "wildcard_mapped":
+		info.ActorRef = &tombstoneRef{address: "[::ffff:0.0.0.0]:10002"}
+	case "signed_port":
+		info.ActorRef = &tombstoneRef{address: "remote:+10002"}
 	case "path":
 		info.ActorRef = &viewPathRef{tombstoneRef: &tombstoneRef{address: info.ActorRef.GetAddress()}}
 	case "virtual":
@@ -113,7 +123,7 @@ func TestActor_GossipMemberNewIdentity(t *testing.T) {
 			assert.Equal(t, b.info, a.view.Members().Get(b.info.ID()))
 		})
 	}
-	for _, field := range []string{"nil", "nil_ref", "empty_id", "none", "unknown_status", "invalid_address", "padded_address", "path", "virtual"} {
+	for _, field := range []string{"nil", "nil_ref", "empty_id", "none", "unknown_status", "invalid_address", "padded_address", "missing_port", "wildcard_address", "wildcard_ipv6", "wildcard_mapped", "signed_port", "path", "virtual"} {
 		t.Run(field, func(t *testing.T) {
 			a, _, _, _ := newPongAckActors()
 			member := reachableMember("third:10003")

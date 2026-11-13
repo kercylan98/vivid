@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/actor"
 	"github.com/kercylan98/vivid/internal/gossip"
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
@@ -79,6 +80,63 @@ func TestActor_GossipMemberValidationTCP(t *testing.T) {
 			assert.Equal(t, origin.View.Version().Get(remote.ID()), observed.Revision)
 			assert.Equal(t, 2, after.Snapshot.Len())
 		})
+	}
+}
+
+func TestActor_GossipMemberAddressTCP(t *testing.T) {
+	systems, refs, read := newMemberValidationSystems(t)
+	origin := read(0)
+	remote := origin.View.Members().Get(origin.ID)
+	barrier := func() *gossipmessages.Pong {
+		message, err := systems[0].Ask(refs[1], gossipmessages.NewPing("vivid-test", gossipmessages.GossipTypeCycleSYNC, remote, origin.View.Members(), origin.View.Version()), time.Second).Result()
+		require.NoError(t, err)
+		pong, ok := message.(*gossipmessages.Pong)
+		require.True(t, ok)
+		return pong
+	}
+	for _, protocol := range []string{"ping", "pong"} {
+		for _, direct := range []bool{false, true} {
+			for _, address := range []string{"node.example", "0.0.0.0:10002", "[0:0:0:0:0:0:0:0]:10002", "[::ffff:0.0.0.0]:10002", "node:+10002"} {
+				t.Run(protocol+"/"+map[bool]string{true: "direct", false: "relayed"}[direct]+"/"+address, func(t *testing.T) {
+					ref, err := actor.NewRef(address, remote.ActorRef.GetPath())
+					require.NoError(t, err)
+					bad := endpoint.NewInformation(ref, remote.CreatedAt)
+					bad.Status = endpoint.StatusUp
+					good := endpoint.NewInformation(remote.ActorRef.Clone(), remote.CreatedAt)
+					good.Status = endpoint.StatusUp
+					members, version := origin.View.Members().Clone(), origin.View.Version().Clone()
+					members.Upsert(bad)
+					members.Upsert(good)
+					version.Update(bad.ID(), 100)
+					version.Update(good.ID(), 1)
+					sender := remote
+					if direct {
+						sender = bad
+					}
+					// 使用普通 ActorRef 可编码的异常地址，验证真实传输后的成员边界。
+					if protocol == "ping" {
+						systems[0].Tell(refs[1], gossipmessages.NewPing("vivid-test", gossipmessages.GossipTypeCycleSYNC, sender, members, version))
+					} else {
+						systems[0].Tell(refs[1], gossipmessages.NewPong("vivid-test", gossipmessages.GossipTypeCycleSYNC, sender, members, version))
+					}
+					pong := barrier()
+					assert.Nil(t, pong.MemberList.Get(bad.ID()))
+					assert.Zero(t, pong.Version.Get(bad.ID()))
+					assert.Equal(t, !direct, pong.MemberList.Get(good.ID()) != nil, "无效直接发送方丢弃整条消息，转发仅忽略无效记录")
+					_, exists := read(1).Snapshot.Member(bad.ID())
+					assert.False(t, exists)
+					bad.ActorRef = remote.ActorRef.Clone()
+					members.Upsert(bad)
+					version = origin.View.Version().Clone()
+					version.Update(good.ID(), 1)
+					version.Update(bad.ID(), 1)
+					systems[0].Tell(refs[1], gossipmessages.NewPing("vivid-test", gossipmessages.GossipTypeCycleSYNC, remote, members, version))
+					pong = barrier()
+					require.NotNil(t, pong.MemberList.Get(bad.ID()))
+					assert.Equal(t, uint64(1), pong.Version.Get(bad.ID()), "拒绝异常地址的高版本后仍能接收合法记录")
+				})
+			}
+		}
 	}
 }
 

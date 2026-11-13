@@ -5,7 +5,7 @@ description: 集群通信依赖、地址与就绪边界
 
 集群依赖 Remoting 交换成员视图。在创建系统时，通过 `WithActorSystemRemoting` 启用远程通信，将 `WithActorSystemClusterOptions` 直接传给 `bootstrap.NewActorSystem` 启用集群，见[快速开始](/docs/cluster/quick-start)。
 
-种子地址必须与目标节点的广告地址一致，使用其他节点可访问的 `host:port`。监听所有网卡或使用端口映射时，显式配置广告地址；不要用 `0.0.0.0` 作为种子。
+种子地址必须与目标节点的广告地址一致，统一使用非通配主机和 `1–65535` 的十进制端口：`host:port`，IPv6 使用 `[IPv6]:port`。通配监听必须显式配置广告地址；种子和广告地址都不能使用 `0.0.0.0`、`::` 等通配主机。格式校验不保证 DNS 解析或远端可达。
 
 集群协议消息由框架注册编解码，业务无需额外注册。跨节点业务消息仍需配置消息注册或外部 Codec，详见[远程通讯](/docs/config/remoting)。
 

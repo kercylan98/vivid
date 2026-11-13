@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid/internal/sugar"
-	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 )
@@ -363,15 +362,14 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 //  2. 可选设置对外公布（广告）的网络地址（advertiseAddr），常用于集群、NAT、端口映射等场景；若未指定，默认使用 bindAddr。
 //
 // 参数：
-//   - bindAddr: string，必选，远程 Listener 的本地绑定地址（如 TCP/UDP 地址）。
+//   - bindAddr: string，必选，TCP 监听地址，可使用通配主机。
 //   - advertiseAddr: ...string，可选，对外广告地址（第一个参数有效），否则默认使用 bindAddr。
+//
+// 广告地址须包含明确主机和有效端口，参数错误由 Start 返回；通配监听需显式提供广告地址。
 func WithActorSystemRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		opts.RemotingBindAddress = bindAddr
 		opts.RemotingAdvertiseAddress = sugar.FirstOrDefault(advertiseAddr, bindAddr)
-		if utils.IsAddrMissingPort(opts.RemotingAdvertiseAddress) && !utils.IsDomainName(opts.RemotingAdvertiseAddress) {
-			panic("ActorSystem advertise address must be a domain when missing port")
-		}
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/kercylan98/vivid/internal/scheduler"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/sugar"
+	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/internal/virtual"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
@@ -210,6 +211,14 @@ func (s *System) Start() error {
 	}
 
 	s.startTime = time.Now()
+	if s.options.RemotingBindAddress != "" || s.options.RemotingAdvertiseAddress != "" {
+		address, ok := utils.NormalizeRemoteAddress(s.options.RemotingAdvertiseAddress)
+		if !ok || s.options.RemotingBindAddress == "" {
+			err := vivid.ErrorIllegalArgument.WithMessage("remoting requires a bind address and an advertise address with a specific host and port: " + s.options.RemotingAdvertiseAddress)
+			return vivid.ErrorActorSystemStartFailed.With(err).With(s.Stop(s.options.StopTimeout))
+		}
+		s.options.RemotingAdvertiseAddress = address
+	}
 	if s.options.ClusterOptions != nil {
 		if err := s.options.ClusterOptions.Validate(); err != nil {
 			return vivid.ErrorActorSystemStartFailed.With(err).With(s.Stop(s.options.StopTimeout))
