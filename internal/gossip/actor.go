@@ -31,28 +31,29 @@ func New(options *vivid.ActorSystemClusterOptions) *Actor {
 // Actor 实现基于 gossip 的集群发现与视图同步：维护本节点 Information、集群视图（成员列表+版本向量），
 // 通过状态机事件驱动生命周期，处理 Ping/Pong 与周期 gossip。
 type Actor struct {
-	opts                 *vivid.ActorSystemClusterOptions // 配置选项
-	seeds                []vivid.ActorRef                 // 种子节点引用列表
-	info                 *endpoint.Information            // 本节点的实例信息（ID、Ref、Status），状态迁移与 Ping/Pong 时写回视图。
-	view                 *ClusterView                     // 本节点维护的集群视图：成员列表 + 版本向量，用于因果合并与 peer 选择。
-	lastViewFingerprint  string                           // 收敛检测：视图指纹连续不变时投递 Converged，视图变化后重置以便再次收敛时投递。
-	convergedEmitted     bool                             // 是否已经投递过 Converged 消息
-	stableRounds         int                              // 连续不变的轮次
-	phaseKillCompleted   chan struct{}                    // 多阶段终止流程完成信号。
-	coordinatorNodeID    string                           // 当前的协调者节点 ID
-	convergenceStartedAt time.Time                        // 最近一次视图变化的时间，用于计算收敛耗时
-	viewRevision         uint64                           // 本地观察序号，与本实例 ID 一起标识快照
-	snapshot             *clusterSnapshot                 // 当前视图的只读快照
-	readiness            *Readiness                       // 线程安全的初始加入结果
-	joinRequest          vivid.Future[vivid.Message]      // 当前种子的加入请求
-	joinIndex            int                              // 当前尝试的去重种子下标
-	joinAttempt          int                              // 当前种子的请求次数
-	joinDeadline         time.Time                        // 当前种子的加入总截止时间
-	joinError            error                            // 进入 Up 时的调度错误
-	joinErrors           []error                          // 已结束尝试的各个种子失败原因
-	stopping             bool                             // 已开始停止，不再接受迟到的加入结果
-	membersChanged       bool                             // 本次合并是否接收了成员更新
-	reachability         *localReachability               // 与成员生命周期独立的本地直接往返观察
+	opts                *vivid.ActorSystemClusterOptions // 配置选项
+	seeds               []vivid.ActorRef                 // 种子节点引用列表
+	info                *endpoint.Information            // 本节点的实例信息（ID、Ref、Status），状态迁移与 Ping/Pong 时写回视图。
+	view                *ClusterView                     // 本节点维护的集群视图：成员列表 + 版本向量，用于因果合并与 peer 选择。
+	lastViewFingerprint string                           // 最近观察的成员视图指纹
+	viewStableEmitted   bool                             // 当前视图是否已投递本地稳定通知
+	pendingViewStable   *viewStable                      // 等待本地邮箱处理的稳定通知
+	stableRounds        int                              // 连续观察到成员视图不变的次数
+	phaseKillCompleted  chan struct{}                    // 多阶段终止流程完成信号。
+	coordinatorNodeID   string                           // 当前的协调者节点 ID
+	stabilityStartedAt  time.Time                        // 最近观察到成员视图变化的时间
+	viewRevision        uint64                           // 本地观察序号，与本实例 ID 一起标识快照
+	snapshot            *clusterSnapshot                 // 当前视图的只读快照
+	readiness           *Readiness                       // 线程安全的初始加入结果
+	joinRequest         vivid.Future[vivid.Message]      // 当前种子的加入请求
+	joinIndex           int                              // 当前尝试的去重种子下标
+	joinAttempt         int                              // 当前种子的请求次数
+	joinDeadline        time.Time                        // 当前种子的加入总截止时间
+	joinError           error                            // 进入 Up 时的调度错误
+	joinErrors          []error                          // 已结束尝试的各个种子失败原因
+	stopping            bool                             // 已开始停止，不再接受迟到的加入结果
+	membersChanged      bool                             // 本次合并是否接收了成员更新
+	reachability        *localReachability               // 与成员生命周期独立的本地直接往返观察
 }
 
 // FixedOptions implements [vivid.FixedOptionActor].
@@ -77,6 +78,9 @@ func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 	a.viewRevision = 0
 	a.snapshot = nil
 	a.membersChanged = false
+	a.lastViewFingerprint, a.stableRounds = "", 0
+	a.viewStableEmitted, a.pendingViewStable = false, nil
+	a.stabilityStartedAt = time.Time{}
 	a.reachability = newLocalReachability()
 
 	// 注册多阶段终止以支持优雅退出
@@ -116,8 +120,8 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 		a.onPong(ctx, m)
 	case *gossipmessages.SpreadGossip:
 		a.onSpreadGossip(ctx, m)
-	case *gossipmessages.Converged:
-		a.onConverged(ctx)
+	case *viewStable:
+		a.onViewStable(ctx, m)
 	case *vivid.OnKill:
 		a.onKill(ctx, m)
 	}
@@ -152,7 +156,15 @@ func (a *Actor) onUp(ctx vivid.ActorContext) {
 	}
 }
 
-func (a *Actor) onConverged(ctx vivid.ActorContext) {
+func (a *Actor) onViewStable(ctx vivid.ActorContext, notification *viewStable) {
+	if notification == nil || notification != a.pendingViewStable || notification.instanceID != a.info.ID() {
+		return
+	}
+	a.pendingViewStable = nil
+	// 通知排队期间，成员更新或自身状态迁移都可能使原判断失效。
+	if notification.fingerprint != a.view.Fingerprint() {
+		return
+	}
 	// Removed 记录及其版本需一起保留，局部视图稳定不能证明旧消息已消失。
 	// 计算新的协调者
 	newCoordinator := a.view.Members().GetCoordinatorNodeID()
@@ -163,9 +175,9 @@ func (a *Actor) onConverged(ctx vivid.ActorContext) {
 		a.coordinatorNodeID = newCoordinator
 	}
 
-	ctx.Logger().Debug("cluster converged",
+	ctx.Logger().Debug("local member view stable",
 		log.String("coordinator", a.coordinatorNodeID),
-		log.Duration("convergence_duration", time.Since(a.convergenceStartedAt)),
+		log.Duration("stability_duration", time.Since(a.stabilityStartedAt)),
 		log.String("status", a.info.Status.String()),
 	)
 
@@ -211,7 +223,7 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 	if a.membersChanged {
 		a.publishMembersChanged(ctx)
 	}
-	maybeEmitConverged(ctx, a)
+	maybeEmitViewStable(ctx, a)
 
 	// 避免远程发送序列化过程中被修改。
 	pong := a.preparePong(ping.GossipType)
@@ -245,7 +257,7 @@ func (a *Actor) mergePong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 	if a.membersChanged {
 		a.publishMembersChanged(ctx)
 	}
-	maybeEmitConverged(ctx, a)
+	maybeEmitViewStable(ctx, a)
 }
 
 // mergeMember 同时接收成员记录及其版本，返回是否发现了新实例。
@@ -336,7 +348,7 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 		peers = a.reachability.selectPeers(peers, a.opts.GossipPeersCount)
 	}
 	if len(peers) == 0 {
-		maybeEmitConverged(ctx, a)
+		maybeEmitViewStable(ctx, a)
 		return
 	}
 
