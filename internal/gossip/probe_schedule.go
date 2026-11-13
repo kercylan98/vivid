@@ -4,6 +4,7 @@ import "github.com/kercylan98/vivid"
 
 type probeAttempt struct {
 	sequence uint64
+	sent     uint64
 	round    uint64
 }
 
@@ -69,15 +70,19 @@ func insertProbeCandidate(candidates []probeCandidate, candidate probeCandidate,
 	return candidates
 }
 
-// prioritizePeers 将获得观察额度的地址移到前方，其余名额保留随机 Gossip。
+// prioritizePeers 将获得新观察额度的地址移到本轮发送列表前方。
 func (r *localReachability) prioritizePeers(peers []vivid.ActorRef, limit int) []vivid.ActorRef {
-	for selected := range r.candidates {
-		index := r.candidates[selected].index
+	return prioritizeCandidates(peers, r.candidates, limit)
+}
+
+func prioritizeCandidates(peers []vivid.ActorRef, candidates []probeCandidate, limit int) []vivid.ActorRef {
+	for selected := range candidates {
+		index := candidates[selected].index
 		peers[selected], peers[index] = peers[index], peers[selected]
 		// 交换可能移动另一个已选候选，更新其下标，不额外复制引用列表。
-		for next := selected + 1; next < len(r.candidates); next++ {
-			if r.candidates[next].index == selected {
-				r.candidates[next].index = index
+		for next := selected + 1; next < len(candidates); next++ {
+			if candidates[next].index == selected {
+				candidates[next].index = index
 				break
 			}
 		}

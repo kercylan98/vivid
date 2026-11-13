@@ -10,7 +10,7 @@ description: ActorSystemClusterOptions 的可用配置、默认值与调用方�
 | 选项 | 参数 | 默认值 | 说明 |
 |------|------|--------|------|
 | **WithActorSystemClusterName** | `string` | 无，必填 | 逻辑集群名称，只有名称完全相同才交换成员视图 |
-| **WithActorSystemClusterDataCenter** | `string` | 空 | 本实例声明的机房标识；声明后按机房分配新观察机会 |
+| **WithActorSystemClusterDataCenter** | `string` | 空 | 本实例声明的机房标识；声明后按机房轮换新观察与其余 Gossip 发送 |
 | **WithActorSystemClusterSeeds** | `seeds ...string` | 空 | 追加种子广告地址，格式为 `host:port` |
 | **WithActorSystemClusterBootstrap** | `bool` | false | 显式独立启动；配置种子时也不等待加入 |
 | **WithActorSystemClusterJoinTimeout** | `time.Duration` | 3s | 每个去重后的非本地种子的加入总超时，包含有限重发 |
@@ -50,10 +50,10 @@ system := bootstrap.NewActorSystem(
 
 ## 当前能力范围
 
-集群名称用于避免不同组误合并成员，不是认证凭据，也不隔离直接发送的远程业务消息。机房标识随成员视图传播，用于新观察机会的轮换，不改变业务路由或超时；没有 Quorum、加入令牌、白名单或集群单例等选项。连接认证通过 Remoting 的 TLS/mTLS 配置，见[连接认证](/docs/cluster/auth/join-auth)。
+集群名称用于避免不同组误合并成员，不是认证凭据，也不隔离直接发送的远程业务消息。机房标识随成员视图传播，用于 Gossip 目标轮换，不改变业务路由或超时；没有 Quorum、加入令牌、白名单或集群单例等选项。连接认证通过 Remoting 的 TLS/mTLS 配置，见[连接认证](/docs/cluster/auth/join-auth)。
 
 无种子时独立启动；配置种子后默认必须加入成功，全部失败时保持 Joining 并返回初始加入失败结果。主动建立新组需使用 Bootstrap，结果通过 `system.ClusterReady()` 等待，见[启动与加入就绪](/docs/cluster/runtime/readiness)。
 
-Up 节点会持续联络配置的种子地址，和可联络成员一起按地址去重，共享 `GossipPeersCount` 的每轮数量限制。本地声明机房后，空闲观察额度先按机房轮换，再在机房内按地址轮换；未声明时按全体地址轮换，其余发送名额用于随机 Gossip。旧实例退出不影响该种子地址的后续联络；退出期间不再探测种子。
+Up 节点会持续联络配置的种子地址，和可联络成员一起按地址去重，共享 `GossipPeersCount` 的每轮数量限制。本地声明机房后，空闲观察额度先按机房、再按地址轮换；其余发送名额独立按发送历史轮换机房和地址。本地未声明时，新观察按全体地址轮换，其余发送随机选择。旧实例退出不影响该种子地址的后续联络；退出期间不再探测种子。
 
 `MaxConcurrentProbes` 独立限制未完成观察的地址数量，可大于或小于 `GossipPeersCount`；两项默认均为 5，修改一项不会自动修改另一项。额度满时仍交换成员视图；增大观察并发不会增加每轮发送数量，但会保留更多等待记录。可达性使用与配置建议见[本地可达性](/docs/cluster/runtime/reachability)。

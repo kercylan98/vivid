@@ -395,10 +395,14 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 				request := *ping
 				request.ProbeSequence = sequence
 				ctx.Tell(peer, &request)
+				a.reachability.recordDataCenterSend(peer)
 				continue
 			}
 		}
 		ctx.Tell(peer, ping)
+		if observe {
+			a.reachability.recordDataCenterSend(peer)
+		}
 	}
 }
 

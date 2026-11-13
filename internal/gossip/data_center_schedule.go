@@ -7,6 +7,7 @@ import (
 
 type dataCenterGroup struct {
 	sequence   uint64
+	sent       uint64
 	priority   uint64
 	round      uint64
 	candidates []probeCandidate
@@ -15,13 +16,15 @@ type dataCenterGroup struct {
 
 // dataCenterSchedule 在 Gossip Actor 线程内复用，空标识同时容纳未知和声明冲突的地址。
 type dataCenterSchedule struct {
-	addresses map[string]string
-	groups    map[string]*dataCenterGroup
-	dirty     bool
+	addresses  map[string]string
+	groups     map[string]*dataCenterGroup
+	sequence   uint64
+	candidates []probeCandidate
+	dirty      bool
 }
 
-// selectDataCenterPeers 先轮换有空闲候选的机房，再在机房内选择最久未开始观察的地址。
-// 只为新观察分配机会，等待中的请求及普通 Gossip 不构成机房已获得新观察。
+// selectDataCenterPeers 先为新观察轮换机房和地址，其余发送名额按发送历史轮换。
+// 等待中的请求及普通 Gossip 不构成机房已获得新观察。
 func (r *localReachability) selectDataCenterPeers(peers []vivid.ActorRef, members []*endpoint.Information, sendLimit, probeLimit int) []vivid.ActorRef {
 	limit, available := r.preparePeers(peers, sendLimit, probeLimit)
 	if r.dataCenters == nil {
@@ -42,8 +45,18 @@ func (r *localReachability) selectDataCenterPeers(peers []vivid.ActorRef, member
 		if group.round != r.scheduleRound {
 			group.round, group.priority, group.next = r.scheduleRound, group.sequence, 0
 			group.candidates = group.candidates[:0]
+			if available == 0 {
+				group.priority = group.sent
+			}
 		}
-		if _, waiting := r.pending[address]; waiting || available == 0 {
+		if available == 0 {
+			// 没有新观察名额时，直接收集普通发送候选，避免再次遍历所有地址。
+			if limit > 0 {
+				group.candidates = insertProbeCandidate(group.candidates, probeCandidate{index: index, sequence: r.attempts[address].sent}, limit)
+			}
+			continue
+		}
+		if _, waiting := r.pending[address]; waiting {
 			continue
 		}
 		group.candidates = insertProbeCandidate(group.candidates, probeCandidate{index: index, sequence: r.attempts[address].sequence}, available)
@@ -53,7 +66,13 @@ func (r *localReachability) selectDataCenterPeers(peers []vivid.ActorRef, member
 			delete(schedule.groups, label)
 		}
 	}
-	for selected := range available {
+	count, sequence := available, r.sequence
+	candidates := r.candidates
+	if available == 0 {
+		count, sequence = limit, schedule.sequence
+		candidates = schedule.candidates[:0]
+	}
+	for selected := range count {
 		var oldest *dataCenterGroup
 		for _, group := range schedule.groups {
 			if group.next < len(group.candidates) && (oldest == nil || group.priority < oldest.priority) {
@@ -63,12 +82,73 @@ func (r *localReachability) selectDataCenterPeers(peers []vivid.ActorRef, member
 		if oldest == nil {
 			break
 		}
-		r.candidates = append(r.candidates, oldest.candidates[oldest.next])
+		candidates = append(candidates, oldest.candidates[oldest.next])
 		oldest.next++
-		// 本轮暂排在已分配机房之后；持久顺序仅在 begin 实际创建请求时更新。
-		oldest.priority = r.sequence + uint64(selected) + 1
+		// 本轮暂排在已分配机房之后；持久顺序在实际创建请求或提交发送后更新。
+		oldest.priority = sequence + uint64(selected) + 1
 	}
-	return r.prioritizePeers(peers, limit)
+	if available == 0 {
+		schedule.candidates = candidates
+		return prioritizeCandidates(peers, candidates, limit)
+	}
+	r.candidates = candidates
+	r.prioritizePeers(peers, limit)
+	if len(r.candidates) < limit {
+		r.selectDataCenterSends(peers, len(r.candidates), limit)
+	}
+	return peers[:limit]
+}
+
+// selectDataCenterSends 为新观察以外的发送名额轮换机房和地址，不改变观察的先后顺序。
+func (r *localReachability) selectDataCenterSends(peers []vivid.ActorRef, probes, limit int) {
+	schedule := r.dataCenters
+	remaining := limit - probes
+	schedule.candidates = schedule.candidates[:0]
+	for _, group := range schedule.groups {
+		group.priority, group.next = group.sent, 0
+		group.candidates = group.candidates[:0]
+	}
+	for index, peer := range peers[:probes] {
+		// 已安排的新观察也会发送，普通名额先考虑其他尚未联络的机房。
+		schedule.groups[schedule.addresses[peer.GetAddress()]].priority = schedule.sequence + uint64(index) + 1
+	}
+	for index, peer := range peers[probes:] {
+		address := peer.GetAddress()
+		group := schedule.groups[schedule.addresses[address]]
+		group.candidates = insertProbeCandidate(group.candidates, probeCandidate{index: index, sequence: r.attempts[address].sent}, remaining)
+	}
+	for selected := range remaining {
+		var oldest *dataCenterGroup
+		for _, group := range schedule.groups {
+			if group.next < len(group.candidates) && (oldest == nil || group.priority < oldest.priority) {
+				oldest = group
+			}
+		}
+		if oldest == nil {
+			break
+		}
+		schedule.candidates = append(schedule.candidates, oldest.candidates[oldest.next])
+		oldest.next++
+		oldest.priority = schedule.sequence + uint64(probes+selected) + 1
+	}
+	prioritizeCandidates(peers[probes:], schedule.candidates, remaining)
+}
+
+// recordDataCenterSend 只记录交给消息系统的发送尝试，不表示连接成功或远端确认。
+func (r *localReachability) recordDataCenterSend(peer vivid.ActorRef) {
+	if r.dataCenters == nil {
+		return
+	}
+	schedule := r.dataCenters
+	schedule.sequence++
+	if schedule.sequence == 0 {
+		schedule.sequence++
+	}
+	address := peer.GetAddress()
+	attempt := r.attempts[address]
+	attempt.sent, attempt.round = schedule.sequence, r.scheduleRound
+	r.attempts[address] = attempt
+	schedule.groups[schedule.addresses[address]].sent = schedule.sequence
 }
 
 // updateAddresses 机房声明在实例内固定，仅在成员记录变化后重建地址分类。

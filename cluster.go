@@ -74,7 +74,7 @@ func WithActorSystemClusterName(name string) ActorSystemClusterOption {
 }
 
 // WithActorSystemClusterDataCenter 声明本次启动所属的机房，空表示未声明；修改需重新创建系统。
-// 标识随成员视图传播，并用于新观察机会的机房轮换，不改变集群隔离、业务路由或授权规则。
+// 标识随成员视图传播，用于新观察与其余 Gossip 发送的机房轮换，不改变集群隔离、业务路由或授权规则。
 func WithActorSystemClusterDataCenter(dataCenter string) ActorSystemClusterOption {
 	return func(o *ActorSystemClusterOptions) { o.DataCenter = dataCenter }
 }

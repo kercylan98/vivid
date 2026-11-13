@@ -80,7 +80,9 @@ func (r *localReachability) begin(peer vivid.ActorRef, members []*endpoint.Infor
 		}
 	}
 	r.pending[key] = probe
-	r.attempts[key] = probeAttempt{sequence: probe.sequence, round: r.scheduleRound}
+	attempt := r.attempts[key]
+	attempt.sequence, attempt.round = probe.sequence, r.scheduleRound
+	r.attempts[key] = attempt
 	if r.dataCenters != nil {
 		if group := r.dataCenters.groups[r.dataCenters.addresses[key]]; group != nil {
 			group.sequence = probe.sequence
