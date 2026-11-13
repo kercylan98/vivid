@@ -9,7 +9,7 @@ package ves
 //   - 审计/安全：记录谁连入了本节点
 //   - 与负载、限流等策略联动
 type RemotingInboundConnectionEstablishedEvent struct {
-	// PeerAddress 对端广告地址（或 RemoteAddr）
+	// PeerAddress 对端握手声明的广告地址
 	PeerAddress string
 	// LocalAddress 本端广告地址（或 LocalAddr）
 	LocalAddress string

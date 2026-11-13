@@ -4,6 +4,9 @@ import (
 	"errors"
 	"net"
 	"time"
+
+	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/utils"
 )
 
 const handshakeTimeout = 10 * time.Second
@@ -44,6 +47,11 @@ func (h *Handshake) Wait(conn net.Conn) (err error) {
 	if frame.Type != FrameCtrlHandshake {
 		return errExpectedHandshakeFrame
 	}
-	h.AdvertiseAddr = string(frame.Data)
+	address := string(frame.Data)
+	// 握手声明将直接作为端点身份，不接受通配地址或带空白的别名。
+	if normalized, ok := utils.NormalizeRemoteAddress(address); !ok || normalized != address {
+		return vivid.ErrorRemotingHandshake.WithMessage("invalid remote advertise address: " + address)
+	}
+	h.AdvertiseAddr = address
 	return nil
 }

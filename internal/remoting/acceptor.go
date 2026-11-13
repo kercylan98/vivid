@@ -267,10 +267,6 @@ func (a *acceptor) doHandshake(conn net.Conn) (string, error) {
 		}
 		return "", err
 	}
-	peerAddr := request.AdvertiseAddr
-	if peerAddr == "" {
-		peerAddr = conn.RemoteAddr().String()
-	}
 	// 由 Endpoint 完成连接仲裁后再回复握手，避免对端提前发送的数据随连接替换丢失。
-	return peerAddr, nil
+	return request.AdvertiseAddr, nil
 }

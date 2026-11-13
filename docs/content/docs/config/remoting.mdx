@@ -40,6 +40,8 @@ description: Remoting 启用、消息注册、Codec 与位置透明
 
 广告地址必须使用非通配主机和 `1–65535` 的十进制端口，IPv6 使用方括号，如 `[2001:db8::1]:8080`；首尾空白会被裁剪。地址格式错误由 `Start()` 返回，可使用 `errors.Is(err, vivid.ErrorIllegalArgument)` 判断。格式校验不解析 DNS，也不保证远端可达。
 
+握手双方均须声明有效广告地址，响应地址须与连接目标一致；无效声明会使连接关闭，不使用 TCP 源端口推测节点地址。出站握手地址错误可通过连接失败事件的 `Error` 使用 `errors.Is(err, vivid.ErrorRemotingHandshake)` 判断。广告地址是通信声明，不构成身份认证。
+
 Remoting 使用 TCP 通信。启用后，`Start()` 成功返回表示本地监听已创建；端口占用、监听配置错误会使启动失败，可使用 `errors.Is(err, vivid.ErrorRemotingListen)` 判断，并通过 `errors.As` 获取底层原因。启动失败的实例不可重启，应修正配置后重新创建系统。
 
 监听创建成功不代表远端可达、集群加入成功或业务已就绪；部署探针仍需按服务需求验证。

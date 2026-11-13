@@ -324,7 +324,7 @@ func (e *endpoint) dial(task *pendingConnection) (net.Conn, error) {
 		}
 		return nil, err
 	}
-	if response.AdvertiseAddr != "" && response.AdvertiseAddr != addr {
+	if response.AdvertiseAddr != addr {
 		mismatchErr := vivid.ErrorRemotingHandshake.WithMessage("remote advertise address mismatch")
 		if closeErr := closeConnection(conn); closeErr != nil {
 			return nil, errors.Join(mismatchErr, closeErr)
