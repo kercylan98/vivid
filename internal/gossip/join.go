@@ -89,7 +89,8 @@ func (a *Actor) tryNextSeed(ctx vivid.ActorContext) {
 		return
 	}
 	if a.joinIndex == len(a.seeds) {
-		err := vivid.ErrorClusterJoinFailed.With(a.joinError)
+		err := vivid.ErrorClusterJoinFailed.With(errors.Join(a.joinErrors...))
+		a.joinErrors = nil
 		a.readiness.complete(vivid.ClusterJoinResult{}, err)
 		ctx.Logger().Error("cluster join failed", log.Any("error", err))
 		return
@@ -99,10 +100,7 @@ func (a *Actor) tryNextSeed(ctx vivid.ActorContext) {
 	}
 	remaining := time.Until(a.joinDeadline)
 	if remaining <= 0 || a.joinAttempt == joinAttemptsPerSeed {
-		a.joinError = vivid.ErrorFutureTimeout.WithMessage(a.opts.JoinTimeout.String())
-		a.joinIndex++
-		a.joinAttempt = 0
-		a.tryNextSeed(ctx)
+		a.failJoinSeed(ctx, vivid.ErrorFutureTimeout.WithMessage(a.opts.JoinTimeout.String()))
 		return
 	}
 	// 一次请求可能随连接切换丢失；有限重发共享该种子的总超时，不延长加入预算。
@@ -136,26 +134,24 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 		case isRejection && rejected != nil && rejected.ClusterName != a.opts.Name:
 			err = a.clusterNameMismatch(rejected.ClusterName)
 		case !ok || pong == nil:
-			err = vivid.ErrorClusterJoinFailed.WithMessage(fmt.Sprintf("invalid join response from %s", a.seeds[a.joinIndex].GetAddress()))
+			err = vivid.ErrorClusterJoinFailed.WithMessage("invalid join response")
 		case pong.ClusterName != a.opts.Name:
 			err = a.clusterNameMismatch(pong.ClusterName)
 		case !a.validJoinPong(pong):
-			err = vivid.ErrorClusterJoinFailed.WithMessage(fmt.Sprintf("invalid join response from %s", a.seeds[a.joinIndex].GetAddress()))
+			err = vivid.ErrorClusterJoinFailed.WithMessage("invalid join response")
 		}
 	}
 	if err != nil {
-		a.joinError = err
 		if errors.Is(err, vivid.ErrorFutureTimeout) {
 			a.tryNextSeed(ctx)
 			return
 		}
-		a.joinIndex++
-		a.joinAttempt = 0
-		a.tryNextSeed(ctx)
+		a.failJoinSeed(ctx, err)
 		return
 	}
 	seed := a.seeds[a.joinIndex].GetAddress()
 	a.mergePong(ctx, pong)
+	a.joinErrors = nil
 	a.joinError = nil
 	changeStatus(ctx, a, EventUp)
 	if a.joinError == nil {
@@ -163,8 +159,16 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 	}
 }
 
+// failJoinSeed 每个种子只保留最终失败原因，重发超时不重复记录。
+func (a *Actor) failJoinSeed(ctx vivid.ActorContext, err error) {
+	a.joinErrors = append(a.joinErrors, fmt.Errorf("seed %s: %w", a.seeds[a.joinIndex].GetAddress(), err))
+	a.joinIndex++
+	a.joinAttempt = 0
+	a.tryNextSeed(ctx)
+}
+
 func (a *Actor) clusterNameMismatch(name string) error {
-	return vivid.ErrorClusterNameMismatch.WithMessage(fmt.Sprintf("seed %s: expected cluster %q, received %q", a.seeds[a.joinIndex].GetAddress(), a.opts.Name, name))
+	return vivid.ErrorClusterNameMismatch.WithMessage(fmt.Sprintf("expected cluster %q, received %q", a.opts.Name, name))
 }
 
 func (a *Actor) validJoinPong(pong *gossipmessages.Pong) bool {

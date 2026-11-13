@@ -48,7 +48,8 @@ type Actor struct {
 	joinIndex            int                              // 当前尝试的去重种子下标
 	joinAttempt          int                              // 当前种子的请求次数
 	joinDeadline         time.Time                        // 当前种子的加入总截止时间
-	joinError            error                            // 最近一次加入失败
+	joinError            error                            // 进入 Up 时的调度错误
+	joinErrors           []error                          // 已结束尝试的各个种子失败原因
 	stopping             bool                             // 已开始停止，不再接受迟到的加入结果
 	membersChanged       bool                             // 本次合并是否接收了成员更新
 	reachability         *localReachability               // 与成员生命周期独立的本地直接往返观察
@@ -67,6 +68,7 @@ func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 		return err
 	}
 	a.joinRequest, a.joinError = nil, nil
+	a.joinErrors = nil
 	a.joinIndex, a.stopping = 0, false
 	a.joinAttempt, a.joinDeadline = 0, time.Time{}
 
@@ -272,6 +274,7 @@ func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
 		return
 	}
 	a.stopping = true
+	a.joinErrors = nil
 	if a.reachability != nil {
 		a.reachability.reset()
 		a.publishReachabilityChanged(ctx)
