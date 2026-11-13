@@ -13,6 +13,7 @@ type SnapshotActor struct {
 	*Actor
 	pingCount        map[string]uint64
 	maxPendingProbes int
+	pongAckCount     uint64
 }
 
 type TestSnapshotRequest struct{}
@@ -24,6 +25,7 @@ type SnapshotResponse struct {
 	View             *ClusterView
 	PingCount        map[string]uint64
 	MaxPendingProbes int
+	PongAckCount     uint64
 }
 
 func NewSnapshotActor(options *vivid.ActorSystemClusterOptions) *SnapshotActor {
@@ -45,9 +47,13 @@ func (a *SnapshotActor) OnReceive(ctx vivid.ActorContext) {
 			View:             &ClusterView{members: a.view.Members().Clone(), version: a.view.Version().Clone()},
 			PingCount:        counts,
 			MaxPendingProbes: a.maxPendingProbes,
+			PongAckCount:     a.pongAckCount,
 		})
 	case *gossipmessages.Ping:
 		a.pingCount[message.Info.ActorRef.GetAddress()]++
+		a.Actor.OnReceive(ctx)
+	case *gossipmessages.PongAck:
+		a.pongAckCount++
 		a.Actor.OnReceive(ctx)
 	default:
 		a.Actor.OnReceive(ctx)

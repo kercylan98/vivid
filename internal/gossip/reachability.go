@@ -156,16 +156,20 @@ func (a *Actor) refreshReachability(ctx vivid.ActorContext, now time.Time) {
 }
 
 func (a *Actor) observePong(ctx vivid.ActorContext, pong *gossipmessages.Pong, now time.Time) {
-	if a.reachability == nil || a.stopping || pong.ProbeSequence == 0 || pong.ProbeOriginID != a.info.ID() ||
-		pong.Info.ID() == a.info.ID() || ctx.Sender() == nil || !ctx.Sender().Equals(pong.Info.ActorRef) {
+	a.observeResponse(ctx, pong.Info, pong.ProbeSequence, pong.ProbeOriginID, pong.Version.Get(pong.Info.ID()), now)
+}
+
+func (a *Actor) observeResponse(ctx vivid.ActorContext, info *endpoint.Information, sequence uint64, origin string, revision uint64, now time.Time) {
+	if a.reachability == nil || a.stopping || sequence == 0 || origin != a.info.ID() ||
+		info.ID() == a.info.ID() || ctx.Sender() == nil || !ctx.Sender().Equals(info.ActorRef) {
 		return
 	}
-	member := a.view.Members().Get(pong.Info.ID())
-	if member == nil || !observableMember(member.Status) || !member.ActorRef.Equals(pong.Info.ActorRef) ||
-		!observableMember(pong.Info.Status) || pong.Version.Get(pong.Info.ID()) == 0 {
+	member := a.view.Members().Get(info.ID())
+	if member == nil || !observableMember(member.Status) || !member.ActorRef.Equals(info.ActorRef) ||
+		!observableMember(info.Status) || revision == 0 {
 		return
 	}
-	a.reachability.accept(pong.Info.ActorRef, pong.ProbeSequence, pong.Info.ID(), now, a.opts.ReachabilityTTL)
+	a.reachability.accept(info.ActorRef, sequence, info.ID(), now, a.opts.ReachabilityTTL)
 	a.publishReachabilityChanged(ctx)
 }
 

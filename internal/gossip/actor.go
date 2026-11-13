@@ -124,6 +124,8 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 		a.onPing(ctx, m)
 	case *gossipmessages.Pong:
 		a.onPong(ctx, m)
+	case *gossipmessages.PongAck:
+		a.onPongAck(ctx, m)
 	case *gossipmessages.SpreadGossip:
 		a.onSpreadGossip(ctx, m)
 	case gossipTick:
@@ -242,6 +244,11 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 		a.publishMembersChanged(ctx)
 	}
 
+	// 加入始终返回完整确认，其余请求在视图一致时只回传直接应答。
+	if ping.GossipType != gossipmessages.GossipTypeJoin && a.currentOutboundView().matches(ping.MemberList, ping.Version) {
+		a.replyPongAck(ctx, ping)
+		return
+	}
 	// 避免远程发送序列化过程中被修改。
 	pong := a.preparePong(ping.GossipType)
 	if ping.ProbeSequence != 0 {

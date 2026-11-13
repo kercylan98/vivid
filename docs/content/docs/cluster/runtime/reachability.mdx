@@ -3,7 +3,7 @@ title: 本地可达性
 description: 查询成员实例的直接往返观察，区分超时、过期与生命周期
 ---
 
-通过 `ClusterSnapshot()` 返回成员的 `Reachability`，无需单独启动探测。观察复用已有 Gossip 往返，不增加独立探测消息；查询只读取本地结果。
+通过 `ClusterSnapshot()` 返回成员的 `Reachability`，无需单独启动探测。观察复用已有 Gossip 往返，不增加独立探测消息；查询只读取本地结果。视图一致时的轻量应答沿用相同的直接观察校验，不会更新成员或状态版本。
 
 ```go
 func printReachability(system vivid.ActorSystem) error {

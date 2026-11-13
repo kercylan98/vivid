@@ -21,6 +21,8 @@ type tombstoneRef struct {
 
 func (r *tombstoneRef) String() string     { return r.address + ":/@gossip" }
 func (r *tombstoneRef) GetAddress() string { return r.address }
+func (*tombstoneRef) GetPath() string      { return "/@gossip" }
+func (*tombstoneRef) IsVirtual() bool      { return false }
 func (r *tombstoneRef) Equals(other vivid.ActorRef) bool {
 	return other != nil && r.String() == other.String()
 }

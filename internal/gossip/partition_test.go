@@ -301,10 +301,12 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 			// 隔离稳定后记录跨机房 Ping 数；成员 UP 不代表链路可达。
 			time.Sleep(300 * time.Millisecond)
 			counts := make([]map[string]uint64, 4)
+			ackCounts := make([]uint64, 4)
 			for i := range systems {
 				snapshot, ok := read(i)
 				require.True(t, ok)
 				counts[i] = snapshot.PingCount
+				ackCounts[i] = snapshot.PongAckCount
 			}
 			time.Sleep(300 * time.Millisecond)
 			for i := range systems {
@@ -341,6 +343,15 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 				return true
 			}, 8*time.Second, 50*time.Millisecond)
 			t.Logf("cross-datacenter gossip recovered in %s", time.Since(healedAt))
+			require.Eventually(t, func() bool {
+				for i := range systems {
+					snapshot, ok := read(i)
+					if !ok || snapshot.PongAckCount <= ackCounts[i] {
+						return false
+					}
+				}
+				return true
+			}, 8*time.Second, 50*time.Millisecond, "恢复后通过实际注册 Codec 重新收到轻量应答")
 			for i := range systems {
 				snapshot, ok := read(i)
 				require.True(t, ok)

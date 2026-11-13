@@ -30,7 +30,7 @@ type joinContext struct{ tombstoneContext }
 func (*joinContext) Scheduler() vivid.Scheduler { return &joinScheduler{} }
 
 func TestActor_GossipJoinResponse(t *testing.T) {
-	for _, name := range []string{"accepted", "ordinary_pong", "wrong_seed", "seed_leaving", "missing_ack", "old_instance_ack", "wrong_revision", "nil_info", "nil_members", "nil_version", "wrong_cluster", "missing_cluster", "nil_pong", "rejected", "same_cluster_rejection", "nil_rejection", "invalid_data_center", "wrong_data_center_ack"} {
+	for _, name := range []string{"accepted", "ordinary_pong", "light_ack", "wrong_seed", "seed_leaving", "missing_ack", "old_instance_ack", "wrong_revision", "nil_info", "nil_members", "nil_version", "wrong_cluster", "missing_cluster", "nil_pong", "rejected", "same_cluster_rejection", "nil_rejection", "invalid_data_center", "wrong_data_center_ack"} {
 		t.Run(name, func(t *testing.T) {
 			local := endpoint.NewInformation(&tombstoneRef{address: "local:10001"}, time.Unix(1, 0))
 			local.Status = endpoint.StatusJoining
@@ -90,6 +90,8 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 			}
 			var message vivid.Message = pong
 			switch name {
+			case "light_ack":
+				message = &gossipmessages.PongAck{ClusterName: "vivid-test", Info: seed, Revision: 2}
 			case "rejected":
 				message = &gossipmessages.JoinRejected{ClusterName: "other"}
 			case "same_cluster_rejection":
