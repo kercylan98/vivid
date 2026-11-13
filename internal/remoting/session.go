@@ -29,6 +29,7 @@ type session struct {
 	localAddress string
 	conn         net.Conn
 	role         sessionRole
+	pending      *pendingConnection // 握手完成并启用前的连接所有权
 	writeMu      sync.Mutex
 	closed       bool
 	stateMu      sync.RWMutex
@@ -61,11 +62,25 @@ func (s *session) Close() error {
 	s.closed = true
 	conn := s.conn
 	s.stateMu.Unlock()
+	if s.pending != nil {
+		s.pending.release()
+	}
 	if conn == nil {
 		return nil
 	}
-	_ = conn.SetDeadline(time.Now())
-	return conn.Close()
+	return closeConnection(conn)
+}
+
+func (s *session) writeClose() error {
+	// 先限时再等待写锁，使正在阻塞的业务写入也能退出。
+	conn := s.Conn()
+	if conn == nil {
+		return io.ErrClosedPipe
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		return err
+	}
+	return s.Write(closeFrameBytes)
 }
 
 func (s *session) isClosed() bool {

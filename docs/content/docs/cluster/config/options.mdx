@@ -9,19 +9,18 @@ description: ActorSystemClusterOptions 的可用配置、默认值与调用方�
 
 | 选项 | 参数 | 默认值 | 说明 |
 |------|------|--------|------|
+| **WithActorSystemClusterName** | `string` | 无，必填 | 逻辑集群名称，只有名称完全相同才交换成员视图 |
 | **WithActorSystemClusterSeeds** | `seeds ...string` | 空 | 追加种子广告地址，格式为 `host:port` |
+| **WithActorSystemClusterBootstrap** | `bool` | false | 显式独立启动；配置种子时也不等待加入 |
+| **WithActorSystemClusterJoinTimeout** | `time.Duration` | 3s | 每个去重后的非本地种子的加入总超时，包含有限重发 |
+| **WithActorSystemClusterProbeTimeout** | `time.Duration` | 3s | 一次直接往返的等待预算，重复发送不延长预算 |
+| **WithActorSystemClusterReachabilityTTL** | `time.Duration` | 10s | 成功或失败观察的有效期，过期回到 Unknown |
 | **WithActorSystemClusterLaunchDelay** | `time.Duration` | 随机 50–999ms | 启动 Gossip 前的延迟，分散节点同时启动的压力 |
 | **WithActorSystemClusterGossipInterval** | `time.Duration` | 200ms | 周期交换成员视图的间隔，应设置为正值 |
 | **WithActorSystemClusterGossipPeersCount** | `int` | 5 | 每轮 Gossip 选取的目标数量，应设置为正值 |
 | **WithActorSystemClusterGracefulShutdownTimeout** | `time.Duration` | 10s | 集群 Actor 多阶段退出的等待超时 |
 
-`ActorSystemClusterOptions.JoinTimeout` 默认 `3s`，用于启动时向每个种子发送 Ping 的等待超时，当前没有对应的内置配置函数。确需调整时，可使用同类型的选项函数：
-
-```go
-vivid.WithActorSystemClusterOptions(func(opts *vivid.ActorSystemClusterOptions) {
-    opts.JoinTimeout = 5 * time.Second
-})
-```
+名称须为 1–128 字节的有效 UTF-8，不含空白或控制字符，区分大小写，不自动裁剪或规范化。启动延迟必须非负；Gossip 周期、目标数量、加入超时、退出超时、探测预算和观察有效期必须为正。种子须为可用的 `host:port` 地址，不能使用通配地址或省略端口。参数无效时 `Start()` 返回错误；仅配置自身种子而未显式 Bootstrap 也会失败。
 
 ## 组合配置
 
@@ -29,7 +28,10 @@ vivid.WithActorSystemClusterOptions(func(opts *vivid.ActorSystemClusterOptions) 
 system := bootstrap.NewActorSystem(
     vivid.WithActorSystemRemoting("0.0.0.0:8081", "node2:8081"),
     vivid.WithActorSystemClusterOptions(
+        vivid.WithActorSystemClusterName("example-dev"),
         vivid.WithActorSystemClusterSeeds("node1:8080"),
+    ),
+    vivid.WithActorSystemClusterOptions(
         vivid.WithActorSystemClusterGossipInterval(300*time.Millisecond),
         vivid.WithActorSystemClusterGossipPeersCount(3),
         vivid.WithActorSystemClusterGracefulShutdownTimeout(10*time.Second),
@@ -37,14 +39,14 @@ system := bootstrap.NewActorSystem(
 )
 ```
 
-首次配置会创建默认选项；重复调用 `WithActorSystemClusterOptions` 会保留同一份配置，按调用顺序应用子选项。种子追加到原列表，其余内置子选项覆盖对应字段；未修改的字段保留原值。配置应在系统启动前完成，运行时不应并发修改。
+统一使用 `WithActorSystemClusterOptions` 启用和配置集群。首次调用创建默认选项；后续调用按顺序修改同一份配置。上例第二次调用保留名称与种子，仅调整 Gossip 和退出预算。种子追加到原列表，其余内置子选项覆盖对应字段；空调用保留已有配置。配置应在系统启动前完成，运行时不应并发修改。
 
 `NewActorSystemClusterOptions(opts...)` 仅构建配置对象，单独调用不会启用系统的集群功能。完整启动与退出示例见[快速开始](/docs/cluster/quick-start)。
 
 ## 当前能力范围
 
-当前配置不包含集群名、多数据中心、Quorum、加入认证、白名单或集群单例等选项。集群栏目内涉及这些接口的旧页面尚未与实现同步，不能作为当前版本的接入依据。
+集群名称用于避免不同组误合并成员，不是认证凭据，也不隔离直接发送的远程业务消息。当前没有数据中心分组、Quorum、加入令牌、白名单或集群单例等选项。连接认证通过 Remoting 的 TLS/mTLS 配置，见[连接认证](/docs/cluster/auth/join-auth)。
 
-无种子或所有种子加入尝试失败时，当前实现会自举为独立集群；种子配置不构成必须加入指定集群的保证。
+无种子时独立启动；配置种子后默认必须加入成功，全部失败时保持 Joining 并返回初始加入失败结果。主动建立新组需使用 Bootstrap，结果通过 `system.ClusterReady()` 等待，见[启动与加入就绪](/docs/cluster/runtime/readiness)。
 
-Up 节点会将尚未发现或仍处于 Joining 的种子纳入周期 Gossip，和已有成员一起随机选取目标，共享 `GossipPeersCount` 的每轮数量限制；退出期间不再发起这类种子发现。
+Up 节点会持续联络配置的种子地址，和可联络成员一起按地址去重，共享 `GossipPeersCount` 的每轮数量限制。空闲观察额度优先分配给最久未开始探测的地址，其余发送名额用于随机 Gossip。旧实例退出不影响该种子地址的后续联络；退出期间不再探测种子。直接往返观察复用相同 Gossip 消息，未完成的观察请求最多为 `GossipPeersCount` 个地址；额度满时仍交换成员视图。可达性使用与配置建议见[本地可达性](/docs/cluster/runtime/reachability)。

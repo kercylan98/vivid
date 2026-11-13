@@ -1,81 +1,41 @@
 ---
-title: ClusterContext
-description: 运行时 API：GetMembers、InQuorum、Leave、SingletonRef
+title: 本地成员查询
+description: 使用 ClusterSnapshot 查询成员实例、生命周期与本地可达性
 ---
 
-在 Actor 内通过 **ctx.Cluster()** 获取 ClusterContext；系统级通过 **system.Cluster()**。未启用集群时返回 **nil**，调用前需做 nil 判断。
+`system.ClusterSnapshot(timeout...)` 返回 `Future[vivid.ClusterSnapshot]`。Actor 内使用 `ctx.System().ClusterSnapshot()`；查询由本地 Gossip Actor 处理，不发起远程探测。
 
-## 方法说明
-
-| 方法 | 签名 | 说明 |
-|------|------|------|
-| **GetMembers** | `() ([]ClusterMemberInfo, error)` | 返回当前视图中的成员列表；未启用时返回 ErrorClusterDisabled |
-| **InQuorum** | `() (bool, error)` | 当前节点是否处于多数派；false 时不应以 Leader 做关键决策 |
-| **Leave** | `()` | 本节点主动离开集群，优雅下线；幂等，仅执行一次 |
-| **SingletonRef** | `(name string) (ActorRef, error)` | 返回名为 name 的集群单例的 ActorRef（本地代理），随 Leader 变更自动转发；详见 [集群单例](/docs/cluster/singleton) |
-
-## ClusterMemberInfo
-
-GetMembers 返回的成员信息结构：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| **Address** | string | 节点 Remoting 地址（host:port） |
-| **Version** | string | 节点版本号（NodeState.Version） |
-| **Datacenter** | string | 数据中心标识 |
-| **Rack** | string | 机架标识 |
-| **Region** | string | 区域标识 |
-| **Zone** | string | 可用区标识 |
-
-## 使用示例
+在启用集群并完成 `Start()` 后调用，超时规则与 Ask 一致。启动延迟与加入期间也可查询，但结果可能仍为 None 或 Joining；初始加入结果使用 [ClusterReady](/docs/cluster/runtime/readiness) 等待。
 
 ```go
-func (a *MyActor) OnReceive(ctx vivid.ActorContext) {
-    cluster := ctx.Cluster()
-    if cluster == nil {
-        return
-    }
-
-    members, err := cluster.GetMembers()
+func printMembers(system vivid.ActorSystem) error {
+    snapshot, err := system.ClusterSnapshot(time.Second).Result()
     if err != nil {
-        if errors.Is(err, vivid.ErrorClusterDisabled) {
-            return
-        }
-        // 处理其他错误（如 Ask 超时）
-        return
+        return err
     }
-
-    for _, m := range members {
-        log.Printf("member: %s dc=%s", m.Address, m.Datacenter)
+    for _, member := range snapshot.Members() {
+        fmt.Printf("%s %s %s %s\n", member.ID, member.Address, member.Status, member.Reachability)
     }
-
-    inQuorum, err := cluster.InQuorum()
-    if err != nil {
-        return
-    }
-    if !inQuorum {
-        // 当前不在多数派，不应执行关键写操作
-        return
-    }
-
-    // 执行需要 quorum 保证的操作
+    return nil
 }
 ```
 
-## 优雅退出
+| 接口 | 含义 |
+|------|------|
+| `LocalID()` | 当前观察节点的实例 ID |
+| `Revision()` | 本地视图的变更序号，仅在相同 LocalID 下比较 |
+| `Len()` | 保留的成员实例数，包含历史实例与退出记录 |
+| `Member(id)` | 按实例 ID 查询，返回 `ClusterMember` 值及是否存在 |
+| `Members()` | 按实例 ID 排序的独立切片 |
 
-在系统 Stop 前调用 `Leave()`，等待「已退出」后再继续：
+`ClusterMember` 包含 `ID`、`Address`、`Status`、`Revision`、`CreatedAt` 和 `Reachability`。成员的 Revision 是该实例的状态版本，与快照的本地观察序号含义不同。生命周期常量为 `vivid.ClusterMemberStatusNone`、`Joining`、`Up`、`Leaving`、`Exiting`、`Removed`，均使用 `ClusterMemberStatus` 前缀。
 
-```go
-if system.Cluster() != nil {
-    system.Cluster().Leave()
-}
-system.Stop()
-```
+`Reachability` 是本地最近一次直接往返观察，与生命周期独立，详见[本地可达性](/docs/cluster/runtime/reachability)。快照的 Revision 在成员记录或可达性发生变化时递增。
 
-**行为说明**：Leave() 会阻塞直到本节点已离开集群视图（或超时），之后可安全 Stop。
+快照可安全保留，后续变更不会修改旧快照；修改返回的成员值或切片不会影响系统及其他订阅者。查询不发起远程探测，按 ID 查询单个成员可避免复制整个列表。
 
-## 注意事项
+未启动、已停止、未启用集群时，分别返回 `ErrorActorSystemNotStarted`、`ErrorActorSystemStopped`、`ErrorClusterNotEnabled`。查询也可能因超时失败；通过 Future 的 `Close(err)` 可取消等待。
 
-- **GetMembers** 与 **InQuorum** 会访问集群状态，有网络/超时成本，避免高频调用。
-- **InQuorum** 为 false 时表示可能处于分区或少数派，不应以 Leader 做单例迁移、写仲裁等关键决策。
+完整成员列表包含历史实例和退出记录，不能将成员数或 Up 数量作为健康节点数。状态与重启边界见[节点生命周期](/docs/cluster/events/lifecycle)。
+
+需要持续观察时，先订阅再查询初始快照，参见[成员事件](/docs/cluster/events/events)。正常退出由 `system.Stop()` 驱动，当前没有独立的集群 Leave 或 Quorum 查询接口。

@@ -1,4 +1,4 @@
-// Package memberlist 维护集群成员列表（节点 ID -> Information），支持 Add/Upsert/Merge 与序列化。
+// Package memberlist 维护按实例 ID 区分的集群成员列表及其序列化。
 package memberlist
 
 import (
@@ -23,7 +23,7 @@ func New(logger log.Logger) *MemberList {
 	}
 }
 
-// MemberList 集群成员列表：key 为节点 ID（endpoint.Information.ID()），value 为端点信息。
+// MemberList 集群成员列表：key 为实例 ID（endpoint.Information.ID()），value 为端点信息。
 // 实现 serialization.MessageCodec，可与 VersionVector 一起随 Ping/Pong 序列化传输。
 type MemberList struct {
 	logger  log.Logger              // 用于成员变更的调试日志。
@@ -57,12 +57,16 @@ func (m *MemberList) GetCoordinatorNodeID() string {
 		return ""
 	}
 
-	// 按创建时间升序，如果创建时间相同，则按 ActorRef 字典序升序
+	// 按创建时间升序，同时间按通信地址和实例 ID 排序；此标识仅用于协调者日志
 	sort.Slice(upMembers, func(i, j int) bool {
 		aCreatedAt := upMembers[i].CreatedAt.UnixNano()
 		jCreatedAt := upMembers[j].CreatedAt.UnixNano()
 		if aCreatedAt == jCreatedAt {
-			return upMembers[i].ActorRef.String() < upMembers[j].ActorRef.String()
+			aRef, jRef := upMembers[i].ActorRef.String(), upMembers[j].ActorRef.String()
+			if aRef == jRef {
+				return upMembers[i].ID() < upMembers[j].ID()
+			}
+			return aRef < jRef
 		}
 		return aCreatedAt < jCreatedAt
 	})
@@ -122,7 +126,7 @@ func (m *MemberList) Upsert(info *endpoint.Information) (isNew bool) {
 	return isNew
 }
 
-// Unseens 随机选取最多 limit 个可联络成员；Up 节点也会重试尚未发现的种子。
+// Unseens 按通信地址去重并随机选取最多 limit 个目标；Up 节点持续联络配置的种子。
 func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef, limit int) []vivid.ActorRef {
 	if limit <= 0 {
 		return nil
@@ -130,26 +134,26 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 	out := make([]vivid.ActorRef, 0, len(m.members)+len(seeds))
 	seen := make(map[string]struct{}, len(m.members)+len(seeds))
 	for _, member := range m.members {
-		id := member.ID()
-		// 启动时收到的 Joining 快照可能已过期，Up 节点仍需通过种子重新联络。
-		if member.Status != endpoint.StatusJoining || local.Status != endpoint.StatusUp {
-			seen[id] = struct{}{}
-		}
-		if member.ActorRef.Equals(local.ActorRef) {
+		if member.ActorRef.GetAddress() == local.ActorRef.GetAddress() {
 			continue
 		}
 		switch member.Status {
 		case endpoint.StatusUp, endpoint.StatusLeaving, endpoint.StatusExiting:
+			address := member.ActorRef.GetAddress()
+			if _, exists := seen[address]; exists {
+				continue
+			}
+			seen[address] = struct{}{}
 			out = append(out, member.ActorRef)
 		}
 	}
-	// 未发现的种子只作为联络目标，不直接加入成员视图；退出期间不再发起新发现。
+	// 种子是联络地址，旧实例的退出墓碑不能阻止同地址新实例的发现；退出期间不再探测种子。
 	if local.Status == endpoint.StatusUp {
 		for _, seed := range seeds {
-			if seed == nil || seed.Equals(local.ActorRef) {
+			if seed == nil || seed.GetAddress() == local.ActorRef.GetAddress() {
 				continue
 			}
-			id := seed.String()
+			id := seed.GetAddress()
 			if _, exists := seen[id]; exists {
 				continue
 			}
@@ -165,33 +169,6 @@ func (m *MemberList) Unseens(local *endpoint.Information, seeds []vivid.ActorRef
 	return out
 }
 
-// Merge 将 other 的成员合并到本列表，只更新状态发生变化的成员
-func (m *MemberList) Merge(other *MemberList) {
-	if other == nil {
-		return
-	}
-
-	for _, remoteMember := range other.List() {
-		localMember := m.Get(remoteMember.ID())
-		if localMember != nil {
-			// 只在实际状态不同时才更新
-			if localMember.Status != remoteMember.Status {
-				m.logger.Debug("member status changed in merge",
-					log.String("ref", remoteMember.ActorRef.String()),
-					log.String("before", localMember.Status.String()),
-					log.String("current", remoteMember.Status.String()))
-				localMember.Status = remoteMember.Status
-			}
-			// 可以在这里合并其他字段，比如LastSeen
-		} else {
-			m.logger.Debug("member added in merge",
-				log.String("ref", remoteMember.ActorRef.String()),
-				log.String("status", remoteMember.Status.String()))
-			m.members = append(m.members, remoteMember)
-		}
-	}
-}
-
 // Fingerprint 返回确定性的成员列表指纹（按节点 ID 排序，每项为 id+status），用于收敛检测。
 func (m *MemberList) Fingerprint() string {
 	if m == nil || len(m.members) == 0 {
@@ -204,16 +181,6 @@ func (m *MemberList) Fingerprint() string {
 	}
 	sort.Strings(fingerprints)
 	return strings.Join(fingerprints, ",")
-}
-
-// Remove 从成员列表中移除指定节点。
-func (m *MemberList) Remove(ref vivid.ActorRef) {
-	for i, member := range m.members {
-		if member.ActorRef.Equals(ref) {
-			m.members = append(m.members[:i], m.members[i+1:]...)
-			break
-		}
-	}
 }
 
 // List 返回成员列表。

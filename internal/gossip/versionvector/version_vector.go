@@ -1,4 +1,4 @@
-// Package versionvector 实现向量时钟（节点 ID -> 计数），用于 gossip 视图的因果比较与合并。
+// Package versionvector 记录各实例的生命周期版本，用于 gossip 视图的比较与同步。
 package versionvector
 
 import (
@@ -14,7 +14,7 @@ var (
 	_ serialization.MessageCodec = (*VersionVector)(nil)
 )
 
-// VersionVector 节点 ID 到版本计数的映射，每次本节点或视图变更时对相应 key 递增，用于 IsBefore/Merge。
+// VersionVector 实例 ID 到版本计数的映射，各实例仅递增自身版本，接收方按成员记录同步版本。
 type VersionVector struct {
 	m map[string]uint64
 }
@@ -26,7 +26,7 @@ func (v *VersionVector) Decode(reader *serialization.Reader, message any) error 
 }
 
 // Encode 序列化到 writer，实现 MessageCodec。
-// 克隆 map 后序列化，避免与 gossip 并发修改（Increment/Merge/Remove）产生竞态。
+// 调用方负责在发送前克隆，避免与 gossip 修改产生竞态。
 func (v *VersionVector) Encode(writer *serialization.Writer, message any) error {
 	msg := message.(*VersionVector)
 	return writer.Write(msg.m).Err()
@@ -46,9 +46,16 @@ func (v *VersionVector) Clone() *VersionVector {
 	}
 }
 
-// Increment 将指定 key 的计数加一，状态迁移或本节点视图更新时调用。
+// Increment 将指定 key 的计数加一，仅在本实例状态迁移时调用。
 func (v *VersionVector) Increment(key string) {
 	v.m[key]++
+}
+
+// Update 接收指定实例的较高版本，与对应成员记录一起更新。
+func (v *VersionVector) Update(key string, version uint64) {
+	if version > v.m[key] {
+		v.m[key] = version
+	}
 }
 
 // Get 返回指定 key 的版本计数，不存在则返回 0。用于按 key 判断是否接受对方对该成员的更新。
@@ -60,7 +67,6 @@ func (v *VersionVector) Get(key string) uint64 {
 }
 
 // IsBefore 判断当前向量是否严格因果早于 other：对所有 key 有 v[key] <= other[key]，且至少一个 key 严格小于。
-// 用于决定是否用对方视图覆盖本地（仅当本地 IsBefore 对方时合并）。
 func (v *VersionVector) IsBefore(other *VersionVector) bool {
 	if other == nil {
 		return false

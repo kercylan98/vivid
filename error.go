@@ -16,7 +16,7 @@ var (
 	ErrorActorSystemAlreadyStopped = RegisterError(100002, "actor system already stopped") // 重复 Stop
 	ErrorActorSystemStartFailed    = RegisterError(100003, "actor system start failed")    // 启动失败
 	ErrorActorSystemStopFailed     = RegisterError(100004, "actor system stop failed")     // 停止失败
-	ErrorActorSystemNotStarted     = RegisterError(100005, "actor system not started")     // 未启动时调用 Stop
+	ErrorActorSystemNotStarted     = RegisterError(100005, "actor system not started")     // 系统未启动
 	ErrorActorSystemStopped        = RegisterError(100006, "actor system stopped")         // 系统已停止
 
 	ErrorActorDeaded          = RegisterError(100100, "actor deaded")           // Actor 已死亡
@@ -77,6 +77,9 @@ var (
 var (
 	ErrorGossipScheduleFailed = RegisterError(170000, "gossip schedule failed")                            //  gossip 调度失败
 	ErrorGossipRequires       = RegisterError(170001, "gossip missing required dependency", ErrorNotFound) // gossip 缺少必要内容
+	ErrorClusterNotEnabled    = RegisterError(170002, "cluster is not enabled")                            // 未启用集群
+	ErrorClusterJoinFailed    = RegisterError(170003, "cluster join failed")                               // 所有非本地种子均未接受加入
+	ErrorClusterNameMismatch  = RegisterError(170004, "cluster name mismatch")                             // 加入响应的集群名称不匹配
 )
 
 var (

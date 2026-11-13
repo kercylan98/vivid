@@ -1,36 +1,20 @@
 ---
-title: 加入认证
-description: JoinSecret、ComputeJoinToken、AuthToken
+title: 连接认证
+description: 使用 Remoting TLS/mTLS 配置节点连接身份与信任边界
 ---
 
-当配置了 **JoinSecret** 时，接收方会校验 Join 请求中的 **AuthToken**，只有携带有效 Token 的请求才会被接受。请求方需使用相同的 secret 和 NodeState 调用 **ComputeJoinToken** 生成 Token。
+集群复用 Remoting 连接。通过 `WithActorSystemRemotingTLSConfig` 为入站和出站统一配置 TLS；需要双方提供证书时启用 mTLS。完整配置示例见[远程通讯](/docs/config/remoting#tls-与双向认证)。
 
-## 启用方式
+## 节点证书
 
-```go
-vivid.WithClusterJoinSecret("your-shared-secret"),
-```
+每个节点同时作为服务端和客户端。mTLS 证书需支持两种认证用途，SAN 需包含其他节点访问它时使用的 DNS 名称或 IP。
 
-非空时 Join 请求须携带由此生成的 AuthToken，否则拒绝加入，返回 **ErrorClusterJoinAuthFailed**。
+`RootCAs` 验证出站服务端；`ClientCAs` 与 `ClientAuth` 控制入站客户端认证。集群所有节点需使用相容的传输配置和信任关系，TLS 失败不会降级为明文。证书握手成功仍需继续等待初始加入结果，见[启动与加入就绪](/docs/cluster/runtime/readiness)。
 
-## 生成 Token
+## 接入边界
 
-使用 **cluster.ComputeJoinToken** 生成 AuthToken（需导入 `github.com/kercylan98/vivid/internal/cluster`）：
+通过 `WithActorSystemClusterName` 为每个节点设置逻辑集群名称。加入与周期 Gossip 只接收名称完全相同的成员视图；不同环境应使用不同名称。名称不匹配的加入响应不携带成员视图，调用方可通过 `ErrorClusterNameMismatch` 判断原因。
 
-```go
-import "github.com/kercylan98/vivid/internal/cluster"
+名称是公开标识，不是认证凭据，不能阻止主动伪造或隔离直接远程业务消息。部署网络中应限制可访问 Remoting 端口的来源。种子列表只是联络地址；当前没有集群级加入令牌或地址白名单。
 
-token := cluster.ComputeJoinToken(secret, nodeState)
-// 将 token 填入 Join 请求的 AuthToken 字段
-```
-
-ComputeJoinToken 基于 HMAC-SHA256，输入为 secret 与 NodeState 的 ClusterName、ID、Address。
-
-## 校验逻辑
-
-接收方使用 **cluster.VerifyJoinToken** 校验：若 secret 为空则跳过校验；否则比较请求中的 token 与本地用 secret 和请求中的 NodeState 计算的期望值。
-
-## 安全建议
-
-- JoinSecret 应与所有允许加入的节点共享，通过安全通道分发。
-- 不要在代码或配置文件中明文暴露；建议使用环境变量或密钥管理服务。
+mTLS 验证受信证书，不自动将对方声明的 Remoting 地址绑定到证书身份，也不授予业务操作权限。可通过同一信任域建立连接的节点，应纳入同一接入边界考虑；业务权限需在应用协议中校验。

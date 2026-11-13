@@ -38,7 +38,76 @@ description: Remoting 启用、消息注册、Codec 与位置透明
 - **bindAddr**（必填）：本机监听地址，如 `"0.0.0.0:8080"`。框架在此地址上启动 Listener 接受连接。
 - **advertiseAddr**（可选）：其他节点可访问的地址，例如 `"node1.example.com:8080"`。不传则使用 bindAddr；监听所有网卡或使用端口映射时，应显式设置可访问的地址与端口。
 
-Remoting 使用 TCP 通信。
+Remoting 使用 TCP 通信。启用后，`Start()` 成功返回表示本地监听已创建；端口占用、监听配置错误会使启动失败，可使用 `errors.Is(err, vivid.ErrorRemotingListen)` 判断，并通过 `errors.As` 获取底层原因。启动失败的实例不可重启，应修正配置后重新创建系统。
+
+监听创建成功不代表远端可达、集群加入成功或业务已就绪；部署探针仍需按服务需求验证。
+
+双方同时发送首条消息时，框架在握手确认前完成连接选择，已建立的健康连接会继续复用。`ves.RemotingInboundConnectionEstablishedEvent` 在入站会话可用后发布；它表示传输连接建立，不能代替集群加入结果或业务就绪确认。
+
+`Tell` 返回、写入 TCP 或连接建立均不表示远端 Actor 已处理消息。连接中断时仍可能丢失消息；重要操作应使用业务应答，并在重试时处理重复请求。`Ask` 超时也不能证明对端没有执行操作。
+
+入站握手请求并行读取并限制并发，单个静默对端不会阻塞后续连接；达到并发上限时暂停接入，释放名额后继续。停止 Remoting 时会取消未完成的拨号并关闭待握手连接；已建立连接的关闭通知只做限时尝试，不保证待发送消息已交付。
+
+## TLS 与双向认证
+
+通过 `WithActorSystemRemotingTLSConfig` 统一配置入站和出站 TLS。下面使用节点证书和受信任 CA 启用 mTLS：
+
+```go
+import (
+    "crypto/tls"
+    "crypto/x509"
+    "fmt"
+    "os"
+
+    "github.com/kercylan98/vivid"
+    "github.com/kercylan98/vivid/pkg/bootstrap"
+)
+
+func nodeTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
+    certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+    if err != nil {
+        return nil, err
+    }
+    pem, err := os.ReadFile(caFile)
+    if err != nil {
+        return nil, err
+    }
+    roots := x509.NewCertPool()
+    if !roots.AppendCertsFromPEM(pem) {
+        return nil, fmt.Errorf("CA 文件不包含有效证书")
+    }
+    return &tls.Config{
+        Certificates: []tls.Certificate{certificate},
+        RootCAs:      roots,
+        ClientCAs:    roots,
+        ClientAuth:   tls.RequireAndVerifyClientCert,
+        MinVersion:   tls.VersionTLS13,
+    }, nil
+}
+```
+
+加载成功后，在创建系统时传入配置，并检查 `Start()` 的返回错误：
+
+```go
+config, err := nodeTLSConfig("node.crt", "node.key", "ca.crt")
+if err != nil {
+    return err
+}
+system := bootstrap.NewActorSystem(
+    vivid.WithActorSystemRemoting("0.0.0.0:8080", "node1.example.com:8080"),
+    vivid.WithActorSystemRemotingOption(
+        vivid.WithActorSystemRemotingTLSConfig(config),
+    ),
+)
+```
+
+- `Certificates` 提供本节点身份。每个节点同时作为服务端和客户端，mTLS 证书需支持 `ServerAuth` 和 `ClientAuth`，SAN 需包含其他节点访问它时使用的 DNS 名称或 IP。
+- `RootCAs` 用于出站服务端证书校验；为空时使用系统根证书。`ServerName` 为空时从每次连接的目标地址推导；显式设置后会用于所有出站目标的名称校验。
+- `ClientCAs` 和 `ClientAuth` 控制入站客户端认证。仅需服务端认证时，可省略这两项；启用 mTLS 时，所有节点需信任对方的证书链。
+
+未配置 `TLSConfig` 时使用明文 TCP；启用后不会在 TLS 失败时降级到明文。已建立的连接继续复用，但加密仍有计算和流量开销。启动后不要修改配置及其引用的证书、证书池。
+
+`Start()` 成功只表示本地监听已创建。出站证书或握手失败通过 `ves.RemotingConnectionFailedEvent` 观察，并遵循连接重试策略。mTLS 验证证书身份，不自动绑定对方声明的 Remoting 地址，也不提供业务权限控制或防脑裂能力。
 
 ## 消息编解码
 
@@ -151,12 +220,16 @@ system := bootstrap.NewActorSystem(
 
 ## 远程连接重试与死信
 
-向远程节点发送消息时，若连接不可用，框架会按 **ActorSystemRemotingOptions** 中的重试策略进行有限次重试（指数退避）。默认通过 **NewActorSystemRemotingOptions()** 提供：重试次数 10、初始延迟 500ms、最大延迟 10s、退避因子 2.5、启用抖动。可通过 **WithActorSystemRemotingOption** 链式配置单项或使用 **WithActorSystemRemotingReconnect** 批量配置：
+向远程节点发送消息时，连接失败后按 **ActorSystemRemotingOptions** 中的策略有限重试。**NewActorSystemRemotingOptions()** 默认提供：额外重试 10 次、初始延迟 500ms、最大延迟 10s、退避因子 2.5，启用随机抖动。可通过 **WithActorSystemRemotingOption** 配置单项或使用 **WithActorSystemRemotingReconnect** 批量配置：
 
-- **ReconnectLimit**：重试次数，&lt;1 则不重试（0 表示不重试）。对应 **WithActorSystemRemotingReconnectLimit**。
-- **ReconnectInitialDelay** / **ReconnectMaxDelay**：初始与最大延迟。**WithActorSystemRemotingReconnectInitialDelay**、**WithActorSystemRemotingReconnectMaxDelay**。
-- **ReconnectFactor**：退避因子（如 2.0 表示指数退避）。**WithActorSystemRemotingReconnectFactor**。
-- **ReconnectJitter**：是否启用抖动，缓解重连雷群。**WithActorSystemRemotingReconnectJitter**。
+- **ReconnectLimit**：首次拨号失败后的额外重试次数，0 表示不重试。对应 **WithActorSystemRemotingReconnectLimit**。
+- **ReconnectInitialDelay** / **ReconnectMaxDelay**：初始与最大退避间隔，首次重试也受最大值约束。对应 **WithActorSystemRemotingReconnectInitialDelay**、**WithActorSystemRemotingReconnectMaxDelay**。
+- **ReconnectFactor**：有限且不小于 1 的退避因子，1 表示固定间隔；非法值忽略。对应 **WithActorSystemRemotingReconnectFactor**。
+- **ReconnectJitter**：启用后，在当前退避间隔的 50% 到 100% 之间随机选择延迟。对应 **WithActorSystemRemotingReconnectJitter**。
+
+退避期间的新消息进入待发送队列，不会提前触发拨号。重试次数限制针对当前 Endpoint 的连接过程；后续新消息仍可重新发起连接，不是对某个地址永久禁用。
+
+双方同时首次建连时，正常的重复连接仲裁不消耗重试次数，`ReconnectLimit` 为 0 也可完成连接选择。若优选拨号失败，框架会先尝试接管已接入的备用连接；备用连接仍受原握手超时约束，全部失败后才按重试策略处理待发送消息。
 
 连接失败时可订阅 **`ves.RemotingConnectionFailedEvent`**，通过 `Address` 和 `Error` 查看原因。重试耗尽后，待发送消息转为死信，可通过 **`ves.DeathLetterEvent`** 监控，参见 [死信](/docs/basics/death-letter)。
 
@@ -164,7 +237,7 @@ system := bootstrap.NewActorSystem(
 
 ## 与集群配合
 
-在启用 Remoting 的前提下，将 **WithActorSystemClusterOptions(opts...)** 直接传给 **bootstrap.NewActorSystem** 启用集群，使用 **WithActorSystemClusterSeeds(addresses...)** 配置种子地址。集群使用 Remoting 的地址与编解码进行节点间成员发现与通信。完整示例见 [快速开始](/docs/cluster/quick-start)。
+在启用 Remoting 的前提下，将 **WithActorSystemClusterOptions(opts...)** 直接传给 **bootstrap.NewActorSystem** 启用集群，使用 **WithActorSystemClusterName(name)** 设置同组共享的名称，使用 **WithActorSystemClusterSeeds(addresses...)** 配置种子地址。集群使用 Remoting 的地址与编解码进行节点间成员发现与通信。完整示例见 [快速开始](/docs/cluster/quick-start)。
 
 ## 与引用解析配合
 

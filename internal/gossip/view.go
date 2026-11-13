@@ -3,16 +3,15 @@ package gossip
 import (
 	"strings"
 
-	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/memberlist"
 	"github.com/kercylan98/vivid/internal/gossip/versionvector"
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
-// ClusterView 本节点维护的集群视图：成员列表与版本向量，用于因果合并与 peer 选择。
+// ClusterView 本节点维护的集群视图：实例成员列表与版本，用于同步和联络目标选择。
 type ClusterView struct {
-	members *memberlist.MemberList       // 已知节点信息，key 为节点 ID（ActorRef.String()）
-	version *versionvector.VersionVector // 节点 ID -> 版本计数，用于判断视图新旧与合并
+	members *memberlist.MemberList       // 已知节点信息，key 为实例 ID
+	version *versionvector.VersionVector // 实例 ID -> 版本计数，用于判断成员记录新旧
 }
 
 // NewClusterView 创建空视图（空成员列表与空版本向量）。
@@ -23,10 +22,10 @@ func NewClusterView(logger log.Logger) *ClusterView {
 	}
 }
 
-// Members 返回成员列表，供调用方进行 Add/Upsert/Merge/Unseens 等操作。
+// Members 返回由 Actor 消息线程维护的实例成员列表。
 func (v *ClusterView) Members() *memberlist.MemberList { return v.members }
 
-// Version 返回版本向量，供调用方进行 Increment/IsBefore/Merge 等操作。
+// Version 返回由 Actor 消息线程维护的实例版本。
 func (v *ClusterView) Version() *versionvector.VersionVector { return v.version }
 
 // Fingerprint 返回当前视图的确定性指纹（版本向量 + 成员列表），用于收敛检测。
@@ -35,27 +34,4 @@ func (v *ClusterView) Fingerprint() string {
 		return ""
 	}
 	return strings.Join([]string{v.version.Fingerprint(), v.members.Fingerprint()}, "|")
-}
-
-// cleanRemovedMembers 清理已移除的成员
-func (c *ClusterView) cleanRemovedMembers(localInfo *endpoint.Information) {
-	removed := make([]string, 0)
-	members := c.members.List()
-
-	for _, member := range members {
-		// 保留本地节点，即使状态是REMOVED
-		if member.ID() == localInfo.ID() {
-			continue
-		}
-
-		// 如果成员状态为 REMOVED，并且已超过清理时间
-		if member.Status == endpoint.StatusRemoved {
-			removed = append(removed, member.ID())
-		}
-	}
-
-	// 移除已标记的节点
-	for _, id := range removed {
-		c.version.Remove(id)
-	}
 }

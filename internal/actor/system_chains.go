@@ -74,6 +74,7 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 		registry.RegisterMessage("*versionvector.VersionVector", new(versionvector.VersionVector))
 		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.Ping", new(gossipmessages.Ping), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.Pong", new(gossipmessages.Pong), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.JoinRejected", new(gossipmessages.JoinRejected), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 
 		// 注册用户消息
 		registry.SetClass("USER")
@@ -170,14 +171,18 @@ func (c *systemChains) initializeCluster(system *System) chain.Chain {
 
 		// 创建 gossip actor
 		gossip := gossip.New(system.options.ClusterOptions)
-		system.gossipRef, err = system.ActorOf(gossip)
+		gossipRef, err := system.ActorOf(gossip)
 		if err != nil {
 			return err
 		}
+		system.statusLock.Lock()
+		system.gossipRef = gossipRef
+		system.clusterReadiness = gossip.Readiness()
+		system.statusLock.Unlock()
 
 		// 注册停止优先级
 		system.TellSelf(&guard.RegisterStopPriority{
-			ActorRef: system.gossipRef,
+			ActorRef: gossipRef,
 			Priority: remotingStopPriority,
 		})
 		return nil

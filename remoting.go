@@ -2,6 +2,7 @@ package vivid
 
 import (
 	"crypto/tls"
+	"math"
 	"time"
 )
 
@@ -31,7 +32,7 @@ func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSyste
 // ActorSystemRemotingOptions 封装了 ActorSystem 远程通信组件在运行时的选项参数。
 // 新增远程相关的可扩展参数时，建议集中在本结构体内按需扩展，以实现更好的向前兼容和配置集中管理。
 type ActorSystemRemotingOptions struct {
-	// ReconnectLimit 用于配置远程连接的重试次数。小于 1 则不进行重试。
+	// ReconnectLimit 用于配置首次连接失败后的重试次数；0 表示不重试。
 	ReconnectLimit int
 
 	// ReconnectInitialDelay 用于配置远程连接的重试初始延迟时间。
@@ -40,10 +41,10 @@ type ActorSystemRemotingOptions struct {
 	// ReconnectMaxDelay 用于配置远程连接的重试最大延迟时间。
 	ReconnectMaxDelay time.Duration
 
-	// ReconnectFactor 用于配置远程连接的重试退避因子。
+	// ReconnectFactor 用于配置远程连接的重试退避因子；1 表示固定间隔。
 	ReconnectFactor float64
 
-	// ReconnectJitter 用于配置远程连接的重试退避抖动。
+	// ReconnectJitter 启用时，在当前退避间隔的 50% 到 100% 之间随机选择延迟。
 	ReconnectJitter bool
 
 	// MaxPendingEnvelops 单个远程地址的最大待发送信封数；超过后新消息将直接失败。
@@ -58,7 +59,9 @@ type ActorSystemRemotingOptions struct {
 	// HeartbeatInterval 心跳发送间隔；为 0 时不发送心跳。默认 10s，保证空闲连接在 ReadTimeout 内能收到心跳。
 	HeartbeatInterval time.Duration
 
-	// TLSConfig 可选；非空时 Remoting 服务端使用 TLS 监听，跨 DC/公网部署时建议启用以保证传输加密与身份校验（如 mTLS）。
+	// TLSConfig 非空时，入站与出站均使用 TLS；Certificates 为节点证书，RootCAs 验证服务端。
+	// ClientCAs 和 ClientAuth 控制入站客户端认证；未指定 ServerName 时按目标地址校验。
+	// 启动后不得修改配置及其引用的证书和证书池。
 	TLSConfig *tls.Config
 
 	// StopTimeout 停止超时时间，用于配置远程通信组件的停止超时时间。
@@ -116,7 +119,7 @@ func WithActorSystemRemotingOption(opts ...ActorSystemRemotingOption) ActorSyste
 // WithActorSystemRemotingReconnectLimit 返回一个 ActorSystemRemotingOption，用于配置远程连接的重试次数。
 //
 // 参数：
-//   - limit: 重试次数；小于 1 则不进行重试。
+//   - limit: 首次连接失败后的重试次数；0 表示不重试，负值忽略。
 func WithActorSystemRemotingReconnectLimit(limit int) ActorSystemRemotingOption {
 	return func(opts *ActorSystemRemotingOptions) {
 		if limit >= 0 {
@@ -152,10 +155,10 @@ func WithActorSystemRemotingReconnectMaxDelay(delay time.Duration) ActorSystemRe
 // WithActorSystemRemotingReconnectFactor 返回一个 ActorSystemRemotingOption，用于配置远程连接的重试退避因子。
 //
 // 参数：
-//   - factor: 退避因子；大于 0 时生效（通常取 2.0 等值实现指数退避）。
+//   - factor: 有限且不小于 1 时生效；1 表示固定间隔，通常取 2.0 等值实现指数退避。
 func WithActorSystemRemotingReconnectFactor(factor float64) ActorSystemRemotingOption {
 	return func(opts *ActorSystemRemotingOptions) {
-		if factor > 0 {
+		if factor >= 1 && !math.IsInf(factor, 0) {
 			opts.ReconnectFactor = factor
 		}
 	}
@@ -174,10 +177,10 @@ func WithActorSystemRemotingReconnectJitter(jitter bool) ActorSystemRemotingOpti
 // WithActorSystemRemotingReconnect 返回一个 ActorSystemRemotingOption，用于批量配置远程连接的重试策略。
 //
 // 参数：
-//   - limit: 重试次数；小于 1 则不进行重试。
+//   - limit: 首次连接失败后的重试次数；0 表示不重试，负值忽略。
 //   - initialDelay: 初始延迟时间。
 //   - maxDelay: 最大延迟时间。
-//   - factor: 退避因子，通常为 2.0。
+//   - factor: 有限且不小于 1 的退避因子；1 表示固定间隔。
 //   - jitter: 是否启用抖动。
 func WithActorSystemRemotingReconnect(limit int, initialDelay, maxDelay time.Duration, factor float64, jitter bool) ActorSystemRemotingOption {
 	return func(opts *ActorSystemRemotingOptions) {
@@ -190,7 +193,7 @@ func WithActorSystemRemotingReconnect(limit int, initialDelay, maxDelay time.Dur
 		if maxDelay > 0 {
 			opts.ReconnectMaxDelay = maxDelay
 		}
-		if factor > 0 {
+		if factor >= 1 && !math.IsInf(factor, 0) {
 			opts.ReconnectFactor = factor
 		}
 		opts.ReconnectJitter = jitter
@@ -229,8 +232,8 @@ func WithActorSystemRemotingHeartbeatInterval(interval time.Duration) ActorSyste
 	}
 }
 
-// WithActorSystemRemotingTLSConfig 返回一个 ActorSystemRemotingOption，用于配置 Remoting 服务端 TLS。
-// 非空时服务端使用 TLS 监听；跨 DC/公网部署时建议配置以保证传输加密，可选配合 mTLS 做节点身份校验。
+// WithActorSystemRemotingTLSConfig 返回一个 ActorSystemRemotingOption，统一配置入站与出站 TLS。
+// RootCAs 验证远端服务端；需要 mTLS 时设置 ClientCAs 和 ClientAuth，节点证书需支持相应认证用途。
 func WithActorSystemRemotingTLSConfig(cfg *tls.Config) ActorSystemRemotingOption {
 	return func(opts *ActorSystemRemotingOptions) {
 		opts.TLSConfig = cfg

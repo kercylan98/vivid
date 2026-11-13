@@ -3,6 +3,8 @@ package remoting
 import (
 	"errors"
 	"fmt"
+	"math"
+	"math/rand/v2"
 	"net"
 	"time"
 
@@ -19,31 +21,27 @@ var (
 
 const dialTimeout = 10 * time.Second
 
-const (
-	defaultEndpointConnectRetryLimit         = 5
-	defaultEndpointConnectRetryInitialDelay  = 500 * time.Millisecond
-	defaultEndpointConnectRetryMaxDelay      = 10 * time.Second
-	defaultEndpointConnectRetryBackoffFactor = 2
-)
-
 type endpointRetryPolicy struct {
 	limit        int           // 重试次数限制
 	initialDelay time.Duration // 初始重试延迟
 	maxDelay     time.Duration // 最大重试延迟
 	backoff      float64       // 重试延迟倍数
+	jitter       bool          // 在退避间隔的后半段随机取值
 }
 
 func newEndpointRetryPolicy(opts *vivid.ActorSystemRemotingOptions) endpointRetryPolicy {
-	policy := endpointRetryPolicy{
-		limit:        defaultEndpointConnectRetryLimit,
-		initialDelay: defaultEndpointConnectRetryInitialDelay,
-		maxDelay:     defaultEndpointConnectRetryMaxDelay,
-		backoff:      defaultEndpointConnectRetryBackoffFactor,
-	}
+	defaults := vivid.NewActorSystemRemotingOptions()
 	if opts == nil {
-		return policy
+		opts = &defaults
 	}
-	if opts.ReconnectLimit > 0 {
+	policy := endpointRetryPolicy{
+		limit:        defaults.ReconnectLimit,
+		initialDelay: defaults.ReconnectInitialDelay,
+		maxDelay:     defaults.ReconnectMaxDelay,
+		backoff:      defaults.ReconnectFactor,
+		jitter:       opts.ReconnectJitter,
+	}
+	if opts.ReconnectLimit >= 0 {
 		policy.limit = opts.ReconnectLimit
 	}
 	if opts.ReconnectInitialDelay > 0 {
@@ -52,32 +50,37 @@ func newEndpointRetryPolicy(opts *vivid.ActorSystemRemotingOptions) endpointRetr
 	if opts.ReconnectMaxDelay > 0 {
 		policy.maxDelay = opts.ReconnectMaxDelay
 	}
-	if opts.ReconnectFactor > 1 {
+	if opts.ReconnectFactor >= 1 && !math.IsInf(opts.ReconnectFactor, 0) {
 		policy.backoff = opts.ReconnectFactor
 	}
 	return policy
 }
 
 func (p endpointRetryPolicy) delayFor(retry int) time.Duration {
-	if retry <= 0 {
-		return p.initialDelay
+	delay := min(p.initialDelay, p.maxDelay)
+	if retry > 0 && p.backoff > 1 && delay < p.maxDelay {
+		next := float64(delay) * math.Pow(p.backoff, float64(retry))
+		// 转换为 Duration 前截断，避免浮点溢出或舍入为负值。
+		if next >= float64(p.maxDelay) {
+			delay = p.maxDelay
+		} else {
+			delay = time.Duration(next)
+		}
 	}
-	delay := p.initialDelay
-	for i := 0; i < retry; i++ {
-		next := time.Duration(float64(delay) * p.backoff)
-		if next <= delay {
-			return p.maxDelay
-		}
-		delay = next
-		if delay >= p.maxDelay {
-			return p.maxDelay
-		}
+	if p.jitter && delay > 1 {
+		lower := delay/2 + delay%2
+		return lower + time.Duration(rand.Int64N(int64(delay-lower)+1))
 	}
 	return delay
 }
 
 type endpointAttachSession struct {
 	session *session
+}
+
+type endpointInboundReady struct {
+	session *session
+	err     error
 }
 
 type endpointRetryConnect struct{}
@@ -120,9 +123,12 @@ type endpoint struct {
 	retryPolicy       endpointRetryPolicy
 	associationPolicy endpointAssociationPolicy
 	association       *endpointAssociation
+	inboundSession    *session // 已通过仲裁，尚未完成握手响应的入站会话
+	fallbackSession   *session // 同时拨号时暂存的非优选入站会话
 	stopping          bool
 	connecting        bool
 	connectAttempt    uint64 // 当前尝试向该端点发起连接尝试的单调递增计数
+	connectTask       *pendingConnection
 	writing           bool
 	retryCount        int  // 当前重试次数
 	retryScheduled    bool // 是否已调度重试
@@ -155,6 +161,8 @@ func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
 		switch message := msg.Message.(type) {
 		case *endpointConnectCompleted:
 			e.onConnectCompleted(ctx, message, msg.Error)
+		case *endpointInboundReady:
+			e.onInboundReady(ctx, message, msg.Error)
 		default:
 			e.onPipeUnexpectedResult(ctx, message, msg.Error)
 		}
@@ -165,8 +173,12 @@ func (e *endpoint) onPipeUnexpectedResult(ctx vivid.ActorContext, message vivid.
 	if pipeErr != nil {
 		ctx.Logger().Warn("endpoint received unexpected pipe error", log.String("address", e.address), log.String("type", fmt.Sprintf("%T", message)), log.Any("error", pipeErr))
 		if e.connecting {
+			if e.connectTask != nil {
+				e.connectTask.close()
+				e.connectTask = nil
+			}
 			e.connecting = false
-			e.scheduleRetry(ctx, pipeErr)
+			e.onConnectFailed(ctx, pipeErr)
 		}
 		return
 	}
@@ -182,7 +194,7 @@ func (e *endpoint) onLaunch(ctx vivid.ActorContext) {
 
 func (e *endpoint) onAttachSession(ctx vivid.ActorContext, message endpointAttachSession) {
 	if e.stopping {
-		e.closeSession(ctx, message.session, true, "endpoint stopping")
+		e.closeSession(ctx, message.session, false, "endpoint stopping")
 		return
 	}
 	if message.session == nil {
@@ -191,21 +203,55 @@ func (e *endpoint) onAttachSession(ctx vivid.ActorContext, message endpointAttac
 	}
 
 	if !e.shouldAcceptSession(message.session) {
+		if e.connecting && e.association == nil && e.inboundSession == nil && e.fallbackSession == nil &&
+			message.session.role == sessionRoleInbound && e.preferredSessionRole(message.session) == sessionRoleOutbound {
+			// 等优选握手完成后再关闭，避免对端先收到 EOF 而尚未接管优选连接。
+			e.fallbackSession = message.session
+			return
+		}
 		ctx.Logger().Debug("endpoint rejected duplicate session",
 			log.String("address", e.address),
 			log.Any("role", message.session.role))
-		e.closeSession(ctx, message.session, true, "duplicate session")
+		e.closeSession(ctx, message.session, false, "duplicate session")
 		return
 	}
 
-	if err := e.activateSession(ctx, message.session); err != nil {
-		ctx.Logger().Warn("endpoint activate attached session failed",
-			log.String("address", e.address),
-			log.Any("error", err))
+	// 先保留入站会话并作废并行拨号，再异步回复握手；未就绪时不发送业务数据。
+	e.cancelRetry(ctx)
+	e.inboundSession = message.session
+	e.connectAttempt++
+	if e.connectTask != nil {
+		e.connectTask.close()
+		e.connectTask = nil
+	}
+	e.connecting = false
+	ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+		response := &Handshake{AdvertiseAddr: message.session.localAddress}
+		return &endpointInboundReady{session: message.session, err: response.Send(message.session.Conn())}, nil
+	})).PipeTo(ctx.Ref().ToActorRefs())
+}
+
+func (e *endpoint) onInboundReady(ctx vivid.ActorContext, message *endpointInboundReady, pipeErr error) {
+	if e.stopping || e.inboundSession != message.session {
+		e.closeSession(ctx, message.session, false, "stale inbound handshake")
+		return
+	}
+	e.inboundSession = nil
+	if err := errors.Join(message.err, pipeErr); err != nil {
+		ctx.Logger().Warn("endpoint inbound handshake failed", log.String("address", e.address), log.Any("error", err))
+		e.closeSession(ctx, message.session, false, "inbound handshake failed")
 		e.scheduleRetry(ctx, err)
 		return
 	}
-
+	if err := e.activateSession(ctx, message.session); err != nil {
+		ctx.Logger().Warn("endpoint activate attached session failed", log.String("address", e.address), log.Any("error", err))
+		e.scheduleRetry(ctx, err)
+		return
+	}
+	ctx.EventStream().Publish(ctx, ves.RemotingInboundConnectionEstablishedEvent{
+		PeerAddress:  e.address,
+		LocalAddress: message.session.localAddress,
+	})
 	e.trySend(ctx)
 }
 
@@ -213,7 +259,7 @@ func (e *endpoint) ensureSession(ctx vivid.ActorContext) {
 	if e.stopping {
 		return
 	}
-	if e.association != nil || e.connecting {
+	if e.association != nil || e.connecting || e.inboundSession != nil || e.retryScheduled {
 		return
 	}
 	if e.outboundBuffer.Empty() {
@@ -223,9 +269,12 @@ func (e *endpoint) ensureSession(ctx vivid.ActorContext) {
 	e.connecting = true
 	e.connectAttempt++
 	attempt := e.connectAttempt
+	task := e.endpointManager.newPendingConnection(dialTimeout + handshakeTimeout)
+	e.connectTask = task
 	ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
-		conn, err := e.dial()
+		conn, err := e.dial(task)
 		if err != nil {
+			task.close()
 			return &endpointConnectCompleted{
 				attempt: attempt,
 				err:     err,
@@ -236,37 +285,48 @@ func (e *endpoint) ensureSession(ctx vivid.ActorContext) {
 		if localAddr == "" {
 			localAddr = conn.LocalAddr().String()
 		}
+		session := newSession(e.address, localAddr, conn, sessionRoleOutbound)
+		session.pending = task
 		return &endpointConnectCompleted{
 			attempt: attempt,
-			session: newSession(e.address, localAddr, conn, sessionRoleOutbound),
+			session: session,
 		}, nil
 	})).PipeTo(ctx.Ref().ToActorRefs())
 }
 
-func (e *endpoint) dial() (net.Conn, error) {
+func (e *endpoint) dial(task *pendingConnection) (net.Conn, error) {
 	addr := e.address
 	dialer := net.Dialer{Timeout: dialTimeout}
-	conn, err := dialer.Dial("tcp", addr)
+	conn, err := dialer.DialContext(task.ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
+	if !task.attach(conn) {
+		return nil, task.ctx.Err()
+	}
+	if config := e.associationPolicy.tlsConfig; config != nil {
+		conn, err = handshakeTLS(task.ctx, conn, addr, config)
+		if err != nil {
+			return nil, err
+		}
+	}
 	h := &Handshake{AdvertiseAddr: e.advertiseAddr}
 	if err := h.Send(conn); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := closeConnection(conn); closeErr != nil {
 			return nil, errors.Join(err, closeErr)
 		}
 		return nil, err
 	}
 	response := &Handshake{}
 	if err := response.Wait(conn); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := closeConnection(conn); closeErr != nil {
 			return nil, errors.Join(err, closeErr)
 		}
 		return nil, err
 	}
 	if response.AdvertiseAddr != "" && response.AdvertiseAddr != addr {
 		mismatchErr := vivid.ErrorRemotingHandshake.WithMessage("remote advertise address mismatch")
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := closeConnection(conn); closeErr != nil {
 			return nil, errors.Join(mismatchErr, closeErr)
 		}
 		return nil, mismatchErr
@@ -307,37 +367,41 @@ func (e *endpoint) onRetryConnect(ctx vivid.ActorContext) {
 
 func (e *endpoint) onConnectCompleted(ctx vivid.ActorContext, completed *endpointConnectCompleted, pipeErr error) {
 	// 停止中，关闭连接
-	if e.stopping && completed != nil && completed.session != nil {
-		e.closeSession(ctx, completed.session, true, "endpoint stopping")
+	if e.stopping {
+		e.closeSession(ctx, completed.session, false, "endpoint stopping")
 		return
 	}
 
 	// 连接结果已过期
-	if completed.attempt != e.connectAttempt && completed.session != nil {
-		e.closeSession(ctx, completed.session, true, "stale connect result")
+	if completed.attempt != e.connectAttempt {
+		e.closeSession(ctx, completed.session, false, "stale connect result")
 		return
 	}
 
 	e.connecting = false
+	e.connectTask = nil
 
 	if pipeErr != nil {
-		e.scheduleRetry(ctx, pipeErr)
+		e.closeSession(ctx, completed.session, false, "connect task failed")
+		e.onConnectFailed(ctx, pipeErr)
 		return
 	}
 
 	if completed.err != nil {
-		e.scheduleRetry(ctx, completed.err)
+		e.onConnectFailed(ctx, completed.err)
 		return
 	}
 
 	if completed.session == nil {
 		nilSessionErr := vivid.ErrorRemotingHandshake.WithMessage("endpoint connect completed without session")
-		e.scheduleRetry(ctx, nilSessionErr)
+		e.onConnectFailed(ctx, nilSessionErr)
 		return
 	}
 
+	// 已收到优选连接的握手响应，对端必已完成入站接管，才能释放备用连接。
+	e.closeFallbackSession(ctx, "outbound handshake completed")
 	if !e.shouldAcceptSession(completed.session) {
-		e.closeSession(ctx, completed.session, true, "connect completed with duplicate session")
+		e.closeSession(ctx, completed.session, false, "connect completed with duplicate session")
 		return
 	}
 
@@ -348,6 +412,24 @@ func (e *endpoint) onConnectCompleted(ctx vivid.ActorContext, completed *endpoin
 
 	ctx.EventStream().Publish(ctx, ves.RemotingOutboundConnectionEstablishedEvent{Address: e.address})
 	e.trySend(ctx)
+}
+
+func (e *endpoint) onConnectFailed(ctx vivid.ActorContext, cause error) {
+	if e.fallbackSession != nil {
+		// 复用已经接入的连接，不增加拨号次数或消耗额外重试预算。
+		next := e.fallbackSession
+		e.fallbackSession = nil
+		e.onAttachSession(ctx, endpointAttachSession{session: next})
+		return
+	}
+	e.scheduleRetry(ctx, cause)
+}
+
+func (e *endpoint) closeFallbackSession(ctx vivid.ActorContext, reason string) {
+	if e.fallbackSession != nil {
+		e.closeSession(ctx, e.fallbackSession, false, reason)
+		e.fallbackSession = nil
+	}
 }
 
 func (e *endpoint) onReaderStopped(ctx vivid.ActorContext, message endpointReaderStopped) {
@@ -479,9 +561,18 @@ func (e *endpoint) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
 
 func (e *endpoint) onKill(ctx vivid.ActorContext) {
 	e.stopping = true
+	if e.connectTask != nil {
+		e.connectTask.close()
+		e.connectTask = nil
+	}
 	ctx.Metrics().Gauge(metrics.RemotingOutboundEndpointsGauge).Dec()
 	e.cancelRetry(ctx)
 	e.failPending(ctx)
+	if e.inboundSession != nil {
+		e.closeSession(ctx, e.inboundSession, false, "endpoint closing")
+		e.inboundSession = nil
+	}
+	e.closeFallbackSession(ctx, "endpoint closing")
 	// 仅关闭 TCP 会话，不再 Kill 子 Actor。
 	// 框架的 doKill 在调用此行为之前已向所有子 Actor 发送了 Kill 消息。
 	if e.association != nil {
@@ -518,6 +609,10 @@ func (e *endpoint) trySend(ctx vivid.ActorContext) {
 }
 
 func (e *endpoint) activateSession(ctx vivid.ActorContext, next *session) error {
+	if next.pending != nil && !next.pending.release() {
+		e.closeSession(ctx, next, false, "connection task canceled")
+		return vivid.ErrorRemotingHandshake.WithMessage("connection task canceled")
+	}
 	e.cancelRetry(ctx)
 	e.connecting = false
 	e.retryCount = 0
@@ -541,13 +636,15 @@ func (e *endpoint) shouldAcceptSession(next *session) bool {
 	if next == nil {
 		return false
 	}
-	if e.association == nil || e.association.session == nil || e.association.session.isClosed() {
-		return true
-	}
-	if e.association.session.role == next.role {
+	if e.inboundSession != nil {
 		return false
 	}
-	return next.role == e.preferredSessionRole(next)
+	// 健康会话一旦启用就不再替换，写入 TCP 并不能证明对端已读取数据。
+	if e.association != nil && e.association.session != nil && !e.association.session.isClosed() {
+		return false
+	}
+	// 双方同时拨号时，在握手确认前按地址选定同一条连接。
+	return next.role != sessionRoleInbound || !e.connecting || e.preferredSessionRole(next) == sessionRoleInbound
 }
 
 func (e *endpoint) preferredSessionRole(next *session) sessionRole {

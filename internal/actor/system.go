@@ -10,6 +10,7 @@ import (
 	"github.com/kercylan98/vivid/internal/bridge"
 	"github.com/kercylan98/vivid/internal/chain"
 	"github.com/kercylan98/vivid/internal/future"
+	"github.com/kercylan98/vivid/internal/gossip"
 	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/internal/scheduler"
@@ -77,6 +78,7 @@ type System struct {
 	cancel                 context.CancelFunc                                // 上下文停止函数
 	startTime              time.Time                                         // 启动时间，Start() 时记录
 	gossipRef              vivid.ActorRef                                    // 集群 gossip 引用
+	clusterReadiness       *gossip.Readiness                                 // 本次启动的初始加入结果
 	virtualCoordinator     bridge.VirtualCoordinator                         // 虚拟协调器
 	closingActors          sync.Map                                          // 即将被关闭的 Actor
 }
@@ -208,23 +210,31 @@ func (s *System) Start() error {
 	}
 
 	s.startTime = time.Now()
+	if s.options.ClusterOptions != nil {
+		if err := s.options.ClusterOptions.Validate(); err != nil {
+			return vivid.ErrorActorSystemStartFailed.With(err).With(s.Stop(s.options.StopTimeout))
+		}
+	}
 	s.Logger().Debug("actor system starting")
 
 	availableSignal := make(chan struct{})
-	defer close(availableSignal)
 	systemChains := newSystemChains(availableSignal)
-	startErr := chain.New(chain.WithContext(s.options.Context)).
-		Append(systemChains.initializeCodec(s)).
-		Append(systemChains.spawnGuardActor(s)).
-		Append(systemChains.initializeMetrics(s)).
-		Append(systemChains.initializeRemoting(s)).
-		Append(systemChains.initializeCluster(s)).
-		Append(systemChains.initializeVirtualCoordinator(s)).
-		Run()
+	startErr := func() error {
+		// 回滚前解除组件的启动等待，避免停止流程等待尚未结束的 Start。
+		defer close(availableSignal)
+		return chain.New(chain.WithContext(s.options.Context)).
+			Append(systemChains.initializeCodec(s)).
+			Append(systemChains.spawnGuardActor(s)).
+			Append(systemChains.initializeMetrics(s)).
+			Append(systemChains.initializeRemoting(s)).
+			Append(systemChains.initializeCluster(s)).
+			Append(systemChains.initializeVirtualCoordinator(s)).
+			Run()
+	}()
 
 	if startErr != nil {
 		s.Logger().Error("actor system start failed", log.Any("err", startErr))
-		return vivid.ErrorActorSystemStartFailed.With(s.Stop(s.options.StopTimeout))
+		return vivid.ErrorActorSystemStartFailed.With(startErr).With(s.Stop(s.options.StopTimeout))
 	}
 
 	s.Logger().Debug("actor system started")
@@ -266,6 +276,12 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 	}
 
 	var stopTimeout = sugar.Max(sugar.FirstOrDefault(timeout, s.options.StopTimeout), 0)
+	s.statusLock.Lock()
+	readiness := s.clusterReadiness
+	s.statusLock.Unlock()
+	if readiness != nil {
+		readiness.Stop()
+	}
 	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
 
 	if s.Context != nil {
@@ -326,10 +342,14 @@ func (s *System) removeFuture(agentRef *AgentRef) {
 
 func (s *System) removeFuturesByAgentPath(agentPath vivid.ActorPath, err error) {
 	s.futureLock.Lock()
-	refs := s.futureAgents[agentPath]
+	// 完成回调会并发移除 Future，先在锁内复制路径，再在锁外执行关闭。
+	refs := make([]vivid.ActorPath, 0, len(s.futureAgents[agentPath]))
+	for ref := range s.futureAgents[agentPath] {
+		refs = append(refs, ref)
+	}
 	s.futureLock.Unlock()
 
-	for ref := range refs {
+	for _, ref := range refs {
 		if ctx, ok := s.actorContexts.Load(ref); ok {
 			if f, ok := ctx.(*future.Future[vivid.Message]); ok {
 				f.Close(err)

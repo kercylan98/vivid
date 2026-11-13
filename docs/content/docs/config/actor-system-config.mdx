@@ -23,7 +23,7 @@ description: ActorSystemOptions 与系统级选项一览
 | **WithActorSystemRemotingOptions** | 远程高级选项（如重试策略、读取超时、解码预算）。详见 [远程通讯](/docs/config/remoting) |
 | **WithActorSystemRemotingOption** | 远程选项的链式增量配置（如 ReconnectLimit、ReconnectInitialDelay 等），可传多个 Option。详见 [远程通讯](/docs/config/remoting) |
 | **WithActorSystemRemotingDecodeLimits** | 单个接收信封的解码预算，通过 WithActorSystemRemotingOption 传入；默认 64 层、累计 1048576 个集合元素和 64 MiB 分配预算。详见 [远程通讯](/docs/config/remoting) |
-| **WithActorSystemClusterOptions** | 配置并启用集群，需同时启用 Remoting。详见 [集群](/docs/cluster/index) |
+| **WithActorSystemClusterOptions** | 配置并启用集群，需设置集群名称并启用 Remoting。详见 [集群](/docs/cluster) |
 | **WithActorSystemOptions** | 一次性应用整份 ActorSystemOptions |
 
 ## 使用方式

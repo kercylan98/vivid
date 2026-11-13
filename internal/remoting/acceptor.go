@@ -7,12 +7,13 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/pkg/log"
-	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 var (
 	_ vivid.Actor = (*acceptor)(nil)
 )
+
+const maxPendingHandshakes = 64
 
 func newAcceptor(availableSignal <-chan struct{}, listener *listener, endpointManager *EndpointManager, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, bufferPolicy endpointBufferPolicy, retryPolicy endpointRetryPolicy, associationPolicy endpointAssociationPolicy) *acceptor {
 	return &acceptor{
@@ -41,8 +42,9 @@ type acceptor struct {
 	stopping          bool
 	accepting         bool
 	acceptAttempt     uint64
+	acceptTask        *pendingConnection
 	handshakeSeq      uint64
-	pendingHandshakes map[uint64]net.Conn
+	pendingHandshakes map[uint64]*pendingConnection
 }
 
 type acceptConnection struct{}
@@ -50,6 +52,7 @@ type acceptConnection struct{}
 type acceptCompleted struct {
 	attempt uint64
 	conn    net.Conn
+	pending *pendingConnection
 	err     error
 }
 
@@ -75,51 +78,52 @@ func (a *acceptor) OnReceive(ctx vivid.ActorContext) {
 
 func (a *acceptor) onLaunch(ctx vivid.ActorContext) {
 	if a.pendingHandshakes == nil {
-		a.pendingHandshakes = make(map[uint64]net.Conn)
+		a.pendingHandshakes = make(map[uint64]*pendingConnection)
 	}
 	ctx.Tell(ctx.Ref(), acceptConnection{})
 }
 
 func (a *acceptor) onAccept(ctx vivid.ActorContext) {
-	if a.stopping || a.accepting {
+	if a.stopping || a.accepting || len(a.pendingHandshakes) >= maxPendingHandshakes {
 		return
 	}
 	a.accepting = true
 	a.acceptAttempt++
 	attempt := a.acceptAttempt
-	entrustFuture := ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+	task := a.endpointManager.newPendingConnection(0)
+	a.acceptTask = task
+	ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
 		conn, err := a.listener.Accept()
+		if err == nil {
+			if !task.attach(conn) {
+				return &acceptCompleted{attempt: attempt, err: net.ErrClosed, pending: task}, nil
+			}
+			task.startTimeout(handshakeTimeout)
+		} else {
+			task.close()
+		}
 		return &acceptCompleted{
 			attempt: attempt,
 			conn:    conn,
+			pending: task,
 			err:     err,
 		}, nil
-	}))
-	message, err := entrustFuture.Result()
-	pipeResult := &vivid.PipeResult{
-		Message: message,
-		Error:   err,
-	}
-	if ctx.Available() {
-		ctx.Tell(ctx.Ref(), pipeResult)
-	}
+	})).PipeTo(ctx.Ref().ToActorRefs())
 }
 
 func (a *acceptor) onKill(ctx vivid.ActorContext) {
 	a.stopping = true
+	if a.acceptTask != nil {
+		a.acceptTask.close()
+		a.acceptTask = nil
+	}
 	if a.listener != nil {
 		if err := a.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			ctx.Logger().Warn("acceptor listener close failed", log.Any("error", err))
 		}
 	}
-	for seq, conn := range a.pendingHandshakes {
-		if conn == nil {
-			delete(a.pendingHandshakes, seq)
-			continue
-		}
-		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			ctx.Logger().Warn("acceptor pending handshake close failed", log.Any("error", err))
-		}
+	for seq, task := range a.pendingHandshakes {
+		task.close()
 		delete(a.pendingHandshakes, seq)
 	}
 }
@@ -141,14 +145,14 @@ func (a *acceptor) onAcceptCompleted(ctx vivid.ActorContext, message *acceptComp
 		a.accepting = false
 		return
 	}
-	if message.attempt != a.acceptAttempt {
-		if message.conn != nil {
-			_ = message.conn.Close()
-		}
+	if a.stopping || message.attempt != a.acceptAttempt {
+		message.pending.close()
 		return
 	}
 	a.accepting = false
+	a.acceptTask = nil
 	if pipeErr != nil {
+		message.pending.close()
 		if a.stopping {
 			return
 		}
@@ -156,6 +160,7 @@ func (a *acceptor) onAcceptCompleted(ctx vivid.ActorContext, message *acceptComp
 		return
 	}
 	if message.err != nil {
+		message.pending.close()
 		if errors.Is(message.err, net.ErrClosed) {
 			return
 		}
@@ -168,53 +173,51 @@ func (a *acceptor) onAcceptCompleted(ctx vivid.ActorContext, message *acceptComp
 		}
 		return
 	}
-	a.startHandshake(ctx, message.conn)
+	a.startHandshake(ctx, message.conn, message.pending)
 	if !a.stopping && ctx.Available() {
 		ctx.Tell(ctx.Ref(), acceptConnection{})
 	}
 }
 
-func (a *acceptor) startHandshake(ctx vivid.ActorContext, conn net.Conn) {
+func (a *acceptor) startHandshake(ctx vivid.ActorContext, conn net.Conn, task *pendingConnection) {
 	if conn == nil {
 		return
 	}
 	a.handshakeSeq++
 	seq := a.handshakeSeq
-	a.pendingHandshakes[seq] = conn
-	entrustFuture := ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+	a.pendingHandshakes[seq] = task
+	ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
 		peerAddr, err := a.doHandshake(conn)
+		if err != nil {
+			task.close()
+		}
 		return &acceptHandshakeCompleted{
 			seq:      seq,
 			conn:     conn,
 			peerAddr: peerAddr,
 			err:      err,
 		}, nil
-	}))
-	message, err := entrustFuture.Result()
-	pipeResult := &vivid.PipeResult{
-		Message: message,
-		Error:   err,
-	}
-	if ctx.Available() {
-		ctx.Tell(ctx.Ref(), pipeResult)
-	}
+	})).PipeTo(ctx.Ref().ToActorRefs())
 }
 
 func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptHandshakeCompleted, pipeErr error) {
 	if message == nil {
 		return
 	}
-	conn, ok := a.pendingHandshakes[message.seq]
-	if ok {
-		delete(a.pendingHandshakes, message.seq)
-	} else if message.conn != nil {
-		conn = message.conn
-	}
-	if conn == nil {
+	task, ok := a.pendingHandshakes[message.seq]
+	if !ok {
+		if message.conn != nil {
+			_ = closeConnection(message.conn)
+		}
 		return
 	}
+	delete(a.pendingHandshakes, message.seq)
+	if !a.stopping {
+		ctx.Tell(ctx.Ref(), acceptConnection{})
+	}
+	conn := message.conn
 	if pipeErr != nil {
-		_ = conn.Close()
+		task.close()
 		if !a.stopping {
 			ctx.Logger().Warn("acceptor handshake task failed", log.Any("error", pipeErr))
 		}
@@ -224,11 +227,11 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 		if !a.stopping {
 			ctx.Logger().Warn("acceptor handshake failed", log.Any("error", message.err))
 		}
-		_ = conn.Close()
+		task.close()
 		return
 	}
 	if a.stopping || a.endpointManager.Stopped() {
-		_ = conn.Close()
+		task.close()
 		return
 	}
 
@@ -237,6 +240,7 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 		localAddr = conn.LocalAddr().String()
 	}
 	session := newSession(message.peerAddr, localAddr, conn, sessionRoleInbound)
+	session.pending = task
 	endpointRef, ensureErr := a.endpointManager.ensureEndpoint(ctx, message.peerAddr, func(address string) (vivid.ActorRef, error) {
 		endpointRef, err := ctx.ActorOf(newEndpoint(a.availableSignal, address, a.endpointManager, a.codec, a.envelopHandler, a.advertiseAddr, a.bufferPolicy, a.retryPolicy, a.associationPolicy))
 		if err != nil {
@@ -252,17 +256,13 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 		ctx.Logger().Error("failed to ensure endpoint", log.Any("error", spawnErr))
 		return
 	}
-	ctx.EventStream().Publish(ctx, ves.RemotingInboundConnectionEstablishedEvent{
-		PeerAddress:  message.peerAddr,
-		LocalAddress: localAddr,
-	})
 	ctx.Tell(endpointRef, endpointAttachSession{session: session})
 }
 
 func (a *acceptor) doHandshake(conn net.Conn) (string, error) {
 	request := &Handshake{}
 	if err := request.Wait(conn); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := closeConnection(conn); closeErr != nil {
 			return "", errors.Join(err, closeErr)
 		}
 		return "", err
@@ -271,12 +271,6 @@ func (a *acceptor) doHandshake(conn net.Conn) (string, error) {
 	if peerAddr == "" {
 		peerAddr = conn.RemoteAddr().String()
 	}
-	response := &Handshake{AdvertiseAddr: a.advertiseAddr}
-	if err := response.Send(conn); err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
-			return "", errors.Join(err, closeErr)
-		}
-		return "", err
-	}
+	// 由 Endpoint 完成连接仲裁后再回复握手，避免对端提前发送的数据随连接替换丢失。
 	return peerAddr, nil
 }

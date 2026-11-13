@@ -165,19 +165,14 @@ ActorRef 解析、格式及 Agent 引用。
 
 ### 集群
 
-集群名称校验、加入控制及未启用时的调用。详细说明见 [集群错误](/docs/cluster/errors)。
+集群启动、初始加入及未启用时的调用。详细说明见 [集群错误](/docs/cluster/errors)。
 
 | 代码 | 变量名 | 说明 | 父类 |
 |------|--------|------|------|
-| 150000 | **ErrorClusterNameMismatch** | 集群名称不匹配 | — |
-| 150001 | **ErrorClusterDisabled** | 集群已禁用（未启用集群时调用 ClusterContext 方法会返回此错误） | — |
-| 150002 | **ErrorClusterNodeStatusMismatch** | 节点状态不匹配 | — |
-| 150003 | **ErrorClusterNotInQuorum** | 当前不在多数派 | — |
-| 150004 | **ErrorClusterJoinAuthFailed** | Join 认证失败 | — |
-| 150005 | **ErrorClusterJoinRateLimited** | Join 请求被限流 | — |
-| 150006 | **ErrorClusterProtocolVersionMismatch** | 集群协议版本不兼容 | — |
-| 150007 | **ErrorClusterJoinNotAllowed** | 地址或 DC 不在白名单 | — |
-| 150008 | **ErrorClusterAdminAuthFailed** | 管理操作 Token 无效 | — |
+| 170000 | **ErrorGossipScheduleFailed** | Gossip 调度失败 | — |
+| 170001 | **ErrorGossipRequires** | 缺少 Remoting 等必要组件 | ErrorNotFound |
+| 170002 | **ErrorClusterNotEnabled** | 未启用集群时查询成员或等待就绪 | — |
+| 170003 | **ErrorClusterJoinFailed** | 所有可用种子均未完成有效加入 | — |
 
 ---
 

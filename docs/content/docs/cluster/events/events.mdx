@@ -1,121 +1,46 @@
 ---
-title: 集群事件
-description: 成员变更、Leader、Quorum、View、DC 健康事件
+title: 成员事件
+description: 订阅本地成员与可达性变更，处理快照与事件顺序
 ---
 
-集群成员变更、选主结果变化、多数派状态变化等会发布到 **EventStream**，可订阅以做监控、告警或迁移逻辑。订阅方式与 [事件流](/docs/basics/event-stream) 一致，在 OnReceive 中根据 `ctx.Message()` 类型断言处理。
+通过 `system.ClusterSnapshot()` 查询本地成员视图，通过 `ves.ClusterMembersChangedEvent` 订阅成员变更，通过 `ves.ClusterReachabilityChangedEvent` 订阅可达性变化。这些结果反映本节点已知的信息，不表示实时健康、多数派确认或接管资格。
 
-## 事件类型
+查询方法及成员字段见[本地成员查询](/docs/cluster/runtime/context)。
 
-| 事件类型 | 说明 |
-|----------|------|
-| **ves.ClusterMembersChangedEvent** | 成员列表变更（新增或故障剔除） |
-| **ves.ClusterLeaderChangedEvent** | 选主结果变化 |
-| **ves.ClusterQuorumLostEvent** | 当前节点失去多数派 |
-| **ves.ClusterQuorumReachedEvent** | 当前节点重新达到多数派 |
-| **ves.ClusterViewChangedEvent** | 成员视图变更（新增、剔除、Suspect 等） |
-| **ves.ClusterDCHealthChangedEvent** | 某 DC 健康状态变化 |
-| **ves.ClusterLeaveCompletedEvent** | 本节点完成优雅退出（已广播离开视图并进入 Exiting、已回复 LeaveAck）；供 LeaveWatcher 等监听以解除 Leave() 阻塞 |
+## 订阅变更
 
-## ClusterMembersChangedEvent
-
-成员列表发生变更时发布。
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| **NodeRef** | vivid.ActorRef | 变更的节点引用 |
-| **Members** | []string | 变更后的成员列表 |
-| **AddedNum** | int | 新增成员数量 |
-| **RemovedNum** | int | 移除成员数量 |
-| **Removed** | []string | 移除的成员列表 |
-
-## ClusterLeaderChangedEvent
-
-确定性选主结果变化时发布，便于集群单例等迁移。
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| **NodeRef** | vivid.ActorRef | 变更的节点引用 |
-| **LeaderAddr** | string | 新的领导者地址 |
-| **IAmLeader** | bool | 当前节点是否为领导者 |
-| **InQuorum** | bool | 当前节点是否处于多数派；false 时不应以 Leader 做关键决策 |
-
-## ClusterQuorumLostEvent
-
-当前节点失去多数派时发布（HealthyCount < QuorumSize）。
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| **NodeRef** | vivid.ActorRef | 节点引用 |
-| **HealthyCount** | int | 健康节点数 |
-| **QuorumSize** | int | 法定人数 |
-| **UnhealthyCount** | int | 不健康节点数 |
-
-## ClusterQuorumReachedEvent
-
-当前节点重新达到多数派时发布。
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| **NodeRef** | vivid.ActorRef | 节点引用 |
-| **HealthyCount** | int | 健康节点数 |
-| **QuorumSize** | int | 法定人数 |
-
-## ClusterViewChangedEvent
-
-成员视图发生变更时发布（新增、剔除、Suspect 等），便于监控与告警。
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| **NodeRef** | vivid.ActorRef | 节点引用 |
-| **HealthyCount** | int | 健康节点数 |
-| **UnhealthyCount** | int | 不健康节点数 |
-| **QuorumSize** | int | 法定人数 |
-| **MemberCount** | int | 成员总数 |
-| **AddedNum** | int | 新增数量 |
-| **RemovedNum** | int | 移除数量 |
-| **Removed** | []string | 移除的成员列表 |
-
-## ClusterDCHealthChangedEvent
-
-某 DC 健康状态变化时发布（从有健康节点变为无，或从无变为有），便于区域级故障感知与切换。
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| **NodeRef** | vivid.ActorRef | 节点引用 |
-| **Datacenter** | string | 数据中心标识 |
-| **HealthyCount** | int | 健康节点数 |
-| **UnhealthyCount** | int | 不健康节点数 |
-| **MemberCount** | int | 成员总数 |
-| **IsHealthy** | bool | 该 DC 是否至少有一个健康节点 |
-
-## ClusterLeaveCompletedEvent
-
-本节点完成优雅退出流程时发布（已广播离开视图并进入 Exiting、已回复 LeaveAck）。Leave() 会临时启动 LeaveWatcher 订阅此事件，收到后解除阻塞。
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| **NodeRef** | vivid.ActorRef | 集群节点 Actor 引用 |
-
-## 订阅示例
-
-事件通过 EventStream 投递到订阅者邮箱，消息类型与发布时一致（通常为值类型，如 `ves.ClusterMembersChangedEvent`）：
+在 Actor 中订阅值类型事件，响应使用现有的 `PipeTo` 投递回本 Actor：
 
 ```go
-func (a *MyActor) OnReceive(ctx vivid.ActorContext) {
-    switch msg := ctx.Message().(type) {
-    case ves.ClusterMembersChangedEvent:
-        log.Printf("members changed: added=%d removed=%d", msg.AddedNum, msg.RemovedNum)
-    case ves.ClusterLeaderChangedEvent:
-        if msg.IAmLeader && msg.InQuorum {
-            // 成为 Leader 且在多数派，可执行单例迁移等
+type Observer struct{}
+
+func (a *Observer) OnReceive(ctx vivid.ActorContext) {
+    switch message := ctx.Message().(type) {
+    case *vivid.OnLaunch:
+        ctx.EventStream().Subscribe(ctx, ves.ClusterMembersChangedEvent{})
+        ctx.EventStream().Subscribe(ctx, ves.ClusterReachabilityChangedEvent{})
+        ctx.System().ClusterSnapshot(time.Second).PipeTo(ctx.Ref().ToActorRefs())
+    case *vivid.PipeResult:
+        if message.Error != nil {
+            ctx.Logger().Error("cluster snapshot failed", log.Any("error", message.Error))
+            return
         }
-    case ves.ClusterQuorumLostEvent:
-        // 失去多数派，暂停关键写操作
-    case ves.ClusterQuorumReachedEvent:
-        // 恢复多数派
+        snapshot := message.Message.(vivid.ClusterSnapshot)
+        ctx.Logger().Info("initial cluster snapshot", log.Uint64("revision", snapshot.Revision()), log.Int("members", snapshot.Len()))
+    case ves.ClusterMembersChangedEvent:
+        ctx.Logger().Info("cluster members changed", log.Uint64("revision", message.Snapshot.Revision()), log.Int("members", message.Snapshot.Len()))
+    case ves.ClusterReachabilityChangedEvent:
+        ctx.Logger().Info("cluster reachability changed", log.Uint64("revision", message.Snapshot.Revision()))
     }
 }
 ```
 
-订阅需在 OnLaunch 或首次 OnReceive 中调用 `ctx.EventStream().Subscribe(ctx, ves.ClusterMembersChangedEvent{})` 等。
+两种事件的 `Snapshot` 均为变更后的完整只读视图，共用 LocalID 和本地 Revision。成员事件在本节点状态迁移、接收到更高版本的成员记录时发布；一批 Gossip 合并发布一次，重复或旧版本消息不会重复通知。事件通过本地 EventStream 投递到订阅者邮箱，不在 Gossip 处理中执行用户回调。
+
+可达性事件在直接往返观察变化、结果过期或观察被清除时发布；连续成功只刷新有效期，不重复通知。观察不会传播到其他节点，含义见[本地可达性](/docs/cluster/runtime/reachability)。
+
+先订阅所需事件，再查询初始快照。两者不是原子操作，事件可能先于查询结果到达；维护本地状态时，应在相同 LocalID 下保留 Revision 最大的视图，忽略较旧或重复结果。LocalID 变化表示观察实例改变，应重新查询建立基线，不能比较不同 LocalID 的序号。
+
+订阅不回放历史事件，也不保证系统关闭前所有事件都已被消费。快照与事件用于本地观察，框架未为其注册跨节点传输编解码。
+
+同地址重启会出现不同实例 ID；崩溃旧实例仍可能显示 Up。因此 Len 和 Up 记录数都不能作为健康节点数，详见[节点生命周期](/docs/cluster/events/lifecycle)。

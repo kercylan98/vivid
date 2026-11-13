@@ -1,0 +1,47 @@
+---
+title: 本地可达性
+description: 查询成员实例的直接往返观察，区分超时、过期与生命周期
+---
+
+通过 `ClusterSnapshot()` 返回成员的 `Reachability`，无需单独启动探测。观察复用已有 Gossip 往返，不增加独立探测消息；查询只读取本地结果。
+
+```go
+func printReachability(system vivid.ActorSystem) error {
+    snapshot, err := system.ClusterSnapshot(time.Second).Result()
+    if err != nil {
+        return err
+    }
+    for _, member := range snapshot.Members() {
+        fmt.Printf("%s %s %s %s\n", member.ID, member.Address, member.Status, member.Reachability)
+    }
+    return nil
+}
+```
+
+## 结果含义
+
+| 值 | 含义 |
+|----|------|
+| `ClusterReachabilityUnknown` | 尚未得到结果、结果已过期，或该成员不适用 |
+| `ClusterReachabilityReachable` | 该实例在等待预算内直接回应了本节点的请求 |
+| `ClusterReachabilityUnreachable` | 请求超时，或目标地址由另一个实例回应 |
+
+常量位于 `vivid` 包。自身、None、Joining 和 Removed 实例不展示远程可达性。可达性不会改变成员的生命周期或状态版本；同地址的不同实例分别记录，第三方转发的 Up 记录不能刷新结果。
+
+结果只代表本节点最近的直接往返观察。超时也可能由单向故障、拥塞、调度延迟造成，不证明对方已经死亡；成功不保证业务 Actor 能及时处理消息，也不提供多数派确认、写入授权或故障切换资格。
+
+## 等待与过期
+
+`WithActorSystemClusterProbeTimeout` 设置一次往返的总等待预算，默认 3 秒。重复发送沿用原截止时间，迟到或旧实例的请求结果不会续期。
+
+`WithActorSystemClusterReachabilityTTL` 设置成功或失败观察的有效期，默认 10 秒。没有新的有效结果时回到 Unknown。周期处理和快照查询会检查过期；已经返回的快照保留其采集时的结果。
+
+目标按地址去重。空闲观察额度优先交给最久未开始探测的地址，尚未探测的地址优先；正在等待的请求不会重新占用额度。其余发送名额继续用于随机 Gossip，每轮发送与未完成观察均不超过 `GossipPeersCount`。
+
+候选集合固定、周期持续处理时，每个地址都会轮到开始请求，未知种子也参与轮换。候选地址移除后会释放其待请求与调度记录，同地址重启仍共用地址轮换位置。
+
+轮换只保证尝试机会；慢目标仍会占用预算，结果也可能在下一次观察前过期为 Unknown。`ProbeTimeout` 不是整个集群的故障发现时限，应结合 Gossip 周期、节点规模、网络延迟和调度负载设置预算与有效期。
+
+## 订阅变化
+
+订阅 `ves.ClusterReachabilityChangedEvent` 获取变化后的完整快照。观察变化、过期或正常退出时清除观察会通知，连续相同结果只续期。需要同时跟踪生命周期时也订阅 `ves.ClusterMembersChangedEvent`；两种事件共用本地观察序号，使用方式见[成员事件](/docs/cluster/events/events)。

@@ -9,11 +9,13 @@ import (
 func newEndpointManager() *EndpointManager {
 	return &EndpointManager{
 		endpoints: make(map[string]vivid.ActorRef),
+		pending:   make(map[*pendingConnection]struct{}),
 	}
 }
 
 type EndpointManager struct {
 	endpoints map[string]vivid.ActorRef // endpoint-address -> endpoint-ref
+	pending   map[*pendingConnection]struct{}
 	stopped   bool
 	mu        sync.RWMutex
 }
@@ -40,8 +42,15 @@ func (e *EndpointManager) unregisterEndpoint(address string, endpoint vivid.Acto
 
 func (e *EndpointManager) Stop() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.stopped = true
+	pending := make([]*pendingConnection, 0, len(e.pending))
+	for connection := range e.pending {
+		pending = append(pending, connection)
+	}
+	e.mu.Unlock()
+	for _, connection := range pending {
+		connection.close()
+	}
 }
 
 func (e *EndpointManager) Stopped() bool {

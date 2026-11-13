@@ -81,10 +81,13 @@ func (f *Future[T]) PipeTo(forwarders vivid.ActorRefs) {
 		return
 	}
 	f.mu.Lock()
-	if f.closed.Load() {
+	// closed 仅表示某个完成方已取得写入权；done 关闭后结果才可读取。
+	select {
+	case <-f.done:
 		f.mu.Unlock()
 		f.tellForwarders(forwarders, f.message, f.err)
 		return
+	default:
 	}
 	f.forwarders = append(f.forwarders, forwarders...).Unique()
 	f.mu.Unlock()

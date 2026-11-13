@@ -27,14 +27,10 @@ import (
 type ActorSystem interface {
 	actorBasic // 内嵌 actorCore 接口，继承 Actor 系统基础能力
 
-	// Start 启动当前 ActorSystem 实例。
-	//
-	// 主要功能与行为说明：
-	//   - 调用后会启动 ActorSystem 及其全部托管的 Actor（包括根 Actor 及所有子 Actor）。
-	//   - 方法实现采用同步阻塞（blocking）方式，调用者会被挂起，直到所有 Actor 启动完成并返回。
-	//   - 启动流程包括初始化 ActorSystem 及其内部组件，如远程通信、指标收集等。
-	//   - 用于应用生命周期管理，可保障启动前所有未处理消息与状态持久化等任务优雅完成，防止资源泄漏及并发冲突。
-	//   - 支持可选的超时参数，用于控制启动过程的时间限制。若超时，系统会立即终止并返回错误。
+	// Start 同步初始化 ActorSystem 运行时及内部组件。
+	// 启用 Remoting 时，成功返回表示监听已创建；监听失败返回包含底层原因的启动错误。
+	// Actor 的 OnLaunch 和集群加入仍异步执行，初始加入结果通过 ClusterReady 等待。
+	// 启动失败会尝试停止已创建的组件；失败实例不可重启，应重新创建系统。
 	Start() error
 
 	// Stop 优雅地停止当前 ActorSystem 实例。
@@ -60,7 +56,7 @@ type ActorSystem interface {
 	// 仅做格式解析，用于配置、服务发现中拿到的字符串需要发消息时（本地或远程均可）。
 	ParseRef(actorRef string) (ActorRef, error)
 
-	// CreateRef 根据地址与路径构造 ActorRef，不要求目标存在；用于本地或远程引用（如集群单例、远程节点）。
+	// CreateRef 根据地址与路径构造 ActorRef，不要求目标存在；用于本地或远程 Actor 引用。
 	CreateRef(address string, path string) (ActorRef, error)
 
 	// ActorOf 该方法的效果与 ActorContext.ActorOf 相同，但是它是并发安全的。
@@ -71,6 +67,14 @@ type ActorSystem interface {
 
 	// Probe 探测指定 Actor 心跳状态
 	Probe(ref ActorRef, timeout ...time.Duration) Future[*Heartbeat]
+
+	// ClusterSnapshot 查询本地成员及可达性观察，超时规则与 Ask 相同；查询不会探测远端节点。
+	// 未启动、已停止或未启用集群时，Future 返回相应错误。
+	ClusterSnapshot(timeout ...time.Duration) Future[ClusterSnapshot]
+
+	// ClusterReady 等待本次启动的初始加入结果，超时规则与 Ask 相同。
+	// 超时或 Close 只结束当前调用的等待，不取消节点加入；成功结果不代表持续健康。
+	ClusterReady(timeout ...time.Duration) Future[ClusterJoinResult]
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。
@@ -368,19 +372,6 @@ func WithActorSystemRemoting(bindAddr string, advertiseAddr ...string) ActorSyst
 		if utils.IsAddrMissingPort(opts.RemotingAdvertiseAddress) && !utils.IsDomainName(opts.RemotingAdvertiseAddress) {
 			panic("ActorSystem advertise address must be a domain when missing port")
 		}
-	}
-}
-
-// WithActorSystemClusterOption 返回一个 ActorSystemOption，用于配置 ActorSystem 的集群选项。
-//
-// 参数：
-//   - options: 期望设置的集群选项。
-func WithActorSystemgClusterOption(options ...ActorSystemClusterOption) ActorSystemOption {
-	return func(opts *ActorSystemOptions) {
-		if opts.ClusterOptions == nil {
-			return
-		}
-		opts.ClusterOptions = NewActorSystemClusterOptions(options...)
 	}
 }
 
