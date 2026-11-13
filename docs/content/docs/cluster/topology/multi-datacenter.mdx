@@ -30,6 +30,8 @@ system := bootstrap.NewActorSystem(
 
 本地未声明机房时按全体地址轮换。轮换复用已有 Gossip，不增加独立探测消息；普通 Gossip 仍可能随机跨机房发送，每条仍携带全量成员视图。这不是跨机房带宽限制，也不保证故障发现时限，预算说明见[本地可达性](/docs/cluster/runtime/reachability)。
 
+跨机房应答较慢时，可独立调整 `WithActorSystemClusterMaxConcurrentProbes`，无需同时增大 `GossipPeersCount` 的每轮发送数量。更大的观察并发会保留更多等待记录；具体选择应结合链路延迟、探测预算和成员规模验证。
+
 ## 地址与种子
 
 每个节点使用其他节点能够访问的广告地址；种子填写广告地址，格式为 `host:port`。部署方式见[快速开始](/docs/cluster/quick-start)，连接配置见[远程通讯](/docs/config/remoting)。

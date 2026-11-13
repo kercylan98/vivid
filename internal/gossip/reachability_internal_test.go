@@ -161,7 +161,7 @@ func TestActor_GossipReachabilityCorrelation(t *testing.T) {
 
 func TestActor_GossipReachabilityBudget(t *testing.T) {
 	local := reachableMember("local:10001")
-	opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterGossipPeersCount(2))
+	opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterGossipPeersCount(2), vivid.WithActorSystemClusterMaxConcurrentProbes(2))
 	a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: opts, reachability: newLocalReachability()}
 	a.view.Members().Upsert(local)
 	for i := range 10 {

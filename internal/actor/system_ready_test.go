@@ -203,6 +203,8 @@ func TestSystem_ClusterInvalidOptions(t *testing.T) {
 		{"negative_delay", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterLaunchDelay(-1)}},
 		{"zero_interval", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterGossipInterval(0)}},
 		{"negative_peers", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterGossipPeersCount(-1)}},
+		{"zero_probes", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterMaxConcurrentProbes(0)}},
+		{"negative_probes", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterMaxConcurrentProbes(-1)}},
 		{"zero_shutdown", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterGracefulShutdownTimeout(0)}},
 		{"zero_join", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterJoinTimeout(0)}},
 		{"invalid_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("node-without-port")}},

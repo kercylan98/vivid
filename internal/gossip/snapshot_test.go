@@ -11,17 +11,19 @@ import (
 // SnapshotActor 仅用于测试，在 Actor 消息线程中采集视图，避免测试并发读取可变成员列表。
 type SnapshotActor struct {
 	*Actor
-	pingCount map[string]uint64
+	pingCount        map[string]uint64
+	maxPendingProbes int
 }
 
 type TestSnapshotRequest struct{}
 
 type SnapshotResponse struct {
-	Snapshot  vivid.ClusterSnapshot
-	ID        string
-	Status    endpoint.Status
-	View      *ClusterView
-	PingCount map[string]uint64
+	Snapshot         vivid.ClusterSnapshot
+	ID               string
+	Status           endpoint.Status
+	View             *ClusterView
+	PingCount        map[string]uint64
+	MaxPendingProbes int
 }
 
 func NewSnapshotActor(options *vivid.ActorSystemClusterOptions) *SnapshotActor {
@@ -37,16 +39,20 @@ func (a *SnapshotActor) OnReceive(ctx vivid.ActorContext) {
 			counts[key] = count
 		}
 		ctx.Reply(SnapshotResponse{
-			Snapshot:  a.currentSnapshot(),
-			ID:        a.info.ID(),
-			Status:    a.info.Status,
-			View:      &ClusterView{members: a.view.Members().Clone(), version: a.view.Version().Clone()},
-			PingCount: counts,
+			Snapshot:         a.currentSnapshot(),
+			ID:               a.info.ID(),
+			Status:           a.info.Status,
+			View:             &ClusterView{members: a.view.Members().Clone(), version: a.view.Version().Clone()},
+			PingCount:        counts,
+			MaxPendingProbes: a.maxPendingProbes,
 		})
 	case *gossipmessages.Ping:
 		a.pingCount[message.Info.ActorRef.GetAddress()]++
 		a.Actor.OnReceive(ctx)
 	default:
 		a.Actor.OnReceive(ctx)
+	}
+	if a.reachability != nil {
+		a.maxPendingProbes = max(a.maxPendingProbes, len(a.reachability.pending))
 	}
 }

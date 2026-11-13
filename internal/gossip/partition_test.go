@@ -194,6 +194,7 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 					vivid.WithActorSystemClusterLaunchDelay(0),
 					vivid.WithActorSystemClusterGossipInterval(50*time.Millisecond),
 					vivid.WithActorSystemClusterGossipPeersCount(1),
+					vivid.WithActorSystemClusterMaxConcurrentProbes(3),
 					vivid.WithActorSystemClusterProbeTimeout(150*time.Millisecond),
 					vivid.WithActorSystemClusterReachabilityTTL(3*time.Second),
 					vivid.WithActorSystemClusterGracefulShutdownTimeout(time.Second),
@@ -340,6 +341,14 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 				return true
 			}, 8*time.Second, 50*time.Millisecond)
 			t.Logf("cross-datacenter gossip recovered in %s", time.Since(healedAt))
+			for i := range systems {
+				snapshot, ok := read(i)
+				require.True(t, ok)
+				require.LessOrEqual(t, snapshot.MaxPendingProbes, 3, "真实 TCP 故障下观察并发不能突破独立上限")
+				if !initiallyBlocked {
+					require.Greater(t, snapshot.MaxPendingProbes, 1, "单轮只发送一个地址，未完成观察仍可跨轮积累")
+				}
+			}
 		})
 	}
 }

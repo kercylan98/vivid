@@ -13,9 +13,9 @@ type probeCandidate struct {
 }
 
 // selectPeers 将空闲观察额度交给最久未开始探测的地址，其余名额保留随机 Gossip。
-// peers 已按地址去重并打乱；只调整前 limit 项，不需要排序整个成员列表。
-func (r *localReachability) selectPeers(peers []vivid.ActorRef, limit int) []vivid.ActorRef {
-	limit, available := r.preparePeers(peers, limit)
+// peers 已按地址去重并打乱；只调整本轮发送范围内的目标，不需要排序整个成员列表。
+func (r *localReachability) selectPeers(peers []vivid.ActorRef, sendLimit, probeLimit int) []vivid.ActorRef {
+	limit, available := r.preparePeers(peers, sendLimit, probeLimit)
 	if available == 0 {
 		return peers[:limit]
 	}
@@ -30,7 +30,7 @@ func (r *localReachability) selectPeers(peers []vivid.ActorRef, limit int) []viv
 }
 
 // preparePeers 清理已经退出候选集合的地址，并计算本轮可开始的观察数量。
-func (r *localReachability) preparePeers(peers []vivid.ActorRef, limit int) (int, int) {
+func (r *localReachability) preparePeers(peers []vivid.ActorRef, sendLimit, probeLimit int) (int, int) {
 	r.scheduleRound++
 	for _, peer := range peers {
 		address := peer.GetAddress()
@@ -46,8 +46,8 @@ func (r *localReachability) preparePeers(peers []vivid.ActorRef, limit int) (int
 			delete(r.pending, address)
 		}
 	}
-	limit = min(max(limit, 0), len(peers))
-	available := min(limit, max(limit-len(r.pending), 0))
+	limit := min(max(sendLimit, 0), len(peers))
+	available := min(limit, max(max(probeLimit, 0)-len(r.pending), 0))
 	r.candidates = r.candidates[:0]
 	return limit, available
 }

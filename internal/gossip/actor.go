@@ -375,9 +375,9 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 	peers := a.view.Members().Unseens(a.info, a.seeds, limit)
 	if observe {
 		if a.info.DataCenter != "" {
-			peers = a.reachability.selectDataCenterPeers(peers, a.view.Members().List(), a.opts.GossipPeersCount)
+			peers = a.reachability.selectDataCenterPeers(peers, a.view.Members().List(), a.opts.GossipPeersCount, a.opts.MaxConcurrentProbes)
 		} else {
-			peers = a.reachability.selectPeers(peers, a.opts.GossipPeersCount)
+			peers = a.reachability.selectPeers(peers, a.opts.GossipPeersCount, a.opts.MaxConcurrentProbes)
 		}
 	}
 	if len(peers) == 0 {
@@ -389,7 +389,7 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 
 	for _, peer := range peers {
 		if observe {
-			sequence := a.reachability.begin(peer, a.view.Members().List(), now, a.opts.ProbeTimeout, a.opts.GossipPeersCount)
+			sequence := a.reachability.begin(peer, a.view.Members().List(), now, a.opts.ProbeTimeout, a.opts.MaxConcurrentProbes)
 			if sequence != 0 {
 				// 多个目标共享只读视图，但各自保留独立的请求序号。
 				request := *ping

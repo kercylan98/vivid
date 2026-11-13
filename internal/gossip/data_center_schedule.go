@@ -22,8 +22,8 @@ type dataCenterSchedule struct {
 
 // selectDataCenterPeers 先轮换有空闲候选的机房，再在机房内选择最久未开始观察的地址。
 // 只为新观察分配机会，等待中的请求及普通 Gossip 不构成机房已获得新观察。
-func (r *localReachability) selectDataCenterPeers(peers []vivid.ActorRef, members []*endpoint.Information, limit int) []vivid.ActorRef {
-	limit, available := r.preparePeers(peers, limit)
+func (r *localReachability) selectDataCenterPeers(peers []vivid.ActorRef, members []*endpoint.Information, sendLimit, probeLimit int) []vivid.ActorRef {
+	limit, available := r.preparePeers(peers, sendLimit, probeLimit)
 	if r.dataCenters == nil {
 		r.dataCenters = &dataCenterSchedule{addresses: make(map[string]string), groups: make(map[string]*dataCenterGroup), dirty: true}
 	}

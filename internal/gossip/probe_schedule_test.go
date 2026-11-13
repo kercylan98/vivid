@@ -31,7 +31,7 @@ func TestProbeSchedule_Coverage(t *testing.T) {
 				if round%2 == 1 {
 					slices.Reverse(candidates)
 				}
-				selected := r.selectPeers(candidates, limit)
+				selected := r.selectPeers(candidates, limit, limit)
 				require.Len(t, selected, min(limit, len(peers)))
 				for _, peer := range selected {
 					sequence := r.begin(peer, nil, now, time.Second, limit)
@@ -58,7 +58,7 @@ func TestProbeSchedule_SlowPeerDoesNotStarveOthers(t *testing.T) {
 	}
 	now := time.Now()
 	const limit = 2
-	first := r.selectPeers(slices.Clone(peers), limit)
+	first := r.selectPeers(slices.Clone(peers), limit, limit)
 	require.Equal(t, peers[:limit], first)
 	slowSequence := r.begin(first[0], nil, now, time.Second, limit)
 	slowDeadline := now.Add(time.Second)
@@ -67,7 +67,7 @@ func TestProbeSchedule_SlowPeerDoesNotStarveOthers(t *testing.T) {
 	started := map[string]bool{first[0].GetAddress(): true, first[1].GetAddress(): true}
 	for range len(peers) - limit {
 		now = now.Add(time.Millisecond)
-		selected := r.selectPeers(slices.Clone(peers), limit)
+		selected := r.selectPeers(slices.Clone(peers), limit, limit)
 		require.Len(t, selected, limit, "慢目标等待期间也保留普通 Gossip 名额")
 		peer := selected[0]
 		require.False(t, started[peer.GetAddress()], "空闲额度不能反复交给已成功的同一个地址")
@@ -83,7 +83,7 @@ func TestProbeSchedule_SlowPeerDoesNotStarveOthers(t *testing.T) {
 	// 失败地址完成本次预算后仍有重试机会，并不被健康成员永久排除。
 	now = now.Add(time.Second)
 	r.expire(now, time.Second)
-	next := r.selectPeers(slices.Clone(peers), limit)
+	next := r.selectPeers(slices.Clone(peers), limit, limit)
 	assert.Equal(t, first[0].GetAddress(), next[0].GetAddress())
 }
 
@@ -92,10 +92,10 @@ func TestProbeSchedule_Churn(t *testing.T) {
 	now := time.Now()
 	old := reachableMember("old:10001")
 	seed := &tombstoneRef{address: "seed:10002"}
-	r.selectPeers([]vivid.ActorRef{old.ActorRef}, 1)
+	r.selectPeers([]vivid.ActorRef{old.ActorRef}, 1, 1)
 	oldSequence := r.begin(old.ActorRef, []*endpoint.Information{old}, now, time.Second, 1)
 	// 退出地址不再是候选项，应该立即释放空请求与排序记录。
-	selected := r.selectPeers([]vivid.ActorRef{seed}, 1)
+	selected := r.selectPeers([]vivid.ActorRef{seed}, 1, 1)
 	require.Equal(t, []vivid.ActorRef{seed}, selected)
 	assert.Empty(t, r.pending)
 	assert.Empty(t, r.attempts)
@@ -106,16 +106,16 @@ func TestProbeSchedule_Churn(t *testing.T) {
 	r.accept(seed, sequence, "seed-instance", now, time.Second)
 	// 相同地址的实例重启不应新增地址排序记录，也不按实例随机 ID 重排。
 	current := reachableMember(seed.GetAddress())
-	selected = r.selectPeers([]vivid.ActorRef{current.ActorRef}, 1)
+	selected = r.selectPeers([]vivid.ActorRef{current.ActorRef}, 1, 1)
 	require.Len(t, selected, 1)
 	assert.Len(t, r.attempts, 1)
 	assert.Equal(t, sequence, r.attempts[seed.GetAddress()].sequence)
-	r.selectPeers(nil, 1)
+	r.selectPeers(nil, 1, 1)
 	assert.Empty(t, r.attempts)
 	assert.Empty(t, r.pending)
-	assert.Empty(t, r.selectPeers([]vivid.ActorRef{seed}, 0))
-	assert.Empty(t, r.selectPeers([]vivid.ActorRef{seed}, -1))
-	r.selectPeers([]vivid.ActorRef{seed}, 1)
+	assert.Empty(t, r.selectPeers([]vivid.ActorRef{seed}, 0, 0))
+	assert.Empty(t, r.selectPeers([]vivid.ActorRef{seed}, -1, -1))
+	r.selectPeers([]vivid.ActorRef{seed}, 1, 1)
 	r.begin(seed, nil, now, time.Second, 1)
 	r.reset()
 	assert.Empty(t, r.attempts)
@@ -144,7 +144,7 @@ func TestProbeSchedule_PriorityAndPermutation(t *testing.T) {
 		}
 		random.Shuffle(len(peers), func(i, j int) { peers[i], peers[j] = peers[j], peers[i] })
 		before := slices.Clone(peers)
-		selected := r.selectPeers(peers, limit)
+		selected := r.selectPeers(peers, limit, limit)
 		assert.ElementsMatch(t, before, peers, "候选交换不能丢失或重复目标")
 		require.Len(t, selected, min(limit, len(peers)))
 		available := min(len(selected), max(limit-len(r.pending), 0), len(eligible))
@@ -177,7 +177,7 @@ func (c *scheduleContext) Tell(peer vivid.ActorRef, message vivid.Message) {
 
 func TestActor_GossipProbeScheduling(t *testing.T) {
 	local := reachableMember("local:10001")
-	opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterGossipPeersCount(2), vivid.WithActorSystemClusterProbeTimeout(time.Hour))
+	opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterGossipPeersCount(2), vivid.WithActorSystemClusterMaxConcurrentProbes(2), vivid.WithActorSystemClusterProbeTimeout(time.Hour))
 	a := &Actor{info: local, opts: opts, view: NewClusterView(log.GetDefault()), reachability: newLocalReachability()}
 	a.view.Members().Upsert(local)
 	for i := range 7 {
