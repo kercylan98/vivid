@@ -222,6 +222,8 @@ system := bootstrap.NewActorSystem(
 
 连接读取、帧解析或消息解码失败时，当前会话会关闭。可订阅 **`ves.RemotingConnectionClosedEvent`**，通过 `Address`、`PeerClosed` 和 `Error` 获取关闭原因；有待发送消息时，系统会尝试重新连接。
 
+断开后，没有待发送消息、连接或重试任务的端点会自动回收；健康连接继续复用。后续通信会按需创建端点，业务可继续使用原来的 ActorRef，无需手动管理端点生命周期。
+
 ## 远程连接重试与死信
 
 向远程节点发送消息时，连接失败后按 **ActorSystemRemotingOptions** 中的策略有限重试。**NewActorSystemRemotingOptions()** 默认提供：额外重试 10 次、初始延迟 500ms、最大延迟 10s、退避因子 2.5，启用随机抖动。可通过 **WithActorSystemRemotingOption** 配置单项或使用 **WithActorSystemRemotingReconnect** 批量配置：

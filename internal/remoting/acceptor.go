@@ -241,7 +241,7 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 	}
 	session := newSession(message.peerAddr, localAddr, conn, sessionRoleInbound)
 	session.pending = task
-	endpointRef, ensureErr := a.endpointManager.ensureEndpoint(ctx, message.peerAddr, func(address string) (vivid.ActorRef, error) {
+	ensureErr := a.endpointManager.emitToAddress(ctx, message.peerAddr, endpointAttachSession{session: session}, func(address string) (vivid.ActorRef, error) {
 		endpointRef, err := ctx.ActorOf(newEndpoint(a.availableSignal, address, a.endpointManager, a.codec, a.envelopHandler, a.advertiseAddr, a.bufferPolicy, a.retryPolicy, a.associationPolicy))
 		if err != nil {
 			return nil, err
@@ -256,7 +256,6 @@ func (a *acceptor) onHandshakeCompleted(ctx vivid.ActorContext, message *acceptH
 		ctx.Logger().Error("failed to ensure endpoint", log.Any("error", spawnErr))
 		return
 	}
-	ctx.Tell(endpointRef, endpointAttachSession{session: session})
 }
 
 func (a *acceptor) doHandshake(conn net.Conn) (string, error) {

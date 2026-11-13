@@ -133,6 +133,7 @@ type endpoint struct {
 	retryCount        int  // 当前重试次数
 	retryScheduled    bool // 是否已调度重试
 	associationSeq    uint64
+	received          uint64 // 已处理的外部信封与接入会话数量，与管理器投递计数对应
 }
 
 func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
@@ -144,8 +145,10 @@ func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
 	case *vivid.OnKilled:
 		e.onKilled(ctx, msg)
 	case vivid.Envelop:
+		e.received++
 		e.onEnvelop(ctx, msg)
 	case endpointAttachSession:
+		e.received++
 		e.onAttachSession(ctx, msg)
 	case endpointRetryConnect:
 		e.onRetryConnect(ctx)
@@ -166,6 +169,19 @@ func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
 		default:
 			e.onPipeUnexpectedResult(ctx, message, msg.Error)
 		}
+	}
+	e.retireIfIdle(ctx)
+}
+
+// retireIfIdle 在消息线程确认无业务与连接任务后，原子移除路由，再结束自身。
+func (e *endpoint) retireIfIdle(ctx vivid.ActorContext) {
+	if e.stopping || e.association != nil || e.inboundSession != nil || e.fallbackSession != nil ||
+		e.connecting || e.connectTask != nil || e.retryScheduled || e.writing || !e.outboundBuffer.Empty() {
+		return
+	}
+	if e.endpointManager.retireEndpoint(e.address, ctx.Ref(), e.received) {
+		e.stopping = true
+		ctx.Kill(ctx.Ref(), false, "idle endpoint")
 	}
 }
 
