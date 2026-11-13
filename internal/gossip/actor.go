@@ -8,7 +8,6 @@ import (
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
 	"github.com/kercylan98/vivid/internal/gossip/versionvector"
-	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
@@ -227,7 +226,7 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 		ping.GossipType == gossipmessages.GossipTypeJoin && a.info.Status != endpoint.StatusUp {
 		return
 	}
-	if !a.validMemberDataCenter(ping.Info) {
+	if !a.validMember(ping.Info) || ping.Version.Get(ping.Info.ID()) == 0 {
 		return
 	}
 	a.refreshReachability(ctx, time.Now())
@@ -236,7 +235,7 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 		ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeDiscoverNewNode))
 	}
 	for _, member := range ping.MemberList.List() {
-		if member.ID() != ping.Info.ID() {
+		if member != nil && member.ID() != ping.Info.ID() {
 			a.mergeMember(member, ping.Version)
 		}
 	}
@@ -265,7 +264,7 @@ func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining {
 		return
 	}
-	if !a.validMemberDataCenter(pong.Info) {
+	if !a.validMember(pong.Info) || pong.Version.Get(pong.Info.ID()) == 0 {
 		return
 	}
 	now := time.Now()
@@ -277,7 +276,7 @@ func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 func (a *Actor) mergePong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 	a.mergeMember(pong.Info, pong.Version)
 	for _, member := range pong.MemberList.List() {
-		if member.ID() != pong.Info.ID() {
+		if member != nil && member.ID() != pong.Info.ID() {
 			a.mergeMember(member, pong.Version)
 		}
 	}
@@ -288,6 +287,9 @@ func (a *Actor) mergePong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 
 // mergeMember 同时接收成员记录及其版本，返回是否发现了新实例。
 func (a *Actor) mergeMember(info *endpoint.Information, version *versionvector.VersionVector) bool {
+	if info == nil {
+		return false
+	}
 	id := info.ID()
 	// 本实例是自身状态和版本的唯一写入方，远端转发不得修改本地历史。
 	if id == "" || id == a.info.ID() {
@@ -298,7 +300,7 @@ func (a *Actor) mergeMember(info *endpoint.Information, version *versionvector.V
 	if remoteVersion <= a.view.Version().Get(id) {
 		return false
 	}
-	if !a.validMemberDataCenter(info) {
+	if !a.validMember(info) {
 		return false
 	}
 	isNew := a.view.Members().Upsert(info)
@@ -309,15 +311,6 @@ func (a *Actor) mergeMember(info *endpoint.Information, version *versionvector.V
 	}
 	a.membersChanged = true
 	return isNew
-}
-
-// validMemberDataCenter 同一实例的机房保持固定，新实例可重新声明机房。
-func (a *Actor) validMemberDataCenter(info *endpoint.Information) bool {
-	if info.DataCenter != "" && !utils.IsValidClusterLabel(info.DataCenter) {
-		return false
-	}
-	known := a.view.Members().Get(info.ID())
-	return known == nil || known.DataCenter == info.DataCenter
 }
 
 func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {

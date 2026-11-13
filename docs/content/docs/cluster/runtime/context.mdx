@@ -36,6 +36,8 @@ func printMembers(system vivid.ActorSystem) error {
 
 未启动、已停止、未启用集群时，分别返回 `ErrorActorSystemNotStarted`、`ErrorActorSystemStopped`、`ErrorClusterNotEnabled`。查询也可能因超时失败；通过 Future 的 `Close(err)` 可取消等待。
 
+成员实例的地址、机房和创建时间在本次启动内固定；变更这些声明需以新实例加入。无效的直接发送方消息会被丢弃，转发视图中的无效成员记录及其版本会被忽略，不影响其他合法记录的合并。
+
 完整成员列表包含历史实例和退出记录，不能将成员数或 Up 数量作为健康节点数。状态与重启边界见[节点生命周期](/docs/cluster/events/lifecycle)。
 
 需要持续观察时，先订阅再查询初始快照，参见[成员事件](/docs/cluster/events/events)。正常退出由 `system.Stop()` 驱动，当前没有独立的集群 Leave 或 Quorum 查询接口。

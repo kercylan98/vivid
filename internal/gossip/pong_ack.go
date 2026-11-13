@@ -22,7 +22,7 @@ func (a *Actor) replyPongAck(ctx vivid.ActorContext, ping *gossipmessages.Ping) 
 
 // onPongAck 只接受已知实例当前状态的直接应答，不合并成员或导入版本。
 func (a *Actor) onPongAck(ctx vivid.ActorContext, ack *gossipmessages.PongAck) {
-	if ack == nil || ack.ClusterName != a.opts.Name || ack.Info == nil || ack.Info.ActorRef == nil ||
+	if ack == nil || ack.ClusterName != a.opts.Name || !a.validMember(ack.Info) ||
 		a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining {
 		return
 	}

@@ -47,7 +47,7 @@ func TestActor_GossipOutboundViewDelayedEncoding(t *testing.T) {
 		if pong, ok := ctx.Message().(*gossipmessages.Pong); ok {
 			ctx.Reply(pong)
 		}
-	}))
+	}), vivid.WithActorName("@gossip"))
 	require.NoError(t, err)
 	remote := endpoint.NewInformation(echo, time.Unix(1, 0))
 	remote.DataCenter, remote.Status = "dc-b", endpoint.StatusUp

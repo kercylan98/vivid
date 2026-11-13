@@ -30,7 +30,7 @@ type joinContext struct{ tombstoneContext }
 func (*joinContext) Scheduler() vivid.Scheduler { return &joinScheduler{} }
 
 func TestActor_GossipJoinResponse(t *testing.T) {
-	for _, name := range []string{"accepted", "ordinary_pong", "light_ack", "wrong_seed", "seed_leaving", "missing_ack", "old_instance_ack", "wrong_revision", "nil_info", "nil_members", "nil_version", "wrong_cluster", "missing_cluster", "nil_pong", "rejected", "same_cluster_rejection", "nil_rejection", "invalid_data_center", "wrong_data_center_ack"} {
+	for _, name := range []string{"accepted", "ordinary_pong", "light_ack", "wrong_seed", "seed_leaving", "missing_ack", "old_instance_ack", "wrong_revision", "nil_info", "nil_members", "nil_version", "wrong_cluster", "missing_cluster", "nil_pong", "rejected", "same_cluster_rejection", "nil_rejection", "invalid_data_center", "wrong_data_center_ack", "invalid_seed_status", "invalid_self_ref", "invalid_self_created", "invalid_relay", "nil_relay"} {
 		t.Run(name, func(t *testing.T) {
 			local := endpoint.NewInformation(&tombstoneRef{address: "local:10001"}, time.Unix(1, 0))
 			local.Status = endpoint.StatusJoining
@@ -85,6 +85,21 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 				pong = nil
 			case "invalid_data_center":
 				pong.Info.DataCenter = "dc b"
+			case "invalid_seed_status":
+				pong.Info.Status = endpoint.Status(255)
+			case "invalid_self_ref":
+				pong.MemberList.Get(local.ID()).ActorRef = &viewPathRef{tombstoneRef: &tombstoneRef{address: local.ActorRef.GetAddress()}}
+			case "invalid_self_created":
+				pong.MemberList.Get(local.ID()).CreatedAt = local.CreatedAt.Add(time.Second)
+			case "invalid_relay", "nil_relay":
+				remote := reachableMember("third:10003")
+				remote.Status = endpoint.Status(255)
+				pong.MemberList.Upsert(remote)
+				pong.Version.Update(remote.ID(), 1)
+				if name == "nil_relay" {
+					pong.MemberList.List()[2] = pong.MemberList.List()[0]
+					pong.MemberList.List()[0] = nil
+				}
 			case "wrong_data_center_ack":
 				pong.MemberList.Get(local.ID()).DataCenter = "dc-b"
 			}
@@ -107,7 +122,8 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 			require.Equal(t, endpoint.StatusJoining, local.Status)
 			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), message: message})
 			result, err := a.Readiness().Wait(nil, time.Second).Result()
-			if name == "accepted" {
+			if name == "accepted" || name == "invalid_relay" || name == "nil_relay" {
+				assert.Len(t, a.view.Members().List(), 2, "加入时同样忽略无效转发记录")
 				require.NoError(t, err)
 				assert.Nil(t, a.joinErrors, "后续种子成功应释放此前失败原因")
 				assert.Equal(t, seed.ActorRef.GetAddress(), result.SeedAddress)
