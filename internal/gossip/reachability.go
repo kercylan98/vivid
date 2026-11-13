@@ -28,6 +28,7 @@ type localReachability struct {
 	pending       map[string]reachabilityProbe
 	attempts      map[string]probeAttempt
 	candidates    []probeCandidate
+	dataCenters   *dataCenterSchedule
 	scheduleRound uint64
 	sequence      uint64
 	changed       bool
@@ -80,6 +81,11 @@ func (r *localReachability) begin(peer vivid.ActorRef, members []*endpoint.Infor
 	}
 	r.pending[key] = probe
 	r.attempts[key] = probeAttempt{sequence: probe.sequence, round: r.scheduleRound}
+	if r.dataCenters != nil {
+		if group := r.dataCenters.groups[r.dataCenters.addresses[key]]; group != nil {
+			group.sequence = probe.sequence
+		}
+	}
 	return probe.sequence
 }
 
@@ -137,6 +143,7 @@ func (r *localReachability) reset() {
 	clear(r.pending)
 	clear(r.attempts)
 	r.candidates = nil
+	r.dataCenters = nil
 }
 
 func (a *Actor) refreshReachability(ctx vivid.ActorContext, now time.Time) {

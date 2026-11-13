@@ -125,6 +125,7 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 			var systems []vivid.PrimaryActorSystem
 			var refs []vivid.ActorRef
 			var addresses, backends []string
+			dataCenters := []string{"dc-a", "dc-b"}
 			t.Cleanup(func() {
 				network.partition(false)
 				var stopped sync.WaitGroup
@@ -186,6 +187,7 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 				}
 				opts := vivid.NewActorSystemClusterOptions(
 					vivid.WithActorSystemClusterName("vivid-test"),
+					vivid.WithActorSystemClusterDataCenter(dataCenters[i/2]),
 					vivid.WithActorSystemClusterBootstrap(i%2 == 0),
 					vivid.WithActorSystemClusterSeeds(seeds...),
 					vivid.WithActorSystemClusterJoinTimeout(500*time.Millisecond),
@@ -243,7 +245,7 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 							return false
 						}
 						for _, member := range snapshot.View.Members().List() {
-							if member.Status != endpoint.StatusUp {
+							if member.Status != endpoint.StatusUp || member.DataCenter != dataCenters[network.groups[member.ActorRef.GetAddress()]] {
 								return false
 							}
 						}

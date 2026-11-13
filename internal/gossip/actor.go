@@ -374,7 +374,11 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 	}
 	peers := a.view.Members().Unseens(a.info, a.seeds, limit)
 	if observe {
-		peers = a.reachability.selectPeers(peers, a.opts.GossipPeersCount)
+		if a.info.DataCenter != "" {
+			peers = a.reachability.selectDataCenterPeers(peers, a.view.Members().List(), a.opts.GossipPeersCount)
+		} else {
+			peers = a.reachability.selectPeers(peers, a.opts.GossipPeersCount)
+		}
 	}
 	if len(peers) == 0 {
 		return

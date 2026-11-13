@@ -15,6 +15,22 @@ type probeCandidate struct {
 // selectPeers 将空闲观察额度交给最久未开始探测的地址，其余名额保留随机 Gossip。
 // peers 已按地址去重并打乱；只调整前 limit 项，不需要排序整个成员列表。
 func (r *localReachability) selectPeers(peers []vivid.ActorRef, limit int) []vivid.ActorRef {
+	limit, available := r.preparePeers(peers, limit)
+	if available == 0 {
+		return peers[:limit]
+	}
+	for index, peer := range peers {
+		address := peer.GetAddress()
+		if _, waiting := r.pending[address]; waiting {
+			continue
+		}
+		r.candidates = insertProbeCandidate(r.candidates, probeCandidate{index: index, sequence: r.attempts[address].sequence}, available)
+	}
+	return r.prioritizePeers(peers, limit)
+}
+
+// preparePeers 清理已经退出候选集合的地址，并计算本轮可开始的观察数量。
+func (r *localReachability) preparePeers(peers []vivid.ActorRef, limit int) (int, int) {
 	r.scheduleRound++
 	for _, peer := range peers {
 		address := peer.GetAddress()
@@ -33,29 +49,28 @@ func (r *localReachability) selectPeers(peers []vivid.ActorRef, limit int) []viv
 	limit = min(max(limit, 0), len(peers))
 	available := min(limit, max(limit-len(r.pending), 0))
 	r.candidates = r.candidates[:0]
-	if available == 0 {
-		return peers[:limit]
+	return limit, available
+}
+
+// insertProbeCandidate 只保留额度大小的有序候选，避免排序整个地址集合。
+func insertProbeCandidate(candidates []probeCandidate, candidate probeCandidate, limit int) []probeCandidate {
+	if len(candidates) == limit && candidate.sequence >= candidates[limit-1].sequence {
+		return candidates
 	}
-	for index, peer := range peers {
-		address := peer.GetAddress()
-		if _, waiting := r.pending[address]; waiting {
-			continue
-		}
-		sequence := r.attempts[address].sequence
-		if len(r.candidates) == available && sequence >= r.candidates[available-1].sequence {
-			continue
-		}
-		if len(r.candidates) < available {
-			r.candidates = append(r.candidates, probeCandidate{})
-		}
-		// 仅维护空闲额度大小的有序候选，不为每个名额重复查询所有地址。
-		position := len(r.candidates) - 1
-		for position > 0 && sequence < r.candidates[position-1].sequence {
-			r.candidates[position] = r.candidates[position-1]
-			position--
-		}
-		r.candidates[position] = probeCandidate{index: index, sequence: sequence}
+	if len(candidates) < limit {
+		candidates = append(candidates, probeCandidate{})
 	}
+	position := len(candidates) - 1
+	for position > 0 && candidate.sequence < candidates[position-1].sequence {
+		candidates[position] = candidates[position-1]
+		position--
+	}
+	candidates[position] = candidate
+	return candidates
+}
+
+// prioritizePeers 将获得观察额度的地址移到前方，其余名额保留随机 Gossip。
+func (r *localReachability) prioritizePeers(peers []vivid.ActorRef, limit int) []vivid.ActorRef {
 	for selected := range r.candidates {
 		index := r.candidates[selected].index
 		peers[selected], peers[index] = peers[index], peers[selected]
