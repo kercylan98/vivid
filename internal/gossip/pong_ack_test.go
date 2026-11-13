@@ -18,6 +18,8 @@ func newPongAckActors() (*Actor, *Actor, *reachabilityContext, *reachabilityCont
 	b, _ := newViewStableActor(endpoint.StatusUp)
 	b.info.ActorRef = &tombstoneRef{address: "remote:10002"}
 	a.info.DataCenter, b.info.DataCenter = "dc-a", "dc-b"
+	a.view.Members().Upsert(a.info)
+	b.view.Members().Upsert(b.info)
 	a.reachability, b.reachability = newLocalReachability(), newLocalReachability()
 	a.mergeMember(b.info.Clone(), b.view.Version())
 	b.mergeMember(a.info.Clone(), a.view.Version())
@@ -34,7 +36,8 @@ func TestActor_GossipViewMatch(t *testing.T) {
 	for _, field := range []string{"id", "data_center", "address", "path", "virtual", "status", "created", "version", "orphan", "removed"} {
 		t.Run(field, func(t *testing.T) {
 			view := &outboundView{members: a.view.Members().Clone(), version: a.view.Version().Clone()}
-			member := view.members.List()[0]
+			records := view.members.List()
+			member := records[0]
 			switch field {
 			case "id":
 				member.InstanceID = "different"
@@ -57,23 +60,30 @@ func TestActor_GossipViewMatch(t *testing.T) {
 			case "orphan":
 				view.version.Increment("unknown-version")
 			}
+			if field != "removed" {
+				view.members = memberRecords(records)
+			}
 			assert.False(t, b.currentOutboundView().matches(view.members, view.version))
 		})
 	}
 	view := &outboundView{members: a.view.Members().Clone(), version: a.view.Version().Clone()}
-	slices.Reverse(view.members.List())
+	records := view.members.List()
+	slices.Reverse(records)
+	view.members = memberRecords(records)
 	assert.True(t, b.currentOutboundView().matches(view.members, view.version), "成员顺序不影响比较")
 	for _, field := range []string{"duplicate", "nil_info", "nil_ref"} {
 		t.Run(field, func(t *testing.T) {
 			members := initial.MemberList.Clone()
+			records := members.List()
 			switch field {
 			case "duplicate":
-				members.List()[1] = members.List()[0]
+				records[1] = records[0]
 			case "nil_info":
-				members.List()[0] = nil
+				records[0] = nil
 			case "nil_ref":
-				members.List()[0].ActorRef = nil
+				records[0].ActorRef = nil
 			}
+			members = memberRecords(records)
 			assert.False(t, b.currentOutboundView().matches(members, initial.Version))
 			assert.True(t, b.currentOutboundView().matches(initial.MemberList, initial.Version), "失败后仍可比较下一份视图")
 		})
@@ -118,7 +128,9 @@ func TestActor_GossipPongAckFallback(t *testing.T) {
 				ping.Version.Increment("unknown-version")
 			case "duplicate":
 				ping.MemberList = ping.MemberList.Clone()
-				ping.MemberList.List()[1] = ping.MemberList.List()[0]
+				records := ping.MemberList.List()
+				records[1] = records[0]
+				ping.MemberList = memberRecords(records)
 			case "join":
 				ping.GossipType = gossipmessages.GossipTypeJoin
 			case "newer_receiver":
@@ -151,7 +163,7 @@ func TestActor_GossipPongAckCorrelation(t *testing.T) {
 			a, b, ctx, replyCtx := newPongAckActors()
 			now := time.Now()
 			ping := a.preparePing(gossipmessages.GossipTypeCycleSYNC)
-			ping.ProbeSequence = a.reachability.begin(b.info.ActorRef, a.view.Members().List(), now, time.Second, 1)
+			ping.ProbeSequence = a.reachability.begin(b.info.ActorRef, a.view.Members(), now, time.Second, 1)
 			b.onPing(replyCtx, ping)
 			original, ok := replyCtx.reply.(*gossipmessages.PongAck)
 			require.True(t, ok)
@@ -218,7 +230,7 @@ func TestActor_GossipPongAckCorrelation(t *testing.T) {
 func TestActor_GossipPongAckRecovery(t *testing.T) {
 	a, b, ctx, replyCtx := newPongAckActors()
 	ping := a.preparePing(gossipmessages.GossipTypeCycleSYNC)
-	ping.ProbeSequence = a.reachability.begin(b.info.ActorRef, a.view.Members().List(), time.Now(), time.Second, 1)
+	ping.ProbeSequence = a.reachability.begin(b.info.ActorRef, a.view.Members(), time.Now(), time.Second, 1)
 	b.onPing(replyCtx, ping)
 	_, ok := replyCtx.reply.(*gossipmessages.PongAck)
 	require.True(t, ok)

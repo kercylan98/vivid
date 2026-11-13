@@ -123,7 +123,7 @@ func TestActor_GossipLocalVersionOwnership(t *testing.T) {
 				} else {
 					a.onPing(ctx, gossipmessages.NewPing("vivid-test", gossipmessages.GossipTypeCycleSYNC, sender, members, version))
 				}
-				assert.Same(t, local, a.view.Members().Get(local.ID()))
+				assert.Equal(t, local, a.view.Members().Get(local.ID()))
 				assert.Equal(t, endpoint.StatusUp, local.Status)
 				assert.Equal(t, uint64(1), a.view.Version().Get(local.ID()), "本实例的版本只能由本实例递增")
 				assert.Zero(t, a.view.Version().Get("unknown-without-member"), "版本必须与成员记录一起接收")

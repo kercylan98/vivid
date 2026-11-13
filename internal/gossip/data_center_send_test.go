@@ -44,7 +44,7 @@ func TestDataCenterSchedule_OrdinarySends(t *testing.T) {
 				candidates := slices.Clone(peers)
 				random.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
 				// 内部零空闲预算用于隔离普通发送，不创建新的观察。
-				selected := r.selectDataCenterPeers(candidates, members, limit, 0)
+				selected := r.selectDataCenterPeers(candidates, memberRecords(members), limit, 0)
 				require.Len(t, selected, min(limit, len(peers)))
 				assert.ElementsMatch(t, peers, candidates, "重排不能重复或丢失目标")
 				for _, peer := range selected {
@@ -85,15 +85,15 @@ func TestDataCenterSchedule_SendHistory(t *testing.T) {
 	member := reachableMember("peer:10001")
 	member.DataCenter = "dc-a"
 	peer, members := []vivid.ActorRef{member.ActorRef}, []*endpoint.Information{member}
-	r.selectDataCenterPeers(peer, members, 1, 0)
+	r.selectDataCenterPeers(peer, memberRecords(members), 1, 0)
 	assert.Zero(t, r.dataCenters.sequence, "仅选择不算已经发送")
 	r.recordDataCenterSend(member.ActorRef)
 	sent := r.attempts[member.ActorRef.GetAddress()].sent
 	require.NotZero(t, sent)
-	sequence := r.begin(member.ActorRef, members, time.Now(), time.Hour, 1)
+	sequence := r.begin(member.ActorRef, memberRecords(members), time.Now(), time.Hour, 1)
 	assert.Equal(t, sent, r.attempts[member.ActorRef.GetAddress()].sent, "新请求不能覆盖普通发送历史")
 	deadline := r.pending[member.ActorRef.GetAddress()].deadline
-	r.selectDataCenterPeers(peer, members, 1, 1)
+	r.selectDataCenterPeers(peer, memberRecords(members), 1, 1)
 	r.recordDataCenterSend(member.ActorRef)
 	assert.Equal(t, sequence, r.attempts[member.ActorRef.GetAddress()].sequence)
 	assert.Equal(t, sequence, r.dataCenters.groups["dc-a"].sequence)
@@ -102,7 +102,7 @@ func TestDataCenterSchedule_SendHistory(t *testing.T) {
 	next := reachableMember(member.ActorRef.GetAddress())
 	next.DataCenter = "dc-b"
 	r.invalidateDataCenters()
-	r.selectDataCenterPeers([]vivid.ActorRef{next.ActorRef}, []*endpoint.Information{next}, 1, 1)
+	r.selectDataCenterPeers([]vivid.ActorRef{next.ActorRef}, memberRecords([]*endpoint.Information{next}), 1, 1)
 	assert.NotContains(t, r.dataCenters.groups, "dc-a")
 	assert.Greater(t, r.attempts[next.ActorRef.GetAddress()].sent, sent)
 	r.invalidateDataCenters()

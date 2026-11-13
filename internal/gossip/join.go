@@ -179,9 +179,9 @@ func (a *Actor) validJoinPong(pong *gossipmessages.Pong) bool {
 	}
 	// 种子应确认收到本实例的 Joining 记录；普通或旧实例的 Pong 不构成加入成功。
 	var self *endpoint.Information
-	for _, member := range pong.MemberList.List() {
-		if member != nil && member.ID() == a.info.ID() {
-			self = member
+	for _, member := range pong.MemberList.All() {
+		if member.ID() == a.info.ID() {
+			self = &member
 			break
 		}
 	}

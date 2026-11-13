@@ -88,20 +88,27 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 			case "invalid_seed_status":
 				pong.Info.Status = endpoint.Status(255)
 			case "invalid_self_ref":
-				pong.MemberList.Get(local.ID()).ActorRef = &viewPathRef{tombstoneRef: &tombstoneRef{address: local.ActorRef.GetAddress()}}
+				self := pong.MemberList.Get(local.ID())
+				self.ActorRef = &viewPathRef{tombstoneRef: &tombstoneRef{address: local.ActorRef.GetAddress()}}
+				pong.MemberList.Upsert(self)
 			case "invalid_self_created":
-				pong.MemberList.Get(local.ID()).CreatedAt = local.CreatedAt.Add(time.Second)
+				self := pong.MemberList.Get(local.ID())
+				self.CreatedAt = local.CreatedAt.Add(time.Second)
+				pong.MemberList.Upsert(self)
 			case "invalid_relay", "nil_relay":
 				remote := reachableMember("third:10003")
 				remote.Status = endpoint.Status(255)
 				pong.MemberList.Upsert(remote)
 				pong.Version.Update(remote.ID(), 1)
 				if name == "nil_relay" {
-					pong.MemberList.List()[2] = pong.MemberList.List()[0]
-					pong.MemberList.List()[0] = nil
+					records := pong.MemberList.List()
+					records[2], records[0] = records[0], nil
+					pong.MemberList = memberRecords(records)
 				}
 			case "wrong_data_center_ack":
-				pong.MemberList.Get(local.ID()).DataCenter = "dc-b"
+				self := pong.MemberList.Get(local.ID())
+				self.DataCenter = "dc-b"
+				pong.MemberList.Upsert(self)
 			}
 			var message vivid.Message = pong
 			switch name {

@@ -93,7 +93,7 @@ func TestProbeSchedule_Churn(t *testing.T) {
 	old := reachableMember("old:10001")
 	seed := &tombstoneRef{address: "seed:10002"}
 	r.selectPeers([]vivid.ActorRef{old.ActorRef}, 1, 1)
-	oldSequence := r.begin(old.ActorRef, []*endpoint.Information{old}, now, time.Second, 1)
+	oldSequence := r.begin(old.ActorRef, memberRecords([]*endpoint.Information{old}), now, time.Second, 1)
 	// 退出地址不再是候选项，应该立即释放空请求与排序记录。
 	selected := r.selectPeers([]vivid.ActorRef{seed}, 1, 1)
 	require.Equal(t, []vivid.ActorRef{seed}, selected)

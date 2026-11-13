@@ -7,6 +7,7 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
+	"github.com/kercylan98/vivid/internal/gossip/memberlist"
 	"github.com/kercylan98/vivid/pkg/ves"
 )
 
@@ -61,7 +62,7 @@ func (r *localReachability) observe(id string, state vivid.ClusterReachability, 
 }
 
 // begin 为现有 Gossip 消息关联观察；额度耗尽时仍允许正常交换视图。
-func (r *localReachability) begin(peer vivid.ActorRef, members []*endpoint.Information, now time.Time, timeout time.Duration, limit int) uint64 {
+func (r *localReachability) begin(peer vivid.ActorRef, members *memberlist.MemberList, now time.Time, timeout time.Duration, limit int) uint64 {
 	key := peer.GetAddress()
 	if probe, exists := r.pending[key]; exists {
 		return probe.sequence // 重发沿用原序号与截止时间。
@@ -74,11 +75,14 @@ func (r *localReachability) begin(peer vivid.ActorRef, members []*endpoint.Infor
 		r.sequence++
 	}
 	probe := reachabilityProbe{sequence: r.sequence, deadline: now.Add(timeout)}
-	for _, member := range members {
-		if member.ActorRef.GetAddress() == key && observableMember(member.Status) {
-			probe.members = append(probe.members, member.ID())
+	if members != nil {
+		for _, member := range members.All() {
+			if member.ActorRef.GetAddress() == key && observableMember(member.Status) {
+				probe.members = append(probe.members, member.ID())
+			}
 		}
 	}
+
 	r.pending[key] = probe
 	attempt := r.attempts[key]
 	attempt.sequence, attempt.round = probe.sequence, r.scheduleRound

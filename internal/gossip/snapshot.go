@@ -38,8 +38,8 @@ func (a *Actor) currentSnapshot() *clusterSnapshot {
 	if a.snapshot != nil {
 		return a.snapshot
 	}
-	members := make([]vivid.ClusterMember, len(a.view.Members().List()))
-	for i, member := range a.view.Members().List() {
+	members := make([]vivid.ClusterMember, a.view.Members().Len())
+	for i, member := range a.view.Members().All() {
 		members[i] = vivid.ClusterMember{
 			ID:           member.ID(),
 			Address:      member.ActorRef.GetAddress(),

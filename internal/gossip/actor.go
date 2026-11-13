@@ -234,9 +234,9 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 	if a.mergeMember(ping.Info, ping.Version) {
 		ctx.Tell(ctx.Ref(), gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeDiscoverNewNode))
 	}
-	for _, member := range ping.MemberList.List() {
-		if member != nil && member.ID() != ping.Info.ID() {
-			a.mergeMember(member, ping.Version)
+	for _, member := range ping.MemberList.All() {
+		if member.ID() != ping.Info.ID() {
+			a.mergeMember(&member, ping.Version)
 		}
 	}
 	if a.membersChanged {
@@ -275,9 +275,9 @@ func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 
 func (a *Actor) mergePong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 	a.mergeMember(pong.Info, pong.Version)
-	for _, member := range pong.MemberList.List() {
-		if member != nil && member.ID() != pong.Info.ID() {
-			a.mergeMember(member, pong.Version)
+	for _, member := range pong.MemberList.All() {
+		if member.ID() != pong.Info.ID() {
+			a.mergeMember(&member, pong.Version)
 		}
 	}
 	if a.membersChanged {
@@ -373,12 +373,12 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 	limit := a.opts.GossipPeersCount
 	if observe {
 		// 观察需要看到所有候选地址，不能在分配额度前先随机截断。
-		limit = len(a.view.Members().List()) + len(a.seeds)
+		limit = a.view.Members().Len() + len(a.seeds)
 	}
 	peers := a.view.Members().Unseens(a.info, a.seeds, limit)
 	if observe {
 		if a.info.DataCenter != "" {
-			peers = a.reachability.selectDataCenterPeers(peers, a.view.Members().List(), a.opts.GossipPeersCount, a.opts.MaxConcurrentProbes)
+			peers = a.reachability.selectDataCenterPeers(peers, a.view.Members(), a.opts.GossipPeersCount, a.opts.MaxConcurrentProbes)
 		} else {
 			peers = a.reachability.selectPeers(peers, a.opts.GossipPeersCount, a.opts.MaxConcurrentProbes)
 		}
@@ -392,7 +392,7 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 
 	for _, peer := range peers {
 		if observe {
-			sequence := a.reachability.begin(peer, a.view.Members().List(), now, a.opts.ProbeTimeout, a.opts.MaxConcurrentProbes)
+			sequence := a.reachability.begin(peer, a.view.Members(), now, a.opts.ProbeTimeout, a.opts.MaxConcurrentProbes)
 			if sequence != 0 {
 				// 多个目标共享只读视图，但各自保留独立的请求序号。
 				request := *ping

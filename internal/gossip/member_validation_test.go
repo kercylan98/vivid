@@ -63,7 +63,9 @@ func TestActor_GossipMemberValidation(t *testing.T) {
 					members := memberlist.New(nil)
 					members.Upsert(good)
 					members.Upsert(b.info.Clone())
-					members.List()[1] = bad
+					records := members.List()
+					records[1] = bad
+					members = memberRecords(records)
 					if version == nil {
 						version = b.view.Version().Clone()
 						version.Remove(b.info.ID())

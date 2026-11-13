@@ -20,13 +20,13 @@ type outboundView struct {
 // matches 按成员身份比较请求已有的完整视图，不改变发送顺序。
 // 索引和去重标记仅由 Actor 线程访问，不属于交给异步发送的成员与版本。
 func (v *outboundView) matches(members *memberlist.MemberList, version *versionvector.VersionVector) bool {
-	if len(members.List()) != len(v.members.List()) || !v.version.IsEqual(version) {
+	if members.Len() != v.members.Len() || !v.version.IsEqual(version) {
 		return false
 	}
 	if v.indexes == nil {
-		v.indexes = make(map[string]int, len(v.members.List()))
-		v.seen = make([]uint64, len(v.members.List()))
-		for index, member := range v.members.List() {
+		v.indexes = make(map[string]int, v.members.Len())
+		v.seen = make([]uint64, v.members.Len())
+		for index, member := range v.members.All() {
 			v.indexes[member.ID()] = index
 		}
 	}
@@ -35,15 +35,15 @@ func (v *outboundView) matches(members *memberlist.MemberList, version *versionv
 		clear(v.seen)
 		v.round++
 	}
-	for _, member := range members.List() {
-		if member == nil || member.ActorRef == nil {
+	for _, member := range members.All() {
+		if member.ActorRef == nil {
 			return false
 		}
 		index, exists := v.indexes[member.ID()]
 		if !exists || v.seen[index] == v.round {
 			return false
 		}
-		known := v.members.List()[index]
+		known := v.members.At(index)
 		if known.DataCenter != member.DataCenter || known.Status != member.Status || known.CreatedAt.UnixNano() != member.CreatedAt.UnixNano() ||
 			known.ActorRef.GetAddress() != member.ActorRef.GetAddress() || known.ActorRef.GetPath() != member.ActorRef.GetPath() || known.ActorRef.IsVirtual() != member.ActorRef.IsVirtual() {
 			return false

@@ -128,7 +128,7 @@ func TestActor_GossipOutboundViewReachability(t *testing.T) {
 	ctx := &reachabilityContext{tombstoneContext: &tombstoneContext{ref: a.info.ActorRef}, sender: remote.ActorRef}
 	before := a.preparePing(gossipmessages.GossipTypeCycleSYNC)
 	now := time.Now()
-	sequence := a.reachability.begin(remote.ActorRef, a.view.Members().List(), now, time.Second, 1)
+	sequence := a.reachability.begin(remote.ActorRef, a.view.Members(), now, time.Second, 1)
 	pong := gossipmessages.NewPong(a.opts.Name, gossipmessages.GossipTypeCycleSYNC, remote.Clone(), before.MemberList, before.Version)
 	pong.ProbeSequence, pong.ProbeOriginID = sequence, a.info.ID()
 	a.onPong(ctx, pong)

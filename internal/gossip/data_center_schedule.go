@@ -2,7 +2,7 @@ package gossip
 
 import (
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/gossip/endpoint"
+	"github.com/kercylan98/vivid/internal/gossip/memberlist"
 )
 
 type dataCenterGroup struct {
@@ -25,7 +25,7 @@ type dataCenterSchedule struct {
 
 // selectDataCenterPeers 先为新观察轮换机房和地址，其余发送名额按发送历史轮换。
 // 等待中的请求及普通 Gossip 不构成机房已获得新观察。
-func (r *localReachability) selectDataCenterPeers(peers []vivid.ActorRef, members []*endpoint.Information, sendLimit, probeLimit int) []vivid.ActorRef {
+func (r *localReachability) selectDataCenterPeers(peers []vivid.ActorRef, members *memberlist.MemberList, sendLimit, probeLimit int) []vivid.ActorRef {
 	limit, available := r.preparePeers(peers, sendLimit, probeLimit)
 	if r.dataCenters == nil {
 		r.dataCenters = &dataCenterSchedule{addresses: make(map[string]string), groups: make(map[string]*dataCenterGroup), dirty: true}
@@ -152,21 +152,24 @@ func (r *localReachability) recordDataCenterSend(peer vivid.ActorRef) {
 }
 
 // updateAddresses 机房声明在实例内固定，仅在成员记录变化后重建地址分类。
-func (s *dataCenterSchedule) updateAddresses(members []*endpoint.Information) {
+func (s *dataCenterSchedule) updateAddresses(members *memberlist.MemberList) {
 	clear(s.addresses)
-	for _, member := range members {
-		if !observableMember(member.Status) {
-			continue
-		}
-		address := member.ActorRef.GetAddress()
-		label, exists := s.addresses[address]
-		if !exists {
-			s.addresses[address] = member.DataCenter
-		} else if label != member.DataCenter {
-			// 不按实例 ID、创建时间或插入顺序猜测同地址当前属于哪个机房。
-			s.addresses[address] = ""
+	if members != nil {
+		for _, member := range members.All() {
+			if !observableMember(member.Status) {
+				continue
+			}
+			address := member.ActorRef.GetAddress()
+			label, exists := s.addresses[address]
+			if !exists {
+				s.addresses[address] = member.DataCenter
+			} else if label != member.DataCenter {
+				// 不按实例 ID、创建时间或插入顺序猜测同地址当前属于哪个机房。
+				s.addresses[address] = ""
+			}
 		}
 	}
+
 	s.dirty = false
 }
 

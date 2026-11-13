@@ -45,7 +45,7 @@ func TestDataCenterSchedule_Coverage(t *testing.T) {
 			for round := range (4*90 + limit - 1) / limit {
 				candidates := slices.Clone(peers)
 				random.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
-				selected := r.selectDataCenterPeers(candidates, members, limit, limit)
+				selected := r.selectDataCenterPeers(candidates, memberRecords(members), limit, limit)
 				assert.ElementsMatch(t, peers, candidates, "重排不能重复或遗漏地址")
 				require.Len(t, selected, min(limit, len(peers)))
 				for _, peer := range selected {
@@ -89,32 +89,32 @@ func TestDataCenterSchedule_ActualAttempts(t *testing.T) {
 		member.DataCenter = fmt.Sprintf("dc-%d", index)
 		members, peers = append(members, member), append(peers, member.ActorRef)
 	}
-	selected := r.selectDataCenterPeers(slices.Clone(peers), members, 2, 2)
+	selected := r.selectDataCenterPeers(slices.Clone(peers), memberRecords(members), 2, 2)
 	for _, group := range r.dataCenters.groups {
 		assert.Zero(t, group.sequence, "仅选中不算已开始请求")
 	}
 	now := time.Now()
 	slow := selected[0]
-	slowSequence := r.begin(slow, members, now, time.Second, 2)
+	slowSequence := r.begin(slow, memberRecords(members), now, time.Second, 2)
 	fast := selected[1]
-	sequence := r.begin(fast, members, now, time.Second, 2)
+	sequence := r.begin(fast, memberRecords(members), now, time.Second, 2)
 	r.accept(fast, sequence, fast.GetAddress(), now, time.Second)
 	deadline := r.pending[slow.GetAddress()].deadline
-	selected = r.selectDataCenterPeers(slices.Clone(peers), members, 2, 2)
+	selected = r.selectDataCenterPeers(slices.Clone(peers), memberRecords(members), 2, 2)
 	require.Len(t, selected, 2, "只剩一个观察额度时仍保留正常 Gossip")
 	assert.NotEqual(t, slow.GetAddress(), selected[0].GetAddress())
 	assert.NotEqual(t, fast.GetAddress(), selected[0].GetAddress(), "新机房先于已经开始观察的机房")
-	sequence = r.begin(selected[0], members, now, time.Second, 2)
+	sequence = r.begin(selected[0], memberRecords(members), now, time.Second, 2)
 	require.NotZero(t, sequence)
 	for range 3 {
-		selected = r.selectDataCenterPeers(slices.Clone(peers), members, 2, 2)
+		selected = r.selectDataCenterPeers(slices.Clone(peers), memberRecords(members), 2, 2)
 		require.Len(t, selected, 2, "观察满额不阻止成员传播")
 		assert.Empty(t, r.candidates)
 		assert.Equal(t, slowSequence, r.pending[slow.GetAddress()].sequence)
 		assert.Equal(t, deadline, r.pending[slow.GetAddress()].deadline)
 	}
 	r.accept(slow, slowSequence, slow.GetAddress(), now, time.Second)
-	selected = r.selectDataCenterPeers(slices.Clone(peers), members, 2, 2)
+	selected = r.selectDataCenterPeers(slices.Clone(peers), memberRecords(members), 2, 2)
 	assert.Equal(t, slow.GetAddress(), selected[0].GetAddress(), "机房次序只按实际新建请求更新，等待和普通发送不能续期")
 }
 
@@ -141,7 +141,7 @@ func TestDataCenterSchedule_AddressDeclarations(t *testing.T) {
 		if reverse {
 			slices.Reverse(members)
 		}
-		r.selectDataCenterPeers(peers, members, 2, 2)
+		r.selectDataCenterPeers(peers, memberRecords(members), 2, 2)
 		assert.Equal(t, "dc-a", r.dataCenters.addresses["peer:10001"])
 		assert.Empty(t, r.dataCenters.addresses["peer:10002"], "同地址活跃历史冲突时归入未知组，插入次序不能决定机房")
 		assert.Empty(t, r.dataCenters.addresses["peer:10003"], "已声明与未声明历史也存在歧义")
@@ -155,14 +155,14 @@ func TestDataCenterSchedule_Churn(t *testing.T) {
 	now := time.Now()
 	member := reachableMember("peer:10001")
 	member.DataCenter = "dc-a"
-	r.selectDataCenterPeers([]vivid.ActorRef{member.ActorRef}, []*endpoint.Information{member}, 1, 1)
+	r.selectDataCenterPeers([]vivid.ActorRef{member.ActorRef}, memberRecords([]*endpoint.Information{member}), 1, 1)
 	sequence := r.begin(member.ActorRef, nil, now, time.Second, 1)
 	assert.NotZero(t, r.dataCenters.groups["dc-a"].sequence)
 	// 同地址改由其他机房的新实例回应后，地址轮换历史不重置。
 	next := reachableMember(member.ActorRef.GetAddress())
 	next.DataCenter = "dc-b"
 	r.invalidateDataCenters()
-	r.selectDataCenterPeers([]vivid.ActorRef{next.ActorRef}, []*endpoint.Information{next}, 1, 1)
+	r.selectDataCenterPeers([]vivid.ActorRef{next.ActorRef}, memberRecords([]*endpoint.Information{next}), 1, 1)
 	assert.NotContains(t, r.dataCenters.groups, "dc-a")
 	assert.Equal(t, sequence, r.attempts[next.ActorRef.GetAddress()].sequence)
 	assert.Equal(t, sequence, r.pending[next.ActorRef.GetAddress()].sequence)

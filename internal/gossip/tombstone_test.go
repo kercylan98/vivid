@@ -121,3 +121,13 @@ func TestActor_GossipRemovedVersion(t *testing.T) {
 		}
 	}
 }
+
+func memberRecords(members []*endpoint.Information) *memberlist.MemberList {
+	values := make([]endpoint.Information, len(members))
+	for index, member := range members {
+		if member != nil {
+			values[index] = *member
+		}
+	}
+	return memberlist.New(log.GetDefault(), values...)
+}
