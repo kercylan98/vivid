@@ -12,8 +12,20 @@ type viewStable struct {
 	fingerprint string
 }
 
-// maybeEmitViewStable 连续三次观察未变化时通知自身，同一视图只投递一次。
-func maybeEmitViewStable(ctx vivid.ActorContext, a *Actor) {
+// resetViewStability 成员更新或阶段变化后立即作废原有观察，不等待下一个周期。
+func (a *Actor) resetViewStability() {
+	a.lastViewFingerprint, a.stableRounds = "", 0
+	a.viewStableEmitted, a.pendingViewStable = false, nil
+	a.stabilityStartedAt = time.Time{}
+}
+
+// sampleViewStability 建立基线后，连续三个采样间隔不变时通知自身，同一视图只投递一次。
+func (a *Actor) sampleViewStability(ctx vivid.ActorContext, now time.Time) {
+	if !a.lastStableSample.IsZero() && now.Sub(a.lastStableSample) < a.opts.GossipInterval {
+		return
+	}
+	// 调度积压时只记录本次观察，不补算错过的周期。
+	a.lastStableSample = now
 	fp := a.view.Fingerprint()
 	if fp == a.lastViewFingerprint {
 		a.stableRounds++
@@ -27,6 +39,6 @@ func maybeEmitViewStable(ctx vivid.ActorContext, a *Actor) {
 		a.stableRounds = 0
 		a.viewStableEmitted = false
 		a.pendingViewStable = nil
-		a.stabilityStartedAt = time.Now()
+		a.stabilityStartedAt = now
 	}
 }

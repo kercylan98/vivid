@@ -55,6 +55,7 @@ func (a *Actor) currentSnapshot() *clusterSnapshot {
 }
 
 func (a *Actor) publishMembersChanged(ctx vivid.ActorContext) {
+	a.resetViewStability()
 	a.viewRevision++
 	a.snapshot = nil
 	a.membersChanged = false

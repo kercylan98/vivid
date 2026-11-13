@@ -6,6 +6,7 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
+	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
 	"github.com/kercylan98/vivid/internal/gossip/versionvector"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/stretchr/testify/assert"
@@ -45,8 +46,13 @@ func newViewStableActor(status endpoint.Status) (*Actor, *viewStableContext) {
 func queueViewStable(t *testing.T, a *Actor, ctx *viewStableContext) *viewStable {
 	t.Helper()
 	before := len(ctx.notifications)
+	now := a.lastStableSample
+	if now.IsZero() {
+		now = time.Now()
+	}
 	for range 4 {
-		maybeEmitViewStable(ctx, a)
+		now = now.Add(a.opts.GossipInterval)
+		a.onGossipTick(ctx, gossipTick{instanceID: a.info.ID()}, now)
 	}
 	require.Len(t, ctx.notifications, before+1)
 	return ctx.notifications[before]
@@ -134,7 +140,7 @@ func TestActor_GossipViewStableOnce(t *testing.T) {
 	assert.Equal(t, a.info.ID(), a.coordinatorNodeID)
 	assert.Nil(t, a.pendingViewStable)
 	for range 10 {
-		maybeEmitViewStable(ctx, a)
+		a.onGossipTick(ctx, gossipTick{instanceID: a.info.ID()}, a.lastStableSample.Add(a.opts.GossipInterval))
 		ctx.deliver(a, first)
 	}
 	assert.Len(t, ctx.notifications, 1, "同一视图只通知一次")
@@ -178,10 +184,118 @@ func TestActor_GossipViewStableRestart(t *testing.T) {
 	assert.False(t, a.viewStableEmitted)
 	assert.Zero(t, a.stableRounds)
 	assert.Empty(t, a.lastViewFingerprint)
+	assert.True(t, a.lastStableSample.IsZero(), "新实例不继承上次启动的采样时钟")
 	ctx.deliver(a, notification)
 	require.Equal(t, endpoint.StatusNone, a.info.Status)
 	require.True(t, changeStatus(ctx, a, EventJoining))
 	require.Equal(t, endpoint.StatusUp, a.info.Status)
 	ctx.deliver(a, queueViewStable(t, a, ctx))
 	assert.Nil(t, a.pendingViewStable, "新实例能够独立完成稳定通知")
+}
+
+func TestActor_GossipViewStableSampling(t *testing.T) {
+	for _, withPeer := range []bool{false, true} {
+		name := "no_peers"
+		if withPeer {
+			name = "silent_peer"
+		}
+		t.Run(name, func(t *testing.T) {
+			a, ctx := newViewStableActor(endpoint.StatusLeaving)
+			a.opts.GossipInterval = time.Second
+			if withPeer {
+				remote := endpoint.NewInformation(&tombstoneRef{address: "remote:10002"}, time.Unix(2, 0))
+				remote.Status = endpoint.StatusUp
+				a.view.Members().Upsert(remote)
+				a.view.Version().Update(remote.ID(), 1)
+			}
+			tick := gossipTick{instanceID: a.info.ID()}
+			now := time.Now()
+			a.onGossipTick(ctx, tick, now)
+			for range 20 {
+				a.onGossipTick(ctx, tick, now.Add(time.Second-time.Nanosecond))
+			}
+			require.Empty(t, ctx.notifications, "积压周期不能在同一间隔内补算")
+			for i := 1; i <= 3; i++ {
+				a.onGossipTick(ctx, tick, now.Add(time.Duration(i)*time.Second))
+				if i < 3 {
+					require.Empty(t, ctx.notifications)
+				}
+			}
+			require.Len(t, ctx.notifications, 1, "是否收到响应不影响本地周期采样")
+			ctx.deliver(a, ctx.notifications[0])
+			assert.Equal(t, endpoint.StatusExiting, a.info.Status)
+		})
+	}
+}
+
+func TestActor_GossipViewStableBurst(t *testing.T) {
+	a, ctx := newViewStableActor(endpoint.StatusLeaving)
+	a.opts.GossipInterval = time.Hour
+	remote := endpoint.NewInformation(&tombstoneRef{address: "remote:10002"}, time.Unix(2, 0))
+	remote.Status = endpoint.StatusUp
+	version := versionvector.New()
+	version.Update(remote.ID(), 1)
+	a.mergeMember(remote, version)
+	a.publishMembersChanged(ctx)
+	pong := gossipmessages.NewPong(a.opts.Name, gossipmessages.GossipTypeCycleSYNC, remote, a.view.Members().Clone(), a.view.Version().Clone())
+	ping := gossipmessages.NewPing(a.opts.Name, gossipmessages.GossipTypeCycleSYNC, remote, pong.MemberList, pong.Version)
+	for range 20 {
+		a.onPing(ctx, ping)
+		a.onPong(ctx, pong)
+		a.onSpreadGossip(ctx, gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeCriticalStateChange))
+		a.onSpreadGossip(ctx, gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeCycleSYNC))
+	}
+	require.Empty(t, ctx.notifications, "入站消息与普通扩散均不能累计周期采样")
+	tick := gossipTick{instanceID: a.info.ID()}
+	now := time.Now()
+	a.onGossipTick(ctx, tick, now)
+	// 长时间没有执行采样，恢复后也只能增加一次观察。
+	a.onGossipTick(ctx, tick, now.Add(10*time.Hour))
+	for range 20 {
+		a.onGossipTick(ctx, tick, now.Add(10*time.Hour))
+	}
+	require.Empty(t, ctx.notifications)
+	a.onGossipTick(ctx, tick, now.Add(11*time.Hour))
+	require.Empty(t, ctx.notifications)
+	a.onGossipTick(ctx, tick, now.Add(12*time.Hour))
+	assert.Len(t, ctx.notifications, 1)
+}
+
+func TestActor_GossipViewStableSamplingReset(t *testing.T) {
+	a, ctx := newViewStableActor(endpoint.StatusLeaving)
+	a.opts.GossipInterval = time.Second
+	tick := gossipTick{instanceID: a.info.ID()}
+	now := time.Now()
+	for i := range 3 {
+		a.onGossipTick(ctx, tick, now.Add(time.Duration(i)*time.Second))
+	}
+	require.Empty(t, ctx.notifications)
+	remote := endpoint.NewInformation(&tombstoneRef{address: "remote:10002"}, time.Unix(2, 0))
+	remote.Status = endpoint.StatusUp
+	version := versionvector.New()
+	version.Update(remote.ID(), 1)
+	a.mergeMember(remote, version)
+	a.publishMembersChanged(ctx)
+	for i := 3; i <= 6; i++ {
+		a.onGossipTick(ctx, tick, now.Add(time.Duration(i)*time.Second))
+		if i < 6 {
+			require.Empty(t, ctx.notifications, "成员变化后重新建立基线和采样")
+		}
+	}
+	require.Len(t, ctx.notifications, 1)
+}
+
+func TestActor_GossipViewStableTickIdentity(t *testing.T) {
+	for _, status := range []endpoint.Status{endpoint.StatusNone, endpoint.StatusJoining, endpoint.StatusUp} {
+		a, ctx := newViewStableActor(status)
+		tick := gossipTick{instanceID: a.info.ID()}
+		if status == endpoint.StatusUp {
+			tick.instanceID = "old-instance"
+		}
+		for i := range 10 {
+			a.onGossipTick(ctx, tick, time.Now().Add(time.Duration(i)*time.Hour))
+		}
+		assert.Empty(t, ctx.notifications)
+		assert.True(t, a.lastStableSample.IsZero(), "旧实例或尚未加入时的周期不得建立采样")
+	}
 }

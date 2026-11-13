@@ -16,7 +16,7 @@ description: ActorSystemClusterOptions 的可用配置、默认值与调用方�
 | **WithActorSystemClusterProbeTimeout** | `time.Duration` | 3s | 一次直接往返的等待预算，重复发送不延长预算 |
 | **WithActorSystemClusterReachabilityTTL** | `time.Duration` | 10s | 成功或失败观察的有效期，过期回到 Unknown |
 | **WithActorSystemClusterLaunchDelay** | `time.Duration` | 随机 50–999ms | 启动 Gossip 前的延迟，分散节点同时启动的压力 |
-| **WithActorSystemClusterGossipInterval** | `time.Duration` | 200ms | 周期交换成员视图的间隔，应设置为正值 |
+| **WithActorSystemClusterGossipInterval** | `time.Duration` | 200ms | 周期交换成员视图与本地稳定采样的间隔，应设置为正值 |
 | **WithActorSystemClusterGossipPeersCount** | `int` | 5 | 每轮 Gossip 选取的目标数量，应设置为正值 |
 | **WithActorSystemClusterGracefulShutdownTimeout** | `time.Duration` | 10s | 集群 Actor 多阶段退出的等待超时 |
 

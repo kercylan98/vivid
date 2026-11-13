@@ -17,6 +17,8 @@ const (
 	gossipActorName          = "@gossip"
 )
 
+type gossipTick struct{ instanceID string }
+
 var (
 	_ vivid.Actor            = (*Actor)(nil)
 	_ vivid.FixedOptionActor = (*Actor)(nil)
@@ -39,6 +41,7 @@ type Actor struct {
 	viewStableEmitted   bool                             // 当前视图是否已投递本地稳定通知
 	pendingViewStable   *viewStable                      // 等待本地邮箱处理的稳定通知
 	stableRounds        int                              // 连续观察到成员视图不变的次数
+	lastStableSample    time.Time                        // 最近一次周期采样时间，避免积压调度补算观察
 	phaseKillCompleted  chan struct{}                    // 多阶段终止流程完成信号。
 	coordinatorNodeID   string                           // 当前的协调者节点 ID
 	stabilityStartedAt  time.Time                        // 最近观察到成员视图变化的时间
@@ -78,9 +81,8 @@ func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 	a.viewRevision = 0
 	a.snapshot = nil
 	a.membersChanged = false
-	a.lastViewFingerprint, a.stableRounds = "", 0
-	a.viewStableEmitted, a.pendingViewStable = false, nil
-	a.stabilityStartedAt = time.Time{}
+	a.resetViewStability()
+	a.lastStableSample = time.Time{}
 	a.reachability = newLocalReachability()
 
 	// 注册多阶段终止以支持优雅退出
@@ -120,6 +122,8 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 		a.onPong(ctx, m)
 	case *gossipmessages.SpreadGossip:
 		a.onSpreadGossip(ctx, m)
+	case gossipTick:
+		a.onGossipTick(ctx, m, time.Now())
 	case *viewStable:
 		a.onViewStable(ctx, m)
 	case *vivid.OnKill:
@@ -147,13 +151,20 @@ func (a *Actor) onStatusChanged(ctx vivid.ActorContext, status endpoint.Status) 
 
 func (a *Actor) onUp(ctx vivid.ActorContext) {
 	// 注册周期任务，按 [GossipInterval] 向视图中节点发起 gossip。
-	spreadGossipMessage := gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeCycleSYNC)
-	if err := ctx.Scheduler().Loop(ctx.Ref(), a.opts.GossipInterval, spreadGossipMessage, vivid.WithSchedulerReference(singleSchedulerReference)); err != nil {
+	if err := ctx.Scheduler().Loop(ctx.Ref(), a.opts.GossipInterval, gossipTick{instanceID: a.info.ID()}, vivid.WithSchedulerReference(singleSchedulerReference)); err != nil {
 		a.joinError = vivid.ErrorGossipScheduleFailed.With(err)
 		a.readiness.complete(vivid.ClusterJoinResult{}, a.joinError)
 		// 报告故障以可以支持监管者重启
 		ctx.Failed(vivid.ErrorGossipScheduleFailed.With(err).WithMessage("failed to schedule spread gossip"))
 	}
+}
+
+func (a *Actor) onGossipTick(ctx vivid.ActorContext, tick gossipTick, now time.Time) {
+	if tick.instanceID != a.info.ID() || a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining {
+		return
+	}
+	a.sampleViewStability(ctx, now)
+	a.onSpreadGossip(ctx, gossipmessages.NewSpreadGossip(gossipmessages.GossipTypeCycleSYNC))
 }
 
 func (a *Actor) onViewStable(ctx vivid.ActorContext, notification *viewStable) {
@@ -223,7 +234,6 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 	if a.membersChanged {
 		a.publishMembersChanged(ctx)
 	}
-	maybeEmitViewStable(ctx, a)
 
 	// 避免远程发送序列化过程中被修改。
 	pong := a.preparePong(ping.GossipType)
@@ -257,7 +267,6 @@ func (a *Actor) mergePong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 	if a.membersChanged {
 		a.publishMembersChanged(ctx)
 	}
-	maybeEmitViewStable(ctx, a)
 }
 
 // mergeMember 同时接收成员记录及其版本，返回是否发现了新实例。
@@ -348,7 +357,6 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 		peers = a.reachability.selectPeers(peers, a.opts.GossipPeersCount)
 	}
 	if len(peers) == 0 {
-		maybeEmitViewStable(ctx, a)
 		return
 	}
 
