@@ -30,7 +30,7 @@ type joinContext struct{ tombstoneContext }
 func (*joinContext) Scheduler() vivid.Scheduler { return &joinScheduler{} }
 
 func TestActor_GossipJoinResponse(t *testing.T) {
-	for _, name := range []string{"accepted", "ordinary_pong", "light_ack", "wrong_seed", "seed_leaving", "missing_ack", "old_instance_ack", "wrong_revision", "nil_info", "nil_members", "nil_version", "wrong_cluster", "missing_cluster", "nil_pong", "rejected", "same_cluster_rejection", "nil_rejection", "invalid_data_center", "wrong_data_center_ack", "invalid_seed_status", "invalid_self_ref", "invalid_self_created", "invalid_relay", "nil_relay"} {
+	for _, name := range []string{"accepted", "ordinary_pong", "light_ack", "wrong_seed", "seed_leaving", "seed_regression", "missing_ack", "old_instance_ack", "wrong_revision", "nil_info", "nil_members", "nil_version", "wrong_cluster", "missing_cluster", "nil_pong", "rejected", "same_cluster_rejection", "nil_rejection", "invalid_data_center", "wrong_data_center_ack", "invalid_seed_status", "invalid_self_ref", "invalid_self_created", "invalid_relay", "nil_relay"} {
 		t.Run(name, func(t *testing.T) {
 			local := endpoint.NewInformation(&tombstoneRef{address: "local:10001"}, time.Unix(1, 0))
 			local.Status = endpoint.StatusJoining
@@ -62,6 +62,11 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 				pong.Info.ActorRef = &tombstoneRef{address: "other:10003"}
 			case "seed_leaving":
 				pong.Info.Status = endpoint.StatusLeaving
+			case "seed_regression":
+				known := seed.Clone()
+				known.Status = endpoint.StatusRemoved
+				a.view.Members().Upsert(known)
+				a.view.Version().Update(known.ID(), 1)
 			case "missing_ack":
 				pong.MemberList = memberlist.New(log.GetDefault())
 			case "old_instance_ack":
@@ -142,7 +147,13 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 					assert.ErrorIs(t, err, vivid.ErrorClusterNameMismatch)
 				}
 				assert.Equal(t, endpoint.StatusJoining, local.Status)
-				assert.Equal(t, 1, len(a.view.Members().List()), "无效加入响应不得污染成员视图")
+				expected := 1
+				if name == "seed_regression" {
+					expected = 2
+					assert.Equal(t, endpoint.StatusRemoved, a.view.Members().Get(seed.ID()).Status)
+					assert.Equal(t, uint64(1), a.view.Version().Get(seed.ID()))
+				}
+				assert.Equal(t, expected, a.view.Members().Len(), "无效加入响应不得污染成员视图")
 			}
 		})
 	}

@@ -25,6 +25,8 @@ func invalidMember(info *endpoint.Information, field string) *endpoint.Informati
 		info.Status = endpoint.StatusNone
 	case "unknown_status":
 		info.Status = endpoint.Status(255)
+	case "regression":
+		info.Status = endpoint.StatusJoining
 	case "address":
 		info.ActorRef = &tombstoneRef{address: "wrong:20001"}
 	case "invalid_address":
@@ -46,7 +48,7 @@ func invalidMember(info *endpoint.Information, field string) *endpoint.Informati
 func TestActor_GossipMemberValidation(t *testing.T) {
 	for _, protocol := range []string{"ping", "pong"} {
 		for _, direct := range []bool{false, true} {
-			for _, field := range []string{"nil", "nil_ref", "empty_id", "none", "unknown_status", "address", "invalid_address", "padded_address", "path", "virtual", "created", "data_center", "zero_version"} {
+			for _, field := range []string{"nil", "nil_ref", "empty_id", "none", "unknown_status", "regression", "address", "invalid_address", "padded_address", "path", "virtual", "created", "data_center", "zero_version"} {
 				t.Run(protocol+"/"+map[bool]string{true: "direct", false: "relayed"}[direct]+"/"+field, func(t *testing.T) {
 					a, b, ctx, _ := newPongAckActors()
 					original := a.currentSnapshot()
