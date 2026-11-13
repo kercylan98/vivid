@@ -237,7 +237,7 @@ system := bootstrap.NewActorSystem(
 
 ## 与集群配合
 
-在启用 Remoting 的前提下，将 **WithActorSystemClusterOptions(opts...)** 直接传给 **bootstrap.NewActorSystem** 启用集群，使用 **WithActorSystemClusterSeeds(addresses...)** 配置种子地址。集群使用 Remoting 的地址与编解码进行节点间成员发现与通信。完整示例见 [快速开始](/docs/cluster/quick-start)。
+在启用 Remoting 的前提下，将 **WithActorSystemClusterOptions(opts...)** 直接传给 **bootstrap.NewActorSystem** 启用集群，使用 **WithActorSystemClusterName(name)** 设置同组共享的名称，使用 **WithActorSystemClusterSeeds(addresses...)** 配置种子地址。集群使用 Remoting 的地址与编解码进行节点间成员发现与通信。完整示例见 [快速开始](/docs/cluster/quick-start)。
 
 ## 与引用解析配合
 

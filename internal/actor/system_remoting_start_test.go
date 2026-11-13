@@ -98,7 +98,7 @@ func TestSystem_RemotingStartRollback(t *testing.T) {
 		vivid.WithActorSystemRemoting(address),
 		vivid.WithActorSystemEnableMetrics(true),
 		vivid.WithActorSystemStopTimeout(time.Second),
-		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(address)),
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterSeeds(address)),
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError), log.WithErrorStack(false))),
 	)
 	// 只有自身种子在 Gossip 预启动阶段失败，此时 Remoting 已初始化。

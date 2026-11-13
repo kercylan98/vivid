@@ -177,7 +177,7 @@ func (c *scheduleContext) Tell(peer vivid.ActorRef, message vivid.Message) {
 
 func TestActor_GossipProbeScheduling(t *testing.T) {
 	local := reachableMember("local:10001")
-	opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterGossipPeersCount(2), vivid.WithActorSystemClusterProbeTimeout(time.Hour))
+	opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterGossipPeersCount(2), vivid.WithActorSystemClusterProbeTimeout(time.Hour))
 	a := &Actor{info: local, opts: opts, view: NewClusterView(log.GetDefault()), reachability: newLocalReachability()}
 	a.view.Members().Upsert(local)
 	for i := range 7 {

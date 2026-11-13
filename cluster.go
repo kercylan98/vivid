@@ -5,6 +5,8 @@ import (
 	"net"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/kercylan98/vivid/internal/utils"
 )
@@ -28,6 +30,7 @@ func NewActorSystemClusterOptions(options ...ActorSystemClusterOption) *ActorSys
 }
 
 type ActorSystemClusterOptions struct {
+	Name                    string        // 逻辑集群名称，必填，区分大小写，最多 128 字节
 	Seeds                   []string      // 集群种子节点地址列表
 	Bootstrap               bool          // 配置了种子时仍主动独立启动，默认 false
 	LaunchDelay             time.Duration // 延迟启动时间，避免所有节点同时启动，导致集群瞬间压力过大，通常以随机值设置，默认 50~1000ms
@@ -44,6 +47,9 @@ func (o *ActorSystemClusterOptions) Validate() error {
 	if o == nil {
 		return ErrorIllegalArgument.WithMessage("cluster options are nil")
 	}
+	if len(o.Name) == 0 || len(o.Name) > 128 || !utf8.ValidString(o.Name) || strings.ContainsFunc(o.Name, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return ErrorIllegalArgument.WithMessage("cluster name must be valid UTF-8, 1 to 128 bytes, without whitespace or control characters")
+	}
 	if o.LaunchDelay < 0 || o.GossipInterval <= 0 || o.GossipPeersCount <= 0 || o.GracefulShutdownTimeout <= 0 || o.JoinTimeout <= 0 || o.ProbeTimeout <= 0 || o.ReachabilityTTL <= 0 {
 		return ErrorIllegalArgument.WithMessage("cluster launch delay must be non-negative; gossip interval, peers count, shutdown timeout, join timeout, probe timeout and reachability TTL must be positive")
 	}
@@ -55,6 +61,12 @@ func (o *ActorSystemClusterOptions) Validate() error {
 		}
 	}
 	return nil
+}
+
+// WithActorSystemClusterName 设置必填的逻辑集群名称；只有名称完全相同的节点才交换成员视图。
+// 名称不作为认证凭据，不能替代 TLS 或业务授权。
+func WithActorSystemClusterName(name string) ActorSystemClusterOption {
+	return func(o *ActorSystemClusterOptions) { o.Name = name }
 }
 
 // WithActorSystemClusterProbeTimeout 设置一次 Gossip 直接往返的总等待预算，重复发送不延长预算。

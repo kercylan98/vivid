@@ -79,7 +79,7 @@ func TestActor_GossipRemovedVersion(t *testing.T) {
 				for i := 0; i < 5; i++ {
 					view.Version().Increment(removed.ID())
 				}
-				a := &Actor{info: local, view: view}
+				a := &Actor{info: local, view: view, opts: vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"))}
 				ctx := &tombstoneContext{ref: local.ActorRef}
 				stale := removed.Clone()
 				stale.Status = endpoint.StatusUp
@@ -101,9 +101,9 @@ func TestActor_GossipRemovedVersion(t *testing.T) {
 					a.onConverged(ctx)
 					assert.Equal(t, uint64(5), view.Version().Get(removed.ID()))
 					if reply {
-						a.onPong(ctx, gossipmessages.NewPong(gossipmessages.GossipTypeCycleSYNC, sender, members, version))
+						a.onPong(ctx, gossipmessages.NewPong("vivid-test", gossipmessages.GossipTypeCycleSYNC, sender, members, version))
 					} else {
-						a.onPing(ctx, gossipmessages.NewPing(gossipmessages.GossipTypeCycleSYNC, sender, members, version))
+						a.onPing(ctx, gossipmessages.NewPing("vivid-test", gossipmessages.GossipTypeCycleSYNC, sender, members, version))
 					}
 					require.Equal(t, endpoint.StatusRemoved, view.Members().Get(removed.ID()).Status)
 					require.Equal(t, uint64(5), view.Version().Get(removed.ID()))

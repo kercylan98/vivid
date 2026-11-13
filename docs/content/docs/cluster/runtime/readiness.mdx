@@ -13,7 +13,9 @@ description: 区分运行时启动、加入成功、独立启动与加入失败
 | 配置种子，Bootstrap 为 false（默认） | 依次尝试加入非本地种子，收到有效响应后进入 Up |
 | Bootstrap 为 true | 独立启动并进入 Up，之后仍联络种子 |
 
-配置了种子却全部加入失败时，返回 `ErrorClusterJoinFailed`，节点停留在 Joining，不自动成为孤岛，也不自动重试整轮加入。应检查地址与启动顺序，停止后重新创建系统。只有自身种子时必须显式启用 Bootstrap，避免把配置错误当作加入成功。
+配置了种子却全部加入失败时，返回 `ErrorClusterJoinFailed`，节点停留在 Joining，不自动成为孤岛，也不自动重试整轮加入。应检查集群名称、地址与启动顺序，停止后重新创建系统。只有自身种子时必须显式启用 Bootstrap，避免把配置错误当作加入成功。
+
+种子名称不匹配时拒绝加入，并继续尝试后续种子。若该原因导致最终失败，可用 `errors.Is(err, vivid.ErrorClusterNameMismatch)` 判断，错误信息包含种子地址与双方名称。Bootstrap 同样遵守名称匹配规则。
 
 需要建立初始组，或明确允许分区两侧独立启动后重新发现时，使用 `WithActorSystemClusterBootstrap(true)`。这不会授予独占写入资格，也不提供业务数据合并。
 

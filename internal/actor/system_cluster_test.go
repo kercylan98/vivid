@@ -29,6 +29,7 @@ func startClusterTestSystem(t testing.TB, address string, delay time.Duration, s
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError), log.WithErrorStack(false))),
 		vivid.WithActorSystemRemoting(address),
 		vivid.WithActorSystemClusterOptions(
+			vivid.WithActorSystemClusterName("vivid-test"),
 			vivid.WithActorSystemClusterSeeds(seeds...),
 			vivid.WithActorSystemClusterLaunchDelay(delay),
 			vivid.WithActorSystemClusterGossipInterval(50*time.Millisecond),
@@ -55,7 +56,7 @@ func TestSystem_ClusterSnapshotErrors(t *testing.T) {
 
 	cluster := actor.NewSystem(
 		vivid.WithActorSystemRemoting(clusterTestAddress(t)),
-		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterLaunchDelay(300*time.Millisecond)),
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterLaunchDelay(300*time.Millisecond)),
 	)
 	require.NoError(t, cluster.Start())
 	t.Cleanup(func() { require.NoError(t, cluster.Stop(3*time.Second)) })

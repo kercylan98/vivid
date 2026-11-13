@@ -32,7 +32,7 @@ func TestSystem_RemotingStartRollbackWithInbound(t *testing.T) {
 	system := NewSystem(
 		vivid.WithActorSystemRemoting(address),
 		vivid.WithActorSystemStopTimeout(time.Second),
-		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(address)),
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterSeeds(address)),
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError), log.WithErrorStack(false))),
 	)
 	readerSpawned := make(chan struct{})

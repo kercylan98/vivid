@@ -185,6 +185,7 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 					seeds = addresses[2:] // 仅一侧保留跨机房种子，也应能在恢复后相互发现。
 				}
 				opts := vivid.NewActorSystemClusterOptions(
+					vivid.WithActorSystemClusterName("vivid-test"),
 					vivid.WithActorSystemClusterBootstrap(i%2 == 0),
 					vivid.WithActorSystemClusterSeeds(seeds...),
 					vivid.WithActorSystemClusterJoinTimeout(500*time.Millisecond),

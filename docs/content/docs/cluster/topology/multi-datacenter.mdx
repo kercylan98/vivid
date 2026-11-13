@@ -9,6 +9,8 @@ description: 跨机房连接、网络分区恢复与当前能力边界
 
 每个节点使用其他节点能够访问的广告地址；种子填写广告地址，格式为 `host:port`。部署方式见[快速开始](/docs/cluster/quick-start)，连接配置见[远程通讯](/docs/config/remoting)。
 
+跨机房仍属于同一逻辑集群时，各节点使用完全相同的 `WithActorSystemClusterName`。不同名称的组不会合并成员视图，不能用不同名称表示需要相互发现的机房。
+
 为让独立启动的两组节点在链路恢复后发现彼此，应在至少一侧保留指向另一侧的种子地址。已经互相发现的成员也会参与周期目标选择，但不应仅依赖历史成员记录维持重启后的联络路径。
 
 配置种子后，初始加入失败不会自动自举。若需要两侧独立启动，须在各自的初始节点上明确配置 `WithActorSystemClusterBootstrap(true)`；其他节点加入本组种子。启动结果见[启动与加入就绪](/docs/cluster/runtime/readiness)。

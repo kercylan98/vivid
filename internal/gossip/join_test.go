@@ -60,6 +60,7 @@ func TestActor_GossipJoinMessageLoss(t *testing.T) {
 			seed, joiner := newSystem(), newSystem()
 			seedActor := &lossyJoinActor{
 				SnapshotActor: gossip.NewSnapshotActor(vivid.NewActorSystemClusterOptions(
+					vivid.WithActorSystemClusterName("vivid-test"),
 					vivid.WithActorSystemClusterLaunchDelay(0),
 					vivid.WithActorSystemClusterGracefulShutdownTimeout(time.Second),
 				)),
@@ -72,6 +73,7 @@ func TestActor_GossipJoinMessageLoss(t *testing.T) {
 			_, err = seedActor.Readiness().Wait(seed, time.Second).Result()
 			require.NoError(t, err)
 			member := gossip.NewSnapshotActor(vivid.NewActorSystemClusterOptions(
+				vivid.WithActorSystemClusterName("vivid-test"),
 				vivid.WithActorSystemClusterSeeds(seedRef.GetAddress()),
 				vivid.WithActorSystemClusterLaunchDelay(0),
 				vivid.WithActorSystemClusterJoinTimeout(600*time.Millisecond),
@@ -113,6 +115,7 @@ func TestActor_GossipJoinFailureDoesNotBootstrap(t *testing.T) {
 	require.NoError(t, system.Start())
 	t.Cleanup(func() { require.NoError(t, system.Stop(3*time.Second)) })
 	opts := vivid.NewActorSystemClusterOptions(
+		vivid.WithActorSystemClusterName("vivid-test"),
 		vivid.WithActorSystemClusterSeeds(seedAddress),
 		vivid.WithActorSystemClusterLaunchDelay(0),
 		vivid.WithActorSystemClusterGracefulShutdownTimeout(time.Second),

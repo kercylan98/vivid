@@ -3,7 +3,7 @@ title: 集群概览
 description: 基于 Gossip 的成员发现、视图同步与当前能力范围
 ---
 
-集群依赖 [远程通讯](/docs/config/remoting)，通过 **WithActorSystemClusterOptions** 启用。框架创建内部 `@gossip` Actor，利用 Ping/Pong 交换成员视图和版本向量，并在系统停止时执行多阶段退出。
+集群依赖 [远程通讯](/docs/config/remoting)，通过 **WithActorSystemClusterOptions** 启用，并使用 **WithActorSystemClusterName** 明确名称。框架创建内部 `@gossip` Actor，利用 Ping/Pong 在同名节点间交换成员视图和版本向量，并在系统停止时执行多阶段退出。
 
 ## 启动与通信
 

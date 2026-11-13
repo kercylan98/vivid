@@ -356,6 +356,7 @@ func TestSystem_RemotingTLSClusterRecovery(t *testing.T) {
 		system := startRemotingTLSSystem(t, ca.Config(t, true),
 			vivid.WithActorSystemRemoting(backends[i], proxies[i].listener.Addr().String()),
 			vivid.WithActorSystemClusterOptions(
+				vivid.WithActorSystemClusterName("vivid-test"),
 				vivid.WithActorSystemClusterSeeds(seeds...),
 				vivid.WithActorSystemClusterLaunchDelay(0),
 				vivid.WithActorSystemClusterGossipInterval(50*time.Millisecond),

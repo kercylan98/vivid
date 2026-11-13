@@ -3,7 +3,7 @@ title: 集群部署
 description: 节点地址、启动顺序、连接认证与分区恢复验证
 ---
 
-集群通过 Remoting 交换成员视图。部署前需确定节点的可达地址、初始加入方式和连接认证；可运行示例见[快速开始](/docs/cluster/quick-start)。
+集群通过 Remoting 交换成员视图。部署前需确定集群名称、节点的可达地址、初始加入方式和连接认证；可运行示例见[快速开始](/docs/cluster/quick-start)。
 
 ## 地址与网络
 
@@ -13,6 +13,8 @@ description: 节点地址、启动顺序、连接认证与分区恢复验证
 - 跨可信网络边界时配置 [TLS/mTLS](/docs/cluster/auth/join-auth)。种子列表用于发现，不是加入白名单。
 
 ## 启动与加入
+
+同一集群的所有节点必须配置相同的 `WithActorSystemClusterName`，不同环境使用不同名称。名称不匹配时拒绝合并成员；名称不替代连接认证或业务权限。
 
 先启动初始节点，再启动配置了种子的节点。无种子或显式配置 `WithActorSystemClusterBootstrap(true)` 时独立启动；其余节点默认必须收到有效加入响应。
 
@@ -28,7 +30,7 @@ description: 节点地址、启动顺序、连接认证与分区恢复验证
   Failed --> Ready
 `} title="运行时启动与初始加入" />
 
-只配置自身种子不会自动自举。全部种子失败后不会自动重新尝试整轮加入，应检查地址、证书与启动顺序，停止后重新创建系统。等待方式与超时见[启动与加入就绪](/docs/cluster/runtime/readiness)。
+只配置自身种子不会自动自举。全部种子失败后不会自动重新尝试整轮加入，应检查名称、地址、证书与启动顺序，停止后重新创建系统。等待方式与超时见[启动与加入就绪](/docs/cluster/runtime/readiness)。
 
 ## 持续观察
 

@@ -111,7 +111,7 @@ func (c *reachabilityContext) Tell(_ vivid.ActorRef, message vivid.Message) {
 
 func TestActor_GossipReachabilityCorrelation(t *testing.T) {
 	local, remote, relay := reachableMember("local:10001"), reachableMember("peer:10002"), reachableMember("relay:10003")
-	a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions(), reachability: newLocalReachability()}
+	a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test")), reachability: newLocalReachability()}
 	for _, member := range []*endpoint.Information{local, remote, relay} {
 		a.view.Members().Upsert(member)
 		a.view.Version().Update(member.ID(), 2)
@@ -120,7 +120,7 @@ func TestActor_GossipReachabilityCorrelation(t *testing.T) {
 	initial := a.currentSnapshot()
 	now := time.Now()
 	sequence := a.reachability.begin(remote.ActorRef, a.view.Members().List(), now, time.Second, 1)
-	pong := gossipmessages.NewPong(gossipmessages.GossipTypeCycleSYNC, remote, a.view.Members().Clone(), a.view.Version().Clone())
+	pong := gossipmessages.NewPong("vivid-test", gossipmessages.GossipTypeCycleSYNC, remote, a.view.Members().Clone(), a.view.Version().Clone())
 	pong.ProbeSequence, pong.ProbeOriginID = sequence, local.ID()
 	ctx.sender = relay.ActorRef
 	a.onPong(ctx, pong)
@@ -161,7 +161,7 @@ func TestActor_GossipReachabilityCorrelation(t *testing.T) {
 
 func TestActor_GossipReachabilityBudget(t *testing.T) {
 	local := reachableMember("local:10001")
-	opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterGossipPeersCount(2))
+	opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterGossipPeersCount(2))
 	a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: opts, reachability: newLocalReachability()}
 	a.view.Members().Upsert(local)
 	for i := range 10 {
@@ -182,7 +182,7 @@ func TestActor_GossipReachabilityBudget(t *testing.T) {
 	members, versions := memberlist.New(log.GetDefault()), versionvector.New()
 	members.Upsert(remote)
 	versions.Update(remote.ID(), 2)
-	ping := gossipmessages.NewPing(gossipmessages.GossipTypeCycleSYNC, remote, members, versions)
+	ping := gossipmessages.NewPing("vivid-test", gossipmessages.GossipTypeCycleSYNC, remote, members, versions)
 	ping.ProbeSequence = 77
 	a.onPing(ctx, ping)
 	pong := ctx.reply.(*gossipmessages.Pong)
@@ -192,19 +192,19 @@ func TestActor_GossipReachabilityBudget(t *testing.T) {
 
 func TestActor_GossipReachabilityRequiresRoundTrip(t *testing.T) {
 	local, remote := reachableMember("local:10001"), reachableMember("remote:10002")
-	a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions(), reachability: newLocalReachability()}
+	a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test")), reachability: newLocalReachability()}
 	a.view.Members().Upsert(local)
 	a.view.Members().Upsert(remote)
 	a.view.Version().Update(remote.ID(), 2)
 	ctx := &reachabilityContext{tombstoneContext: &tombstoneContext{ref: local.ActorRef}, sender: remote.ActorRef}
 	now := time.Now()
 	sequence := a.reachability.begin(remote.ActorRef, a.view.Members().List(), now, time.Second, 1)
-	ping := gossipmessages.NewPing(gossipmessages.GossipTypeCycleSYNC, remote, a.view.Members().Clone(), a.view.Version().Clone())
+	ping := gossipmessages.NewPing("vivid-test", gossipmessages.GossipTypeCycleSYNC, remote, a.view.Members().Clone(), a.view.Version().Clone())
 	a.onPing(ctx, ping)
 	assert.Equal(t, vivid.ClusterReachabilityUnknown, a.reachability.state(remote.ID()), "收到对方的单向请求不证明自己发出的请求得到应答")
 	a.refreshReachability(ctx, now.Add(time.Second))
 	assert.Equal(t, vivid.ClusterReachabilityUnreachable, a.reachability.state(remote.ID()))
-	pong := gossipmessages.NewPong(gossipmessages.GossipTypeCycleSYNC, remote, ping.MemberList, ping.Version)
+	pong := gossipmessages.NewPong("vivid-test", gossipmessages.GossipTypeCycleSYNC, remote, ping.MemberList, ping.Version)
 	pong.ProbeSequence, pong.ProbeOriginID = sequence, local.ID()
 	a.onPong(ctx, pong)
 	assert.Equal(t, vivid.ClusterReachabilityUnreachable, a.reachability.state(remote.ID()), "已完成超时的请求不能被迟到应答恢复")
@@ -217,7 +217,7 @@ func TestActor_GossipReachabilityRequiresRoundTrip(t *testing.T) {
 	relay := reachableMember("relay:10003")
 	ping.MemberList.Upsert(relay)
 	ping.Version.Update(relay.ID(), 2)
-	pong = gossipmessages.NewPong(gossipmessages.GossipTypeCycleSYNC, relay, ping.MemberList, ping.Version)
+	pong = gossipmessages.NewPong("vivid-test", gossipmessages.GossipTypeCycleSYNC, relay, ping.MemberList, ping.Version)
 	ctx.sender = relay.ActorRef
 	pong.ProbeSequence = a.reachability.begin(relay.ActorRef, a.view.Members().List(), time.Now(), time.Second, 1)
 	pong.ProbeOriginID = local.ID()
@@ -228,7 +228,7 @@ func TestActor_GossipReachabilityRequiresRoundTrip(t *testing.T) {
 
 func TestActor_GossipReachabilityRemoved(t *testing.T) {
 	local, remote := reachableMember("local:10001"), reachableMember("remote:10002")
-	a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions(), reachability: newLocalReachability()}
+	a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test")), reachability: newLocalReachability()}
 	a.view.Members().Upsert(local)
 	a.view.Members().Upsert(remote)
 	a.view.Version().Update(remote.ID(), 2)
@@ -242,7 +242,7 @@ func TestActor_GossipReachabilityRemoved(t *testing.T) {
 	members, versions := a.view.Members().Clone(), a.view.Version().Clone()
 	members.Upsert(removed)
 	versions.Update(remote.ID(), 5)
-	pong := gossipmessages.NewPong(gossipmessages.GossipTypeRemoveNode, removed, members, versions)
+	pong := gossipmessages.NewPong("vivid-test", gossipmessages.GossipTypeRemoveNode, removed, members, versions)
 	pong.ProbeSequence, pong.ProbeOriginID = sequence, local.ID()
 	a.onPong(ctx, pong)
 	member, _ := a.currentSnapshot().Member(remote.ID())
@@ -280,7 +280,7 @@ func BenchmarkActor_GossipReachability(b *testing.B) {
 		for _, observe := range []bool{false, true} {
 			b.Run(fmt.Sprintf("members_%d/observe_%t", count, observe), func(b *testing.B) {
 				local := reachableMember("local:10001")
-				a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions()}
+				a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"))}
 				ctx := &reachabilitySpreadContext{tombstoneContext: &tombstoneContext{ref: local.ActorRef}, ids: make(map[string]string)}
 				if observe {
 					a.reachability = newLocalReachability()

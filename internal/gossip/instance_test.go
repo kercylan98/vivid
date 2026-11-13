@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
 	"github.com/kercylan98/vivid/internal/gossip/memberlist"
@@ -33,7 +34,7 @@ func TestActor_GossipInstanceIsolation(t *testing.T) {
 					current := endpoint.NewInformation(old.ActorRef.Clone(), time.Unix(2, 0))
 					current.Status = endpoint.StatusUp
 					require.NotEqual(t, old.ID(), current.ID(), "同地址重启必须创建独立的版本命名空间")
-					a := &Actor{info: local, view: NewClusterView(log.GetDefault())}
+					a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"))}
 					a.view.Members().Upsert(local)
 					a.view.Members().Upsert(old)
 					a.view.Version().Increment(local.ID())
@@ -55,9 +56,9 @@ func TestActor_GossipInstanceIsolation(t *testing.T) {
 					}
 					deliver := func() {
 						if reply {
-							a.onPong(ctx, gossipmessages.NewPong(gossipmessages.GossipTypeCycleSYNC, sender, members, version))
+							a.onPong(ctx, gossipmessages.NewPong("vivid-test", gossipmessages.GossipTypeCycleSYNC, sender, members, version))
 						} else {
-							a.onPing(ctx, gossipmessages.NewPing(gossipmessages.GossipTypeCycleSYNC, sender, members, version))
+							a.onPing(ctx, gossipmessages.NewPing("vivid-test", gossipmessages.GossipTypeCycleSYNC, sender, members, version))
 						}
 					}
 					deliver()
@@ -97,7 +98,7 @@ func TestActor_GossipLocalVersionOwnership(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				local := endpoint.NewInformation(&tombstoneRef{address: "local:10001"}, time.Unix(1, 0))
 				local.Status = endpoint.StatusUp
-				a := &Actor{info: local, view: NewClusterView(log.GetDefault())}
+				a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"))}
 				a.view.Members().Upsert(local)
 				a.view.Version().Increment(local.ID())
 				ctx := &tombstoneContext{ref: local.ActorRef}
@@ -118,9 +119,9 @@ func TestActor_GossipLocalVersionOwnership(t *testing.T) {
 					version.Increment(sender.ID())
 				}
 				if reply {
-					a.onPong(ctx, gossipmessages.NewPong(gossipmessages.GossipTypeCycleSYNC, sender, members, version))
+					a.onPong(ctx, gossipmessages.NewPong("vivid-test", gossipmessages.GossipTypeCycleSYNC, sender, members, version))
 				} else {
-					a.onPing(ctx, gossipmessages.NewPing(gossipmessages.GossipTypeCycleSYNC, sender, members, version))
+					a.onPing(ctx, gossipmessages.NewPing("vivid-test", gossipmessages.GossipTypeCycleSYNC, sender, members, version))
 				}
 				assert.Same(t, local, a.view.Members().Get(local.ID()))
 				assert.Equal(t, endpoint.StatusUp, local.Status)

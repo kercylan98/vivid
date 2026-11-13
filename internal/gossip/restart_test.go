@@ -106,6 +106,7 @@ func TestActor_GossipRestartProcess(t *testing.T) {
 	require.NoError(t, system.Start())
 	t.Cleanup(func() { require.NoError(t, system.Stop(3*time.Second)) })
 	opts := vivid.NewActorSystemClusterOptions(
+		vivid.WithActorSystemClusterName("vivid-test"),
 		vivid.WithActorSystemClusterLaunchDelay(0),
 		vivid.WithActorSystemClusterGossipInterval(50*time.Millisecond),
 		vivid.WithActorSystemClusterGracefulShutdownTimeout(time.Second),

@@ -74,6 +74,7 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 		registry.RegisterMessage("*versionvector.VersionVector", new(versionvector.VersionVector))
 		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.Ping", new(gossipmessages.Ping), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.Pong", new(gossipmessages.Pong), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.JoinRejected", new(gossipmessages.JoinRejected), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 
 		// 注册用户消息
 		registry.SetClass("USER")

@@ -184,6 +184,13 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 	if ping == nil || ping.Info == nil || ping.Info.ActorRef == nil || ping.MemberList == nil || ping.Version == nil {
 		return
 	}
+	if ping.ClusterName != a.opts.Name {
+		if ping.GossipType == gossipmessages.GossipTypeJoin {
+			// 仅返回名称以定位种子误配，不向其他集群暴露成员视图。
+			ctx.Reply(&gossipmessages.JoinRejected{ClusterName: a.opts.Name})
+		}
+		return
+	}
 	// 加入完成前不接收 Ping，避免向其他节点提供未就绪视图。
 	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining ||
 		ping.GossipType == gossipmessages.GossipTypeJoin && a.info.Status != endpoint.StatusUp {
@@ -214,7 +221,7 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 
 // onPong 接收加入请求或周期同步得到的实例视图。
 func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
-	if pong == nil || pong.Info == nil || pong.Info.ActorRef == nil || pong.MemberList == nil || pong.Version == nil {
+	if pong == nil || pong.ClusterName != a.opts.Name || pong.Info == nil || pong.Info.ActorRef == nil || pong.MemberList == nil || pong.Version == nil {
 		return
 	}
 	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining {
@@ -352,12 +359,12 @@ func (a *Actor) preparePing(gossipType string) *gossipmessages.Ping {
 	infoCopied := a.info.Clone()
 	memberListCopied := a.view.Members().Clone()
 	versionVectorCopied := a.view.Version().Clone()
-	return gossipmessages.NewPing(gossipType, infoCopied, memberListCopied, versionVectorCopied)
+	return gossipmessages.NewPing(a.opts.Name, gossipType, infoCopied, memberListCopied, versionVectorCopied)
 }
 
 func (a *Actor) preparePong(gossipType string) *gossipmessages.Pong {
 	infoCopied := a.info.Clone()
 	memberListCopied := a.view.Members().Clone()
 	versionVectorCopied := a.view.Version().Clone()
-	return gossipmessages.NewPong(gossipType, infoCopied, memberListCopied, versionVectorCopied)
+	return gossipmessages.NewPong(a.opts.Name, gossipType, infoCopied, memberListCopied, versionVectorCopied)
 }

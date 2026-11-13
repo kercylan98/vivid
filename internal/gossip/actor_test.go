@@ -49,15 +49,15 @@ func TestActor_Gossip(t *testing.T) {
 		}
 	}()
 
-	gossipRef1, err := system1.ActorOf(gossip.New(vivid.NewActorSystemClusterOptions()))
+	gossipRef1, err := system1.ActorOf(gossip.New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"))))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef1)
 
-	gossipRef2, err := system2.ActorOf(gossip.New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(gossipRef1.GetAddress()))))
+	gossipRef2, err := system2.ActorOf(gossip.New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterSeeds(gossipRef1.GetAddress()))))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef2)
 
-	gossipRef3, err := system3.ActorOf(gossip.New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(gossipRef1.GetAddress()))))
+	gossipRef3, err := system3.ActorOf(gossip.New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterSeeds(gossipRef1.GetAddress()))))
 	assert.NoError(t, err)
 	assert.NotNil(t, gossipRef3)
 }

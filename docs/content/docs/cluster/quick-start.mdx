@@ -5,7 +5,7 @@ description: 使用当前公共 API 启用集群并配置种子节点
 
 ## 前置条件
 
-集群依赖 [远程通讯](/docs/config/remoting)。每个节点需要可监听的绑定地址和其他节点能够访问的广告地址；种子使用广告地址，格式为 `host:port`，不包含 Actor 路径。
+集群依赖 [远程通讯](/docs/config/remoting)。同一集群的节点必须配置完全相同的名称。每个节点需要可监听的绑定地址和其他节点能够访问的广告地址；种子使用广告地址，格式为 `host:port`，不包含 Actor 路径。
 
 ## 启用集群
 
@@ -31,7 +31,9 @@ func main() {
 
     system := bootstrap.NewActorSystem(
         vivid.WithActorSystemRemoting("127.0.0.1:8080"),
-        vivid.WithActorSystemClusterOptions(),
+        vivid.WithActorSystemClusterOptions(
+            vivid.WithActorSystemClusterName("example-dev"),
+        ),
     )
     if err := system.Start(); err != nil {
         log.Fatal(err)
@@ -59,6 +61,7 @@ func main() {
 system := bootstrap.NewActorSystem(
     vivid.WithActorSystemRemoting("127.0.0.1:8081"),
     vivid.WithActorSystemClusterOptions(
+        vivid.WithActorSystemClusterName("example-dev"),
         vivid.WithActorSystemClusterSeeds("127.0.0.1:8080"),
     ),
 )
@@ -72,6 +75,6 @@ system := bootstrap.NewActorSystem(
 
 ## 配置行为
 
-首次调用 `WithActorSystemClusterOptions(opts...)` 会初始化默认配置，再应用子选项；后续调用继续修改已有配置。`WithActorSystemClusterSeeds` 追加种子列表，其余内置子选项覆盖对应字段。不传子选项也会启用默认集群配置。
+首次调用 `WithActorSystemClusterOptions(opts...)` 会初始化配置，再应用子选项；后续调用继续修改已有配置。`WithActorSystemClusterSeeds` 追加种子列表，其余内置子选项覆盖对应字段。名称没有默认值，未设置时 `Start()` 返回参数错误。
 
 通过 `system.ClusterReady()` 等待初始加入结果，通过 `system.ClusterSnapshot()` 查询本地成员。可用选项及默认值见[配置选项](/docs/cluster/config/options)，TLS/mTLS 接入见[连接认证](/docs/cluster/auth/join-auth)。

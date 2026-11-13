@@ -17,6 +17,7 @@ import (
 func pendingClusterSystem(t *testing.T, address string, options ...vivid.ActorSystemClusterOption) *actor.System {
 	t.Helper()
 	options = append([]vivid.ActorSystemClusterOption{
+		vivid.WithActorSystemClusterName("vivid-test"),
 		vivid.WithActorSystemClusterLaunchDelay(0),
 		vivid.WithActorSystemClusterGossipInterval(50 * time.Millisecond),
 		vivid.WithActorSystemClusterGracefulShutdownTimeout(time.Second),
@@ -197,6 +198,7 @@ func TestSystem_ClusterInvalidOptions(t *testing.T) {
 		name    string
 		options []vivid.ActorSystemClusterOption
 	}{
+		{"missing_name", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterName("")}},
 		{"negative_delay", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterLaunchDelay(-1)}},
 		{"zero_interval", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterGossipInterval(0)}},
 		{"negative_peers", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterGossipPeersCount(-1)}},
@@ -207,7 +209,8 @@ func TestSystem_ClusterInvalidOptions(t *testing.T) {
 	} {
 		t.Run(options.name, func(t *testing.T) {
 			address := clusterTestAddress(t)
-			system := actor.NewSystem(vivid.WithActorSystemRemoting(address), vivid.WithActorSystemClusterOptions(options.options...))
+			clusterOptions := append([]vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterName("vivid-test")}, options.options...)
+			system := actor.NewSystem(vivid.WithActorSystemRemoting(address), vivid.WithActorSystemClusterOptions(clusterOptions...))
 			err := system.Start()
 			assert.ErrorIs(t, err, vivid.ErrorActorSystemStartFailed)
 			assert.ErrorIs(t, err, vivid.ErrorIllegalArgument)
@@ -217,7 +220,7 @@ func TestSystem_ClusterInvalidOptions(t *testing.T) {
 		})
 	}
 	address := clusterTestAddress(t)
-	system := actor.NewSystem(vivid.WithActorSystemRemoting(address), vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(address)))
+	system := actor.NewSystem(vivid.WithActorSystemRemoting(address), vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterSeeds(address)))
 	err := system.Start()
 	assert.ErrorIs(t, err, vivid.ErrorIllegalArgument, "只有自身种子时必须显式 Bootstrap")
 }

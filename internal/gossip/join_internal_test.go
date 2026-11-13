@@ -27,13 +27,13 @@ type joinContext struct{ tombstoneContext }
 func (*joinContext) Scheduler() vivid.Scheduler { return &joinScheduler{} }
 
 func TestActor_GossipJoinResponse(t *testing.T) {
-	for _, name := range []string{"accepted", "ordinary_pong", "wrong_seed", "seed_leaving", "missing_ack", "old_instance_ack", "wrong_revision", "nil_info", "nil_members", "nil_version"} {
+	for _, name := range []string{"accepted", "ordinary_pong", "wrong_seed", "seed_leaving", "missing_ack", "old_instance_ack", "wrong_revision", "nil_info", "nil_members", "nil_version", "wrong_cluster", "missing_cluster", "nil_pong", "rejected", "same_cluster_rejection", "nil_rejection"} {
 		t.Run(name, func(t *testing.T) {
 			local := endpoint.NewInformation(&tombstoneRef{address: "local:10001"}, time.Unix(1, 0))
 			local.Status = endpoint.StatusJoining
 			seed := endpoint.NewInformation(&tombstoneRef{address: "seed:10002"}, time.Unix(2, 0))
 			seed.Status = endpoint.StatusUp
-			a := New(vivid.NewActorSystemClusterOptions())
+			a := New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test")))
 			a.info, a.view, a.seeds = local, NewClusterView(log.GetDefault()), []vivid.ActorRef{seed.ActorRef}
 			a.view.Members().Upsert(local)
 			a.view.Version().Update(local.ID(), 1)
@@ -45,7 +45,7 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 			version := versionvector.New()
 			version.Update(local.ID(), 1)
 			version.Update(seed.ID(), 2)
-			pong := gossipmessages.NewPong(gossipmessages.GossipTypeJoin, seed, members, version)
+			pong := gossipmessages.NewPong("vivid-test", gossipmessages.GossipTypeJoin, seed, members, version)
 			switch name {
 			case "ordinary_pong":
 				pong.GossipType = gossipmessages.GossipTypeCycleSYNC
@@ -69,14 +69,29 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 				pong.MemberList = nil
 			case "nil_version":
 				pong.Version = nil
+			case "wrong_cluster":
+				pong.ClusterName = "Vivid-test"
+			case "missing_cluster":
+				pong.ClusterName = ""
+			case "nil_pong":
+				pong = nil
+			}
+			var message vivid.Message = pong
+			switch name {
+			case "rejected":
+				message = &gossipmessages.JoinRejected{ClusterName: "other"}
+			case "same_cluster_rejection":
+				message = &gossipmessages.JoinRejected{ClusterName: a.opts.Name}
+			case "nil_rejection":
+				message = (*gossipmessages.JoinRejected)(nil)
 			}
 			// 与当前请求不匹配的返回不能结束等待或改变本实例状态。
-			a.onJoinReply(ctx, joinReply{instanceID: "old-local-instance", message: pong})
-			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), index: 1, message: pong})
-			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), attempt: 1, message: pong})
+			a.onJoinReply(ctx, joinReply{instanceID: "old-local-instance", message: message})
+			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), index: 1, message: message})
+			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), attempt: 1, message: message})
 			require.NotNil(t, a.joinRequest)
 			require.Equal(t, endpoint.StatusJoining, local.Status)
-			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), message: pong})
+			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), message: message})
 			result, err := a.Readiness().Wait(nil, time.Second).Result()
 			if name == "accepted" {
 				require.NoError(t, err)
@@ -85,6 +100,9 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 				assert.Equal(t, endpoint.StatusUp, local.Status)
 			} else {
 				assert.ErrorIs(t, err, vivid.ErrorClusterJoinFailed)
+				if name == "wrong_cluster" || name == "missing_cluster" || name == "rejected" {
+					assert.ErrorIs(t, err, vivid.ErrorClusterNameMismatch)
+				}
 				assert.Equal(t, endpoint.StatusJoining, local.Status)
 				assert.Equal(t, 1, len(a.view.Members().List()), "无效加入响应不得污染成员视图")
 			}
@@ -107,7 +125,7 @@ func (c *seedContext) Ref() vivid.ActorRef     { return c.ref }
 func (*seedContext) System() vivid.ActorSystem { return &seedSystem{} }
 
 func TestActor_GossipSeedNormalization(t *testing.T) {
-	options := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds(" z.example:10003 ", "local.example:10001", "a.example:10002", "a.example:10002"))
+	options := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterSeeds(" z.example:10003 ", "local.example:10001", "a.example:10002", "a.example:10002"))
 	original := slices.Clone(options.Seeds)
 	a := New(options)
 	ctx := &seedContext{ref: &tombstoneRef{address: "local.example:10001"}}
@@ -121,7 +139,7 @@ func TestActor_GossipSeedNormalization(t *testing.T) {
 	assert.NotEqual(t, options.Seeds[0], a.opts.Seeds[0])
 	assert.NotEqual(t, options.JoinTimeout, a.opts.JoinTimeout)
 
-	selfOnly := New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds("local.example:10001")))
+	selfOnly := New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterSeeds("local.example:10001")))
 	assert.ErrorIs(t, selfOnly.initializeSeeds(ctx), vivid.ErrorIllegalArgument)
 	selfOnly.opts.Bootstrap = true
 	assert.NoError(t, selfOnly.initializeSeeds(ctx))

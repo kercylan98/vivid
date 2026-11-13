@@ -18,7 +18,7 @@ import (
 func TestActor_GossipSnapshotChanges(t *testing.T) {
 	local := endpoint.NewInformation(&tombstoneRef{address: "local:10001"}, time.Unix(1, 0))
 	local.Status = endpoint.StatusUp
-	a := &Actor{info: local, view: NewClusterView(log.GetDefault())}
+	a := &Actor{info: local, view: NewClusterView(log.GetDefault()), opts: vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"))}
 	a.view.Members().Upsert(local)
 	a.view.Version().Update(local.ID(), 2)
 	ctx := &tombstoneContext{ref: local.ActorRef}
@@ -38,7 +38,7 @@ func TestActor_GossipSnapshotChanges(t *testing.T) {
 	version := versionvector.New()
 	version.Update(remote.ID(), 2)
 	version.Update(old.ID(), 5)
-	ping := gossipmessages.NewPing(gossipmessages.GossipTypeCycleSYNC, remote, members, version)
+	ping := gossipmessages.NewPing("vivid-test", gossipmessages.GossipTypeCycleSYNC, remote, members, version)
 	a.onPing(ctx, ping)
 	require.Len(t, ctx.stream.events, 1, "一批成员更新只发布一次完整视图")
 	event := ctx.stream.events[0].(ves.ClusterMembersChangedEvent)
@@ -64,21 +64,21 @@ func TestActor_GossipSnapshotChanges(t *testing.T) {
 
 	for range 3 {
 		a.onPing(ctx, ping)
-		a.onPong(ctx, gossipmessages.NewPong(ping.GossipType, remote, members, version))
+		a.onPong(ctx, gossipmessages.NewPong("vivid-test", ping.GossipType, remote, members, version))
 	}
 	require.Len(t, ctx.stream.events, 1, "重复视图不得重复发布事件")
 	stale := remote.Clone()
 	stale.Status = endpoint.StatusJoining
 	staleVersion := versionvector.New()
 	staleVersion.Update(stale.ID(), 1)
-	a.onPong(ctx, gossipmessages.NewPong(ping.GossipType, stale, members, staleVersion))
+	a.onPong(ctx, gossipmessages.NewPong("vivid-test", ping.GossipType, stale, members, staleVersion))
 	require.Len(t, ctx.stream.events, 1, "旧版本不得触发事件")
 
 	next := remote.Clone()
 	next.Status = endpoint.StatusLeaving
 	version = version.Clone()
 	version.Update(next.ID(), 3)
-	a.onPong(ctx, gossipmessages.NewPong(ping.GossipType, next, members, version))
+	a.onPong(ctx, gossipmessages.NewPong("vivid-test", ping.GossipType, next, members, version))
 	require.Len(t, ctx.stream.events, 2)
 	latest := ctx.stream.events[1].(ves.ClusterMembersChangedEvent).Snapshot
 	assert.Equal(t, uint64(2), latest.Revision())

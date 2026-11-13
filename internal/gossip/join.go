@@ -129,9 +129,19 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 	}
 	a.joinRequest = nil
 	pong, ok := reply.message.(*gossipmessages.Pong)
+	rejected, isRejection := reply.message.(*gossipmessages.JoinRejected)
 	err := reply.err
-	if err == nil && (!ok || !a.validJoinPong(pong)) {
-		err = vivid.ErrorClusterJoinFailed.WithMessage(fmt.Sprintf("invalid join response from %s", a.seeds[a.joinIndex].GetAddress()))
+	if err == nil {
+		switch {
+		case isRejection && rejected != nil && rejected.ClusterName != a.opts.Name:
+			err = a.clusterNameMismatch(rejected.ClusterName)
+		case !ok || pong == nil:
+			err = vivid.ErrorClusterJoinFailed.WithMessage(fmt.Sprintf("invalid join response from %s", a.seeds[a.joinIndex].GetAddress()))
+		case pong.ClusterName != a.opts.Name:
+			err = a.clusterNameMismatch(pong.ClusterName)
+		case !a.validJoinPong(pong):
+			err = vivid.ErrorClusterJoinFailed.WithMessage(fmt.Sprintf("invalid join response from %s", a.seeds[a.joinIndex].GetAddress()))
+		}
 	}
 	if err != nil {
 		a.joinError = err
@@ -153,8 +163,12 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 	}
 }
 
+func (a *Actor) clusterNameMismatch(name string) error {
+	return vivid.ErrorClusterNameMismatch.WithMessage(fmt.Sprintf("seed %s: expected cluster %q, received %q", a.seeds[a.joinIndex].GetAddress(), a.opts.Name, name))
+}
+
 func (a *Actor) validJoinPong(pong *gossipmessages.Pong) bool {
-	if pong == nil || pong.Info == nil || pong.Info.ActorRef == nil || pong.MemberList == nil || pong.Version == nil ||
+	if pong == nil || pong.ClusterName != a.opts.Name || pong.Info == nil || pong.Info.ActorRef == nil || pong.MemberList == nil || pong.Version == nil ||
 		pong.GossipType != gossipmessages.GossipTypeJoin || pong.Info.Status != endpoint.StatusUp || pong.Info.ID() == "" ||
 		pong.Info.ID() == a.info.ID() || !pong.Info.ActorRef.Equals(a.seeds[a.joinIndex]) || pong.Version.Get(pong.Info.ID()) == 0 {
 		return false
