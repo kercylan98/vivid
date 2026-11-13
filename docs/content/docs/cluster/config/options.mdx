@@ -30,6 +30,8 @@ system := bootstrap.NewActorSystem(
     vivid.WithActorSystemClusterOptions(
         vivid.WithActorSystemClusterName("example-dev"),
         vivid.WithActorSystemClusterSeeds("node1:8080"),
+    ),
+    vivid.WithActorSystemClusterOptions(
         vivid.WithActorSystemClusterGossipInterval(300*time.Millisecond),
         vivid.WithActorSystemClusterGossipPeersCount(3),
         vivid.WithActorSystemClusterGracefulShutdownTimeout(10*time.Second),
@@ -37,7 +39,7 @@ system := bootstrap.NewActorSystem(
 )
 ```
 
-首次配置会创建默认选项；重复调用 `WithActorSystemClusterOptions` 会保留同一份配置，按调用顺序应用子选项。种子追加到原列表，其余内置子选项覆盖对应字段；未修改的字段保留原值。配置应在系统启动前完成，运行时不应并发修改。
+统一使用 `WithActorSystemClusterOptions` 启用和配置集群。首次调用创建默认选项；后续调用按顺序修改同一份配置。上例第二次调用保留名称与种子，仅调整 Gossip 和退出预算。种子追加到原列表，其余内置子选项覆盖对应字段；空调用保留已有配置。配置应在系统启动前完成，运行时不应并发修改。
 
 `NewActorSystemClusterOptions(opts...)` 仅构建配置对象，单独调用不会启用系统的集群功能。完整启动与退出示例见[快速开始](/docs/cluster/quick-start)。
 

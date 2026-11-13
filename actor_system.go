@@ -375,19 +375,6 @@ func WithActorSystemRemoting(bindAddr string, advertiseAddr ...string) ActorSyst
 	}
 }
 
-// WithActorSystemClusterOption 返回一个 ActorSystemOption，用于配置 ActorSystem 的集群选项。
-//
-// 参数：
-//   - options: 期望设置的集群选项。
-func WithActorSystemgClusterOption(options ...ActorSystemClusterOption) ActorSystemOption {
-	return func(opts *ActorSystemOptions) {
-		if opts.ClusterOptions == nil {
-			return
-		}
-		opts.ClusterOptions = NewActorSystemClusterOptions(options...)
-	}
-}
-
 // WithActorSystemCodec 提供 ActorSystemOption，用于配置远程消息的序列化与反序列化 Codec。
 //
 // 如果希望 ActorSystem 支持跨网络或分布式消息传递，必须通过本选项显式设置 Codec，

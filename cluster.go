@@ -89,7 +89,9 @@ func WithActorSystemClusterJoinTimeout(timeout time.Duration) ActorSystemCluster
 	return func(o *ActorSystemClusterOptions) { o.JoinTimeout = timeout }
 }
 
-// WithActorSystemClusterOptions 返回一个 ActorSystemOption，用于配置 ActorSystem 的集群选项。
+// WithActorSystemClusterOptions 返回一个 ActorSystemOption，用于启用并配置 ActorSystem 的集群。
+// 首次调用创建默认选项；后续调用依次修改已有配置，不重置未指定的字段。
+// 未传入子选项时也会启用集群，启动前仍需明确设置名称并启用 Remoting。
 //
 // 参数：
 //   - opts ...ActorSystemClusterOption: 可选参数，链式扩展集群选项。

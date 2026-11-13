@@ -84,24 +84,39 @@ func TestActorSystemClusterOptions_Validate(t *testing.T) {
 
 func TestWithActorSystemClusterOptions_Append(t *testing.T) {
 	opts := vivid.NewActorSystemOptions(
-		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterSeeds("127.0.0.1:7070")),
+		vivid.WithActorSystemClusterOptions(
+			vivid.WithActorSystemClusterName("vivid-test"),
+			vivid.WithActorSystemClusterSeeds("127.0.0.1:7070"),
+			vivid.WithActorSystemClusterJoinTimeout(5*time.Second),
+			vivid.WithActorSystemClusterProbeTimeout(2*time.Second),
+			vivid.WithActorSystemClusterReachabilityTTL(15*time.Second),
+		),
 	)
 	clusterOptions := opts.ClusterOptions
 	launchDelay := clusterOptions.LaunchDelay
 	vivid.WithActorSystemClusterOptions(
-		vivid.WithActorSystemClusterName("vivid-next"),
 		vivid.WithActorSystemClusterSeeds("127.0.0.1:8080"),
 		vivid.WithActorSystemClusterGossipInterval(400*time.Millisecond),
 	)(opts)
 
 	assert.Same(t, clusterOptions, opts.ClusterOptions)
-	assert.Equal(t, "vivid-next", opts.ClusterOptions.Name)
+	assert.Equal(t, "vivid-test", opts.ClusterOptions.Name)
 	assert.Equal(t, []string{"127.0.0.1:7070", "127.0.0.1:8080"}, opts.ClusterOptions.Seeds)
 	assert.Equal(t, 400*time.Millisecond, opts.ClusterOptions.GossipInterval)
 	assert.Equal(t, launchDelay, opts.ClusterOptions.LaunchDelay)
 	assert.Equal(t, 5, opts.ClusterOptions.GossipPeersCount)
 	assert.Equal(t, 10*time.Second, opts.ClusterOptions.GracefulShutdownTimeout)
-	assert.Equal(t, 3*time.Second, opts.ClusterOptions.JoinTimeout)
+	assert.Equal(t, 5*time.Second, opts.ClusterOptions.JoinTimeout)
+	assert.Equal(t, 2*time.Second, opts.ClusterOptions.ProbeTimeout)
+	assert.Equal(t, 15*time.Second, opts.ClusterOptions.ReachabilityTTL)
+	assert.NoError(t, opts.ClusterOptions.Validate())
+
+	before := *opts.ClusterOptions
+	vivid.WithActorSystemClusterOptions()(opts)
+	assert.Same(t, clusterOptions, opts.ClusterOptions)
+	assert.Equal(t, before, *opts.ClusterOptions, "重复空调用不能丢弃名称、种子或重新随机生成启动延迟")
+	vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-next"))(opts)
+	assert.Equal(t, "vivid-next", opts.ClusterOptions.Name, "指定字段按调用顺序覆盖")
 }
 
 func TestActorSystemClusterOptions_Name(t *testing.T) {

@@ -75,6 +75,6 @@ system := bootstrap.NewActorSystem(
 
 ## 配置行为
 
-首次调用 `WithActorSystemClusterOptions(opts...)` 会初始化配置，再应用子选项；后续调用继续修改已有配置。`WithActorSystemClusterSeeds` 追加种子列表，其余内置子选项覆盖对应字段。名称没有默认值，未设置时 `Start()` 返回参数错误。
+统一使用 `WithActorSystemClusterOptions(opts...)` 启用和配置集群。首次调用初始化配置；后续调用仅应用传入的子选项，保留其他字段，空调用也不会重置已有配置。`WithActorSystemClusterSeeds` 追加种子列表，其余内置子选项覆盖对应字段。名称没有默认值，未设置时 `Start()` 返回参数错误。
 
 通过 `system.ClusterReady()` 等待初始加入结果，通过 `system.ClusterSnapshot()` 查询本地成员。可用选项及默认值见[配置选项](/docs/cluster/config/options)，TLS/mTLS 接入见[连接认证](/docs/cluster/auth/join-auth)。
