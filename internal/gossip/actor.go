@@ -48,6 +48,7 @@ type Actor struct {
 	stabilityStartedAt  time.Time                        // 最近观察到成员视图变化的时间
 	viewRevision        uint64                           // 本地观察序号，与本实例 ID 一起标识快照
 	snapshot            *clusterSnapshot                 // 当前视图的只读快照
+	outboundView        *outboundView                    // Ping/Pong 共用的只读成员视图
 	readiness           *Readiness                       // 线程安全的初始加入结果
 	joinRequest         vivid.Future[vivid.Message]      // 当前种子的加入请求
 	joinIndex           int                              // 当前尝试的去重种子下标
@@ -81,6 +82,7 @@ func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 	a.view = NewClusterView(ctx.Logger())
 	a.viewRevision = 0
 	a.snapshot = nil
+	a.outboundView = nil
 	a.membersChanged = false
 	a.resetViewStability()
 	a.lastStableSample = time.Time{}
@@ -294,6 +296,7 @@ func (a *Actor) mergeMember(info *endpoint.Information, version *versionvector.V
 	}
 	isNew := a.view.Members().Upsert(info)
 	a.view.Version().Update(id, remoteVersion)
+	a.outboundView = nil
 	if a.reachability != nil && !observableMember(info.Status) {
 		a.reachability.forget(id)
 	}
@@ -407,15 +410,11 @@ func (a *Actor) onSpreadGossip(ctx vivid.ActorContext, spreadGossip *gossipmessa
 }
 
 func (a *Actor) preparePing(gossipType string) *gossipmessages.Ping {
-	infoCopied := a.info.Clone()
-	memberListCopied := a.view.Members().Clone()
-	versionVectorCopied := a.view.Version().Clone()
-	return gossipmessages.NewPing(a.opts.Name, gossipType, infoCopied, memberListCopied, versionVectorCopied)
+	view := a.currentOutboundView()
+	return gossipmessages.NewPing(a.opts.Name, gossipType, view.info, view.members, view.version)
 }
 
 func (a *Actor) preparePong(gossipType string) *gossipmessages.Pong {
-	infoCopied := a.info.Clone()
-	memberListCopied := a.view.Members().Clone()
-	versionVectorCopied := a.view.Version().Clone()
-	return gossipmessages.NewPong(a.opts.Name, gossipType, infoCopied, memberListCopied, versionVectorCopied)
+	view := a.currentOutboundView()
+	return gossipmessages.NewPong(a.opts.Name, gossipType, view.info, view.members, view.version)
 }

@@ -34,6 +34,8 @@ system := bootstrap.NewActorSystem(
 
 跨机房应答较慢时，可独立调整 `WithActorSystemClusterMaxConcurrentProbes`，无需同时增大 `GossipPeersCount` 的每轮发送数量。更大的观察并发会保留更多等待记录；具体选择应结合链路延迟、探测预算和成员规模验证。
 
+成员与版本未变时，Ping/Pong 复用只读发送视图以减少重复分配；成员变化后仍发送完整视图。该复用不减少消息数量或跨机房传输字节，部署时仍需评估成员规模带来的编码与带宽成本。
+
 ## 地址与种子
 
 每个节点使用其他节点能够访问的广告地址；种子填写广告地址，格式为 `host:port`。部署方式见[快速开始](/docs/cluster/quick-start)，连接配置见[远程通讯](/docs/config/remoting)。
