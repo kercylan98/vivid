@@ -8,6 +8,7 @@ import (
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
 	"github.com/kercylan98/vivid/internal/gossip/versionvector"
+	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
@@ -93,6 +94,7 @@ func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 
 	// 创建本节点 Information 并加入本地视图的成员列表
 	a.info = endpoint.NewInformation(ctx.Ref(), time.Now().Add(a.opts.LaunchDelay))
+	a.info.DataCenter = a.opts.DataCenter
 	if !a.view.Members().Upsert(a.info) {
 		return vivid.ErrorException.WithMessage("prelaunch failed, unexpected error")
 	}
@@ -221,6 +223,9 @@ func (a *Actor) onPing(ctx vivid.ActorContext, ping *gossipmessages.Ping) {
 		ping.GossipType == gossipmessages.GossipTypeJoin && a.info.Status != endpoint.StatusUp {
 		return
 	}
+	if !a.validMemberDataCenter(ping.Info) {
+		return
+	}
 	a.refreshReachability(ctx, time.Now())
 
 	if a.mergeMember(ping.Info, ping.Version) {
@@ -249,6 +254,9 @@ func (a *Actor) onPong(ctx vivid.ActorContext, pong *gossipmessages.Pong) {
 		return
 	}
 	if a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining {
+		return
+	}
+	if !a.validMemberDataCenter(pong.Info) {
 		return
 	}
 	now := time.Now()
@@ -281,6 +289,9 @@ func (a *Actor) mergeMember(info *endpoint.Information, version *versionvector.V
 	if remoteVersion <= a.view.Version().Get(id) {
 		return false
 	}
+	if !a.validMemberDataCenter(info) {
+		return false
+	}
 	isNew := a.view.Members().Upsert(info)
 	a.view.Version().Update(id, remoteVersion)
 	if a.reachability != nil && !observableMember(info.Status) {
@@ -288,6 +299,15 @@ func (a *Actor) mergeMember(info *endpoint.Information, version *versionvector.V
 	}
 	a.membersChanged = true
 	return isNew
+}
+
+// validMemberDataCenter 同一实例的机房保持固定，新实例可重新声明机房。
+func (a *Actor) validMemberDataCenter(info *endpoint.Information) bool {
+	if info.DataCenter != "" && !utils.IsValidClusterLabel(info.DataCenter) {
+		return false
+	}
+	known := a.view.Members().Get(info.ID())
+	return known == nil || known.DataCenter == info.DataCenter
 }
 
 func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {

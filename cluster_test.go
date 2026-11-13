@@ -14,6 +14,7 @@ func TestWithActorSystemClusterOptions_Initialize(t *testing.T) {
 	opts := vivid.NewActorSystemOptions(
 		vivid.WithActorSystemClusterOptions(
 			vivid.WithActorSystemClusterName("vivid-test"),
+			vivid.WithActorSystemClusterDataCenter("dc-a"),
 			vivid.WithActorSystemClusterSeeds("127.0.0.1:7070"),
 			vivid.WithActorSystemClusterLaunchDelay(100*time.Millisecond),
 			vivid.WithActorSystemClusterGossipInterval(300*time.Millisecond),
@@ -24,6 +25,7 @@ func TestWithActorSystemClusterOptions_Initialize(t *testing.T) {
 
 	require.NotNil(t, opts.ClusterOptions)
 	assert.Equal(t, "vivid-test", opts.ClusterOptions.Name)
+	assert.Equal(t, "dc-a", opts.ClusterOptions.DataCenter)
 	assert.Equal(t, []string{"127.0.0.1:7070"}, opts.ClusterOptions.Seeds)
 	assert.Equal(t, 100*time.Millisecond, opts.ClusterOptions.LaunchDelay)
 	assert.Equal(t, 300*time.Millisecond, opts.ClusterOptions.GossipInterval)
@@ -129,5 +131,23 @@ func TestActorSystemClusterOptions_Name(t *testing.T) {
 		opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName(name))
 		assert.NoError(t, opts.Validate(), name)
 		assert.Equal(t, name, opts.Name)
+	}
+}
+
+func TestActorSystemClusterOptions_DataCenter(t *testing.T) {
+	for _, dataCenter := range []string{" ", "dc-a ", " dc-a", "dc a", "dc\n", "dc\x00", "dc\u3000", string([]byte{0xff}), strings.Repeat("x", 129)} {
+		opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterDataCenter(dataCenter))
+		assert.ErrorIs(t, opts.Validate(), vivid.ErrorIllegalArgument, "%q", dataCenter)
+		assert.Equal(t, dataCenter, opts.DataCenter, "校验不应暗中修正标识")
+	}
+	for _, dataCenter := range []string{"", "dc-a", "DC-a", "cn-east_1.az-a", "上海机房", strings.Repeat("x", 128)} {
+		opts := vivid.NewActorSystemOptions(vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterDataCenter(dataCenter)))
+		require.NoError(t, opts.ClusterOptions.Validate(), "%q", dataCenter)
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds("node.example:8080"))(opts)
+		assert.Equal(t, dataCenter, opts.ClusterOptions.DataCenter, "增量调用保留机房声明")
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterDataCenter("dc-b"))(opts)
+		assert.Equal(t, "dc-b", opts.ClusterOptions.DataCenter)
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterDataCenter(""))(opts)
+		assert.Empty(t, opts.ClusterOptions.DataCenter, "启动前可显式清除声明")
 	}
 }

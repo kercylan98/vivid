@@ -57,6 +57,7 @@ func (s ClusterMemberStatus) String() string {
 type ClusterMember struct {
 	ID           string              // 本次启动的实例 ID
 	Address      string              // Remoting 广告地址
+	DataCenter   string              // 实例启动时声明的机房，空表示未声明；不表示信任或写入资格
 	Status       ClusterMemberStatus // 生命周期状态
 	Reachability ClusterReachability // 本地直接往返观察，与生命周期独立；自身及已退出实例为 Unknown
 	Revision     uint64              // 该实例的状态版本

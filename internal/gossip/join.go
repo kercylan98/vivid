@@ -174,11 +174,11 @@ func (a *Actor) clusterNameMismatch(name string) error {
 func (a *Actor) validJoinPong(pong *gossipmessages.Pong) bool {
 	if pong == nil || pong.ClusterName != a.opts.Name || pong.Info == nil || pong.Info.ActorRef == nil || pong.MemberList == nil || pong.Version == nil ||
 		pong.GossipType != gossipmessages.GossipTypeJoin || pong.Info.Status != endpoint.StatusUp || pong.Info.ID() == "" ||
-		pong.Info.ID() == a.info.ID() || !pong.Info.ActorRef.Equals(a.seeds[a.joinIndex]) || pong.Version.Get(pong.Info.ID()) == 0 {
+		pong.Info.ID() == a.info.ID() || !pong.Info.ActorRef.Equals(a.seeds[a.joinIndex]) || pong.Version.Get(pong.Info.ID()) == 0 || !a.validMemberDataCenter(pong.Info) {
 		return false
 	}
 	// 种子应确认收到本实例的 Joining 记录；普通或旧实例的 Pong 不构成加入成功。
 	self := pong.MemberList.Get(a.info.ID())
-	return self != nil && self.ActorRef != nil && self.ActorRef.Equals(a.info.ActorRef) && self.Status == endpoint.StatusJoining &&
+	return self != nil && self.ActorRef != nil && self.ActorRef.Equals(a.info.ActorRef) && self.Status == endpoint.StatusJoining && self.DataCenter == a.info.DataCenter &&
 		pong.Version.Get(a.info.ID()) == a.view.Version().Get(a.info.ID())
 }

@@ -3,7 +3,24 @@ title: 多数据中心
 description: 跨机房连接、网络分区恢复与当前能力边界
 ---
 
-当前节点可通过可达的 Remoting 广告地址跨机房通信，但集群不区分数据中心、地域或可用区，也没有按机房选择成员、路由或调整超时的配置。
+节点可通过可达的 Remoting 广告地址跨机房通信，使用 `WithActorSystemClusterDataCenter` 声明所属机房，并通过成员快照与事件读取。当前不按机房选择联络目标、路由或调整超时，也没有地域、可用区的独立配置。
+
+## 声明与观察机房
+
+```go
+system := bootstrap.NewActorSystem(
+    vivid.WithActorSystemRemoting("0.0.0.0:8081", "node2:8081"),
+    vivid.WithActorSystemClusterOptions(
+        vivid.WithActorSystemClusterName("example-prod"),
+        vivid.WithActorSystemClusterDataCenter("cn-east-1"),
+        vivid.WithActorSystemClusterSeeds("node1:8080"),
+    ),
+)
+```
+
+机房标识为空表示未声明，不从 IP 或集群名称推断。非空时须为 1–128 字节的有效 UTF-8，不含空白或控制字符，区分大小写，不自动裁剪。标识在本次启动内固定；需要调整时重新创建系统，同地址的新实例可以声明其他机房，历史实例保留原标识。
+
+通过 `ClusterSnapshot()` 返回的 `ClusterMember.DataCenter` 读取；成员事件与可达性事件的快照也包含该字段。标识会随成员视图经其他节点转发，使用方式见[本地成员查询](/docs/cluster/runtime/context)和[成员事件](/docs/cluster/events/events)。这是节点自行声明的拓扑信息，不是认证结果、网络隔离条件或写入资格。
 
 ## 地址与种子
 

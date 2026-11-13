@@ -199,6 +199,7 @@ func TestSystem_ClusterInvalidOptions(t *testing.T) {
 		options []vivid.ActorSystemClusterOption
 	}{
 		{"missing_name", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterName("")}},
+		{"invalid_data_center", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterDataCenter("dc a")}},
 		{"negative_delay", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterLaunchDelay(-1)}},
 		{"zero_interval", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterGossipInterval(0)}},
 		{"negative_peers", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterGossipPeersCount(-1)}},

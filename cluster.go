@@ -5,8 +5,6 @@ import (
 	"net"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/kercylan98/vivid/internal/utils"
 )
@@ -31,6 +29,7 @@ func NewActorSystemClusterOptions(options ...ActorSystemClusterOption) *ActorSys
 
 type ActorSystemClusterOptions struct {
 	Name                    string        // 逻辑集群名称，必填，区分大小写，最多 128 字节
+	DataCenter              string        // 本实例所属机房，空表示未声明，区分大小写，最多 128 字节
 	Seeds                   []string      // 集群种子节点地址列表
 	Bootstrap               bool          // 配置了种子时仍主动独立启动，默认 false
 	LaunchDelay             time.Duration // 延迟启动时间，避免所有节点同时启动，导致集群瞬间压力过大，通常以随机值设置，默认 50~1000ms
@@ -47,8 +46,11 @@ func (o *ActorSystemClusterOptions) Validate() error {
 	if o == nil {
 		return ErrorIllegalArgument.WithMessage("cluster options are nil")
 	}
-	if len(o.Name) == 0 || len(o.Name) > 128 || !utf8.ValidString(o.Name) || strings.ContainsFunc(o.Name, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+	if !utils.IsValidClusterLabel(o.Name) {
 		return ErrorIllegalArgument.WithMessage("cluster name must be valid UTF-8, 1 to 128 bytes, without whitespace or control characters")
+	}
+	if o.DataCenter != "" && !utils.IsValidClusterLabel(o.DataCenter) {
+		return ErrorIllegalArgument.WithMessage("cluster data center must be empty or valid UTF-8, 1 to 128 bytes, without whitespace or control characters")
 	}
 	if o.LaunchDelay < 0 || o.GossipInterval <= 0 || o.GossipPeersCount <= 0 || o.GracefulShutdownTimeout <= 0 || o.JoinTimeout <= 0 || o.ProbeTimeout <= 0 || o.ReachabilityTTL <= 0 {
 		return ErrorIllegalArgument.WithMessage("cluster launch delay must be non-negative; gossip interval, peers count, shutdown timeout, join timeout, probe timeout and reachability TTL must be positive")
@@ -67,6 +69,12 @@ func (o *ActorSystemClusterOptions) Validate() error {
 // 名称不作为认证凭据，不能替代 TLS 或业务授权。
 func WithActorSystemClusterName(name string) ActorSystemClusterOption {
 	return func(o *ActorSystemClusterOptions) { o.Name = name }
+}
+
+// WithActorSystemClusterDataCenter 声明本次启动所属的机房，空表示未声明；修改需重新创建系统。
+// 标识随成员视图传播，仅供拓扑观察，不改变集群隔离、选点或授权规则。
+func WithActorSystemClusterDataCenter(dataCenter string) ActorSystemClusterOption {
+	return func(o *ActorSystemClusterOptions) { o.DataCenter = dataCenter }
 }
 
 // WithActorSystemClusterProbeTimeout 设置一次 Gossip 直接往返的总等待预算，重复发送不延长预算。

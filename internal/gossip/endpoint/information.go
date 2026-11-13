@@ -20,6 +20,7 @@ func NewInformation(actorRef vivid.ActorRef, createdAt time.Time) *Information {
 // Information 单节点的端点信息，随 Ping/Pong 在集群内传播，用于成员列表与状态展示。
 type Information struct {
 	InstanceID string         // 本次启动的实例 ID，不用于判断新旧或授予接管资格
+	DataCenter string         // 本次启动声明的机房，空表示未声明
 	ActorRef   vivid.ActorRef // 节点对应的 Actor 引用，仅用于通信
 	Status     Status         // 当前生命周期状态
 	CreatedAt  time.Time      // 节点创建时间，用于计算协调者节点 ID
@@ -29,6 +30,7 @@ type Information struct {
 func (i *Information) Clone() *Information {
 	return &Information{
 		InstanceID: i.InstanceID,
+		DataCenter: i.DataCenter,
 		ActorRef:   i.ActorRef.Clone(),
 		Status:     i.Status,
 		CreatedAt:  i.CreatedAt,

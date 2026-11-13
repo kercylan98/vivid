@@ -30,12 +30,14 @@ type joinContext struct{ tombstoneContext }
 func (*joinContext) Scheduler() vivid.Scheduler { return &joinScheduler{} }
 
 func TestActor_GossipJoinResponse(t *testing.T) {
-	for _, name := range []string{"accepted", "ordinary_pong", "wrong_seed", "seed_leaving", "missing_ack", "old_instance_ack", "wrong_revision", "nil_info", "nil_members", "nil_version", "wrong_cluster", "missing_cluster", "nil_pong", "rejected", "same_cluster_rejection", "nil_rejection"} {
+	for _, name := range []string{"accepted", "ordinary_pong", "wrong_seed", "seed_leaving", "missing_ack", "old_instance_ack", "wrong_revision", "nil_info", "nil_members", "nil_version", "wrong_cluster", "missing_cluster", "nil_pong", "rejected", "same_cluster_rejection", "nil_rejection", "invalid_data_center", "wrong_data_center_ack"} {
 		t.Run(name, func(t *testing.T) {
 			local := endpoint.NewInformation(&tombstoneRef{address: "local:10001"}, time.Unix(1, 0))
 			local.Status = endpoint.StatusJoining
+			local.DataCenter = "dc-a"
 			seed := endpoint.NewInformation(&tombstoneRef{address: "seed:10002"}, time.Unix(2, 0))
 			seed.Status = endpoint.StatusUp
+			seed.DataCenter = "dc-b"
 			a := New(vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test")))
 			a.info, a.view, a.seeds = local, NewClusterView(log.GetDefault()), []vivid.ActorRef{seed.ActorRef}
 			a.view.Members().Upsert(local)
@@ -81,6 +83,10 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 				pong.ClusterName = ""
 			case "nil_pong":
 				pong = nil
+			case "invalid_data_center":
+				pong.Info.DataCenter = "dc b"
+			case "wrong_data_center_ack":
+				pong.MemberList.Get(local.ID()).DataCenter = "dc-b"
 			}
 			var message vivid.Message = pong
 			switch name {

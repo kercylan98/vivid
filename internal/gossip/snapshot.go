@@ -43,6 +43,7 @@ func (a *Actor) currentSnapshot() *clusterSnapshot {
 		members[i] = vivid.ClusterMember{
 			ID:           member.ID(),
 			Address:      member.ActorRef.GetAddress(),
+			DataCenter:   member.DataCenter,
 			Status:       member.Status,
 			Revision:     a.view.Version().Get(member.ID()),
 			CreatedAt:    member.CreatedAt,
