@@ -233,7 +233,7 @@ system := bootstrap.NewActorSystem(
 - **ReconnectFactor**：有限且不小于 1 的退避因子，1 表示固定间隔；非法值忽略。对应 **WithActorSystemRemotingReconnectFactor**。
 - **ReconnectJitter**：启用后，在当前退避间隔的 50% 到 100% 之间随机选择延迟。对应 **WithActorSystemRemotingReconnectJitter**。
 
-退避期间的新消息进入待发送队列，不会提前触发拨号。重试次数限制针对当前 Endpoint 的连接过程；后续新消息仍可重新发起连接，不是对某个地址永久禁用。
+退避期间的新消息进入待发送队列，不会提前触发拨号；已有连接接管或端点停止后，不再执行已取消的重试。重试次数限制针对当前 Endpoint 的连接过程；后续新消息仍可重新发起连接，不是对某个地址永久禁用。
 
 双方同时首次建连时，正常的重复连接仲裁不消耗重试次数，`ReconnectLimit` 为 0 也可完成连接选择。若优选拨号失败，框架会先尝试接管已接入的备用连接；备用连接仍受原握手超时约束，全部失败后才按重试策略处理待发送消息。
 

@@ -83,7 +83,9 @@ type endpointInboundReady struct {
 	err     error
 }
 
-type endpointRetryConnect struct{}
+type endpointRetryConnect struct {
+	attempt uint64
+}
 
 type endpointConnectCompleted struct {
 	attempt uint64
@@ -130,8 +132,9 @@ type endpoint struct {
 	connectAttempt    uint64 // 当前尝试向该端点发起连接尝试的单调递增计数
 	connectTask       *pendingConnection
 	writing           bool
-	retryCount        int  // 当前重试次数
-	retryScheduled    bool // 是否已调度重试
+	retryCount        int    // 当前重试次数
+	retryScheduled    bool   // 是否已调度重试
+	retryAttempt      uint64 // 当前重试调度代次，不随重试次数预算重置
 	associationSeq    uint64
 	received          uint64 // 已处理的外部信封与接入会话数量，与管理器投递计数对应
 }
@@ -151,7 +154,7 @@ func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
 		e.received++
 		e.onAttachSession(ctx, msg)
 	case endpointRetryConnect:
-		e.onRetryConnect(ctx)
+		e.onRetryConnect(ctx, msg)
 	case endpointReaderStopped:
 		e.onReaderStopped(ctx, msg)
 	case endpointWriterAck:
@@ -370,11 +373,12 @@ func (e *endpoint) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
 	e.trySend(ctx)
 }
 
-func (e *endpoint) onRetryConnect(ctx vivid.ActorContext) {
-	e.retryScheduled = false
-	if e.stopping {
+func (e *endpoint) onRetryConnect(ctx vivid.ActorContext, message endpointRetryConnect) {
+	// 取消不能撤回已经投递的通知，旧代次不得清除新一轮退避。
+	if e.stopping || !e.retryScheduled || message.attempt != e.retryAttempt {
 		return
 	}
+	e.retryScheduled = false
 	if e.association != nil || e.outboundBuffer.Empty() {
 		return
 	}
@@ -694,8 +698,9 @@ func (e *endpoint) scheduleRetry(ctx vivid.ActorContext, cause error) {
 
 	delay := e.retryPolicy.delayFor(e.retryCount)
 	e.retryCount++
+	e.retryAttempt++
 	e.retryScheduled = true
-	if err := ctx.Scheduler().Once(ctx.Ref(), delay, endpointRetryConnect{}, vivid.WithSchedulerReference(e.retryScheduleReference())); err != nil {
+	if err := ctx.Scheduler().Once(ctx.Ref(), delay, endpointRetryConnect{attempt: e.retryAttempt}, vivid.WithSchedulerReference(e.retryScheduleReference())); err != nil {
 		e.retryScheduled = false
 		ctx.Logger().Warn("endpoint schedule retry failed", log.String("address", e.address), log.Any("error", err))
 		e.failPending(ctx)
