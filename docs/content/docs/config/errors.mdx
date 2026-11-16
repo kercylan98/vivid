@@ -100,9 +100,9 @@ ActorSystem 生命周期、重复启停及通用“资源不存在”。
 | -1 | **ErrorException** | 未分类内部异常 | — |
 | 100000 | **ErrorNotFound** | 资源不存在（如调度器 Cancel 时指定 reference 不存在） | — |
 | 100001 | **ErrorActorSystemAlreadyStarted** | 重复调用 Start | — |
-| 100002 | **ErrorActorSystemAlreadyStopped** | 重复调用 Stop | — |
+| 100002 | **ErrorActorSystemAlreadyStopped** | 停止完成后重复调用 Stop，或尝试重新 Start | — |
 | 100003 | **ErrorActorSystemStartFailed** | 系统启动失败 | — |
-| 100004 | **ErrorActorSystemStopFailed** | 系统停止失败 | — |
+| 100004 | **ErrorActorSystemStopFailed** | 本次停止等待超时，后台继续关闭 | — |
 | 100005 | **ErrorActorSystemNotStarted** | 未启动时调用 Stop | — |
 | 100006 | **ErrorActorSystemStopped** | 系统已停止 | — |
 

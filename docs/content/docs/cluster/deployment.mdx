@@ -54,6 +54,6 @@ description: 节点地址、启动顺序、连接认证与分区恢复验证
 
 ## 正常停止
 
-通过 `system.Stop()` 停止节点，集群随系统执行退出流程。`WithActorSystemClusterGracefulShutdownTimeout` 控制集群阶段的等待预算，系统停止预算也需覆盖业务收尾时间；检查 `Stop()` 的返回错误。
+通过 `system.Stop()` 停止节点，集群随系统执行退出流程。`WithActorSystemClusterGracefulShutdownTimeout` 控制集群阶段的等待预算；`Stop()` 的等待时间需覆盖业务收尾和集群退出。等待超时后后台继续关闭，可再次调用等待，详见[系统停止](/docs/config/actor-system-config#系统停止)。
 
 退出不保证所有远端已确认，也不保证待发送业务消息已交付。强制终止可能留下 Up 的旧实例记录，详见[节点生命周期](/docs/cluster/events/lifecycle)。

@@ -185,22 +185,33 @@ func TestSystem_RemotingAdmissionDroppedByKilledActor(t *testing.T) {
 
 func TestSystem_RemotingAdmissionStopTimeout(t *testing.T) {
 	system, failed, _ := newAdmissionSystem(t, nil, 1, 1)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	_, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
+		if _, ok := ctx.Message().(*vivid.OnKill); ok {
+			close(entered)
+			<-release
+		}
+	}))
+	require.NoError(t, err)
 	value, exists := system.actorContexts.Load(system.remotingRef.GetPath())
 	require.True(t, exists)
 	remoteMailbox := value.(*Context).mailbox
 	remoteMailbox.Pause()
 	system.mailbox.Pause()
-	t.Cleanup(func() { remoteMailbox.Resume(); system.mailbox.Resume(); system.scheduler.Stop() })
+	t.Cleanup(func() { once.Do(func() { close(release) }); remoteMailbox.Resume(); system.mailbox.Resume() })
 	target, err := system.CreateRef("127.0.0.1:1", "/timeout")
 	require.NoError(t, err)
 	original := mailbox.NewEnvelop(false, system.Ref(), target, system.Ref())
 	system.ResolveMailbox(target).Enqueue(original)
-	// 根邮箱暂停使组件尚未收到终止消息；Stop 超时仍须释放准入索引。
+	// 用户收尾尚未返回时保留远程组件，等待超时不能提前释放仍在使用的配额。
 	err = system.Stop(20 * time.Millisecond)
 	require.ErrorIs(t, err, vivid.ErrorActorSystemStopFailed)
+	receiveRetryResult(t, entered)
+	require.Empty(t, failed)
+	once.Do(func() { close(release) })
+	err = system.Stop(time.Second)
+	require.True(t, err == nil || errors.Is(err, vivid.ErrorActorSystemAlreadyStopped), "%v", err)
 	require.Same(t, original, receiveRetryResult(t, failed))
-	remoteMailbox.Resume()
-	system.mailbox.Resume()
-	receiveRetryResult(t, system.guardClosedSignal)
 	require.Empty(t, failed, "迟到的组件终止不能重复处理原始信封")
 }

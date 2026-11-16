@@ -1,6 +1,8 @@
 package actor_test
 
 import (
+	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -33,4 +35,40 @@ func TestSystem_ClusterShutdownSampling(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSystem_ClusterStopWaitTimeout(t *testing.T) {
+	seed := pendingClusterSystem(t, clusterTestAddress(t),
+		vivid.WithActorSystemClusterDataCenter("dc-a"),
+		vivid.WithActorSystemClusterGossipInterval(20*time.Millisecond),
+	)
+	_, err := seed.ClusterReady(time.Second).Result()
+	require.NoError(t, err)
+	address := clusterTestAddress(t)
+	joining := pendingClusterSystem(t, address,
+		vivid.WithActorSystemClusterDataCenter("dc-b"),
+		vivid.WithActorSystemClusterSeeds(seed.Ref().GetAddress()),
+		vivid.WithActorSystemClusterGossipInterval(20*time.Millisecond),
+	)
+	joined, err := joining.ClusterReady(time.Second).Result()
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		snapshot, err := seed.ClusterSnapshot(time.Second).Result()
+		member, exists := snapshot.Member(joined.LocalID)
+		return err == nil && exists && member.Status == vivid.ClusterMemberStatusUp
+	}, time.Second, 5*time.Millisecond)
+
+	err = joining.Stop(20 * time.Millisecond)
+	require.ErrorIs(t, err, vivid.ErrorActorSystemStopFailed)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	// 第一个等待者超时后，周期采样与远程链路仍须支持后续有序退出。
+	require.NoError(t, joining.Stop(2*time.Second))
+	require.Eventually(t, func() bool {
+		snapshot, err := seed.ClusterSnapshot(time.Second).Result()
+		member, exists := snapshot.Member(joined.LocalID)
+		return err == nil && exists && member.Status == vivid.ClusterMemberStatusRemoved
+	}, time.Second, 5*time.Millisecond, "必须先传播退出状态，再关闭 Remoting")
+	listener, err := net.Listen("tcp", address)
+	require.NoError(t, err)
+	require.NoError(t, listener.Close())
 }

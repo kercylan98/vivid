@@ -14,7 +14,7 @@ func (s *System) ClusterReady(timeout ...time.Duration) vivid.Future[vivid.Clust
 	switch s.status {
 	case ready:
 		return future.NewFutureFail[vivid.ClusterJoinResult](vivid.ErrorActorSystemNotStarted)
-	case stop:
+	case stopping, stop:
 		return future.NewFutureFail[vivid.ClusterJoinResult](vivid.ErrorActorSystemStopped)
 	}
 	if s.options.ClusterOptions == nil {
@@ -36,7 +36,7 @@ func (s *System) ClusterSnapshot(timeout ...time.Duration) vivid.Future[vivid.Cl
 	switch s.status {
 	case ready:
 		return future.NewFutureFail[vivid.ClusterSnapshot](vivid.ErrorActorSystemNotStarted)
-	case stop:
+	case stopping, stop:
 		return future.NewFutureFail[vivid.ClusterSnapshot](vivid.ErrorActorSystemStopped)
 	}
 	if s.options.ClusterOptions == nil {

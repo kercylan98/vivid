@@ -110,7 +110,7 @@ func (c *systemChains) initializeMetrics(system *System) chain.Chain {
 			if err != nil {
 				return err
 			}
-			system.TellSelf(&guard.RegisterStopPriority{
+			system.tell(true, system.Ref(), &guard.RegisterStopPriority{
 				ActorRef: ref,
 				Priority: metricsStopPriority,
 			})
@@ -154,7 +154,7 @@ func (c *systemChains) initializeRemoting(system *System) chain.Chain {
 		}
 		system.remotingRef = ref
 		system.remotingMailbox = remoting.NewMailbox(system.options.Context, system, ref, system, system.remotingAdmission)
-		system.TellSelf(&guard.RegisterStopPriority{
+		system.tell(true, system.Ref(), &guard.RegisterStopPriority{
 			ActorRef: ref,
 			Priority: remotingStopPriority,
 		})
@@ -195,9 +195,9 @@ func (c *systemChains) initializeCluster(system *System) chain.Chain {
 		system.statusLock.Unlock()
 
 		// 注册停止优先级
-		system.TellSelf(&guard.RegisterStopPriority{
+		system.tell(true, system.Ref(), &guard.RegisterStopPriority{
 			ActorRef: gossipRef,
-			Priority: remotingStopPriority,
+			Priority: gossipStopPriority,
 		})
 		return nil
 	})

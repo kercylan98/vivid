@@ -60,6 +60,7 @@ func (a *Actor) onStop(ctx vivid.ActorContext) {
 	}
 	a.stopping = true
 
+	// 系统关闭使用系统终止消息，普通邮箱暂停不应阻塞生命周期收尾。
 	// 先关闭未注册的 Actor
 	// 已注册的在 [Actor.onKilled] 中关闭
 	var onlyRegistered = true
@@ -74,12 +75,12 @@ func (a *Actor) onStop(ctx vivid.ActorContext) {
 			continue
 		}
 		onlyRegistered = false
-		ctx.Kill(child, true, stopReason)
+		ctx.Kill(child, false, stopReason)
 	}
 
 	// 如果没有子 Actor，则关闭自己；如果仅剩余已注册的 Actor，则按优先级逐个关闭
 	if ctx.Children().Len() == 0 {
-		ctx.Kill(ctx.Ref(), true, stopReason)
+		ctx.Kill(ctx.Ref(), false, stopReason)
 		return
 	}
 	if onlyRegistered {
@@ -119,11 +120,11 @@ func (a *Actor) killNextRegistered(ctx vivid.ActorContext) {
 		next := a.registerStopPriorities[0]
 		a.registerStopPriorities = a.registerStopPriorities[1:]
 		if ctx.Children().Contains(next.ActorRef) {
-			ctx.Kill(next.ActorRef, true, stopReason)
+			ctx.Kill(next.ActorRef, false, stopReason)
 			return
 		}
 	}
-	ctx.Kill(ctx.Ref(), true, stopReason)
+	ctx.Kill(ctx.Ref(), false, stopReason)
 }
 
 func (a *Actor) removeRegisteredStopPriority(ref vivid.ActorRef) {

@@ -34,7 +34,7 @@ func printMembers(system vivid.ActorSystem) error {
 
 快照可安全保留，后续变更不会修改旧快照；修改返回的成员值或切片不会影响系统及其他订阅者。查询不发起远程探测，按 ID 查询单个成员可避免复制整个列表。
 
-未启动、已停止、未启用集群时，分别返回 `ErrorActorSystemNotStarted`、`ErrorActorSystemStopped`、`ErrorClusterNotEnabled`。查询也可能因超时失败；通过 Future 的 `Close(err)` 可取消等待。
+未启动、停止中或已停止、未启用集群时，分别返回 `ErrorActorSystemNotStarted`、`ErrorActorSystemStopped`、`ErrorClusterNotEnabled`。查询也可能因超时失败；通过 Future 的 `Close(err)` 可取消等待。
 
 成员实例的地址、机房和创建时间在本次启动内固定；变更这些声明需以新实例加入。无效的直接发送方消息会被丢弃，转发视图中的无效成员记录及其版本会被忽略，不影响其他合法记录的合并。
 

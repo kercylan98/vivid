@@ -59,7 +59,7 @@ func main() {
 ```
 
 - **Start()**：同步阻塞直至系统及托管 Actor 启动完成。重复调用会返回 **ErrorActorSystemAlreadyStarted**。
-- **Stop(timeout ...time.Duration)**：优雅停止系统及所有 Actor。不传参数时使用系统配置的 **StopTimeout**；传参时以该时长为限，超时后强制结束。重复调用会等待首次停止完成后返回。
+- **Stop(timeout ...time.Duration)**：有序停止系统及所有 Actor，不保证排空普通消息。不传参数时使用系统配置的 **StopTimeout**；超时仅结束本次等待，后台继续关闭，可再次等待。关闭完成后重复调用返回 **ErrorActorSystemAlreadyStopped**。详见[系统停止](/docs/config/actor-system-config#系统停止)。
 
 </Step>
 

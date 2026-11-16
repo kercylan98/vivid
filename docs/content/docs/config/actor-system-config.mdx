@@ -38,6 +38,14 @@ system := bootstrap.NewActorSystem(
 )
 ```
 
+## 系统停止
+
+**`system.Stop(timeout...)`** 通过系统消息发起关闭，普通邮箱暂停不会阻断停止。框架执行 **OnKill** 和多阶段收尾，先停止业务 Actor，再依次停止集群、远程通信和指标组件。停止不保证排空普通消息；需要保存状态或完成业务请求时，应先取得业务完成确认。请在该系统的 Actor 消息线程之外调用。
+
+`timeout` 限制本次调用的等待时间，不传时使用 **WithActorSystemStopTimeout**，默认 1 分钟；显式传入 `<= 0` 表示一直等待。超时返回 **ErrorActorSystemStopFailed**，可用 `errors.Is(err, context.DeadlineExceeded)` 判断原因；后台继续关闭，可再次调用 **Stop** 等待。关闭完成后重复调用返回 **ErrorActorSystemAlreadyStopped**，系统不能重新启动。
+
+停止无法强行中断阻塞的用户回调。等待超时不代表全部 Actor 或资源已经释放，也不会提前取消仍在收尾的系统上下文和调度器；回调需自行结束阻塞。
+
 ## 常见错误
 
 系统级操作可能返回预定义错误，建议用 **errors.Is** 判定：**ErrorActorSystemAlreadyStarted**（重复 Start）、**ErrorActorSystemAlreadyStopped**、**ErrorActorSystemNotStarted**、**ErrorActorSystemStartFailed** / **ErrorActorSystemStopFailed**。详见 [错误](/docs/config/errors)，完整列表见 [pkg.go.dev - vivid](https://pkg.go.dev/github.com/kercylan98/vivid#pkg-variables)。

@@ -26,6 +26,7 @@ import (
 const (
 	ready int32 = iota
 	start
+	stopping
 	stop
 )
 
@@ -50,6 +51,7 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 		actorContexts:     sync.Map{},
 		futureAgents:      make(map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef),
 		guardClosedSignal: make(chan struct{}),
+		stopCompleted:     make(chan struct{}),
 		scheduler:         scheduler.NewScheduler(opts.Context),
 	}
 
@@ -69,6 +71,7 @@ type System struct {
 	futureAgents           map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
 	futureLock             sync.RWMutex                                      // Future 的锁，保证 Future 的并发安全
 	guardClosedSignal      chan struct{}                                     // 用于通知系统关闭的信号
+	stopCompleted          chan struct{}                                     // 有序关闭及系统资源清理均已完成
 	remotingRef            vivid.ActorRef                                    // 远程服务器引用
 	remotingMailbox        vivid.Mailbox                                     // 所有远程地址共享的发送入口
 	remotingAdmission      *remoting.OutboundAdmission                       // 远程信封在进入邮箱前共享的准入名额
@@ -189,6 +192,12 @@ func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid
 	s.actorOfLock.Lock()
 	defer s.actorOfLock.Unlock()
 
+	s.statusLock.Lock()
+	unavailable := s.status == stopping || s.status == stop
+	s.statusLock.Unlock()
+	if unavailable {
+		return nil, vivid.ErrorActorSystemStopped
+	}
 	return s.Context.ActorOf(actor, options...)
 }
 
@@ -200,7 +209,7 @@ func (s *System) Start() error {
 		case start:
 			s.Logger().Warn("actor system already started")
 			return vivid.ErrorActorSystemAlreadyStarted
-		case stop:
+		case stopping, stop:
 			s.Logger().Warn("actor system already stopped")
 			return vivid.ErrorActorSystemAlreadyStopped
 		default:
@@ -262,7 +271,7 @@ func (s *System) Stop(timeout ...time.Duration) error {
 }
 
 func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
-	// 将锁范围限定在函数内部校验状态，避免每次 return 都重复编写锁释放代码
+	// 只有首个调用启动关闭，其余调用共享完成信号并使用各自的等待预算。
 	var stateError = func(s *System) error {
 		s.statusLock.Lock()
 		defer s.statusLock.Unlock()
@@ -277,8 +286,11 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 				s.Logger().Warn("actor system already stopped")
 			}
 			return vivid.ErrorActorSystemAlreadyStopped
+		case stopping:
+			return nil
 		default:
-			s.status = stop
+			s.status = stopping
+			go s.finishStop()
 			return nil
 		}
 	}(s)
@@ -287,44 +299,60 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 	}
 
 	var stopTimeout = sugar.Max(sugar.FirstOrDefault(timeout, s.options.StopTimeout), 0)
-	if s.remotingAdmission != nil {
-		// 即使组件停止超时，也不能保留尚未完成的远程信封索引。
-		defer s.remotingAdmission.Stop()
+	var timeoutSignal <-chan time.Time
+	if stopTimeout > 0 {
+		timer := time.NewTimer(stopTimeout)
+		defer timer.Stop()
+		timeoutSignal = timer.C
 	}
+	select {
+	case <-s.stopCompleted:
+		return nil
+	case <-timeoutSignal:
+		// 完成与超时同时可读时，优先报告已经完成的关闭。
+		select {
+		case <-s.stopCompleted:
+			return nil
+		default:
+		}
+		if checkLog {
+			s.Logger().Error("actor system stop wait failed", log.Duration("timeout", stopTimeout))
+		}
+		return vivid.ErrorActorSystemStopFailed.With(context.DeadlineExceeded)
+	}
+}
+
+func (s *System) finishStop() {
 	s.statusLock.Lock()
 	readiness := s.clusterReadiness
 	s.statusLock.Unlock()
 	if readiness != nil {
 		readiness.Stop()
 	}
-	s.Logger().Debug("actor system stopping", log.Duration("timeout", stopTimeout))
+	s.Logger().Debug("actor system stopping")
+
+	// 等待已开始的外部创建完成后再通知根 Actor，避免遗漏刚创建的子节点。
+	// 协调发生在独立的关闭任务中，调用方仍按自身预算超时返回。
+	s.actorOfLock.Lock()
+	if s.Context != nil {
+		s.tell(true, s.ref, &guard.Stop{})
+	}
+	s.actorOfLock.Unlock()
 
 	if s.Context != nil {
-		s.TellSelf(&guard.Stop{})
-		select {
-		case <-s.guardClosedSignal:
-			s.cancel()
-			break
-		case <-func() <-chan time.Time {
-			if stopTimeout > 0 {
-				return time.After(stopTimeout)
-			}
-			// 如果永不超时，则返回一个永不关闭的通道
-			return make(chan time.Time)
-		}():
-			s.cancel()
-			s.Logger().Error("actor system stop failed", log.Duration("timeout", stopTimeout))
-			return vivid.ErrorActorSystemStopFailed.With(context.DeadlineExceeded)
-		}
-	} else {
-		s.cancel()
+		<-s.guardClosedSignal
 	}
-
-	// 清理调度器
+	if s.remotingAdmission != nil {
+		s.remotingAdmission.Stop()
+	}
+	s.cancel()
 	s.scheduler.Stop()
 
+	s.statusLock.Lock()
+	s.status = stop
+	close(s.stopCompleted)
+	s.statusLock.Unlock()
 	s.Logger().Debug("actor system stopped")
-	return nil
 }
 
 func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) {
