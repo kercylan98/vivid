@@ -15,6 +15,7 @@ const (
 	// singleSchedulerReference 单个调度器的引用，用于周期 gossip。
 	singleSchedulerReference = "single"
 	gossipActorName          = "@gossip"
+	joinRetrySchedulerRef    = "join-retry"
 )
 
 type gossipTick struct{ instanceID string }
@@ -116,6 +117,8 @@ func (a *Actor) OnReceive(ctx vivid.ActorContext) {
 		}
 	case joinReply:
 		a.onJoinReply(ctx, m)
+	case joinRetry:
+		a.onJoinRetry(ctx, m)
 	case SnapshotRequest:
 		a.refreshReachability(ctx, time.Now())
 		ctx.Reply(a.currentSnapshot())
@@ -330,6 +333,9 @@ func (a *Actor) onKill(ctx vivid.ActorContext, _ *vivid.OnKill) {
 	}
 	if ctx.Scheduler().Exists(launchSchedulerReference) {
 		_ = ctx.Scheduler().Cancel(launchSchedulerReference)
+	}
+	if ctx.Scheduler().Exists(joinRetrySchedulerRef) {
+		_ = ctx.Scheduler().Cancel(joinRetrySchedulerRef)
 	}
 	unjoined := a.info.Status == endpoint.StatusNone || a.info.Status == endpoint.StatusJoining
 	changeStatus(ctx, a, EventLeaving)

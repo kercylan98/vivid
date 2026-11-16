@@ -17,13 +17,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type joinScheduler struct{ vivid.Scheduler }
+type joinScheduler struct {
+	vivid.Scheduler
+	once func(vivid.ActorRef, time.Duration, vivid.Message, ...vivid.ScheduleOption)
+}
 
 func (*joinScheduler) Loop(vivid.ActorRef, time.Duration, vivid.Message, ...vivid.ScheduleOption) error {
 	return nil
 }
 
 func (*joinScheduler) Exists(string) bool { return false }
+
+func (s *joinScheduler) Once(receiver vivid.ActorRef, delay time.Duration, message vivid.Message, options ...vivid.ScheduleOption) error {
+	if s.once != nil {
+		s.once(receiver, delay, message, options...)
+	}
+	return nil
+}
 
 type joinContext struct{ tombstoneContext }
 
@@ -162,6 +172,14 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 type joinFailureContext struct {
 	joinContext
 	requests int
+	retry    vivid.Message
+	delay    time.Duration
+}
+
+func (c *joinFailureContext) Scheduler() vivid.Scheduler {
+	return &joinScheduler{once: func(_ vivid.ActorRef, delay time.Duration, message vivid.Message, _ ...vivid.ScheduleOption) {
+		c.retry, c.delay = message, delay
+	}}
 }
 
 func (c *joinFailureContext) Ask(vivid.ActorRef, vivid.Message, ...time.Duration) vivid.Future[vivid.Message] {
@@ -188,27 +206,43 @@ func TestActor_GossipJoinFailureCauses(t *testing.T) {
 			ctx := &joinFailureContext{joinContext: joinContext{tombstoneContext{ref: local.ActorRef}}}
 			a.tryNextSeed(ctx)
 			cause := &net.OpError{Op: "dial", Net: "tcp", Err: vivid.ErrorIllegalArgument}
-			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), attempt: 1, err: cause})
+			if stop {
+				a.onJoinReply(ctx, joinReply{instanceID: local.ID(), index: 0, attempt: 1, err: cause})
+				require.NotNil(t, ctx.retry)
+				require.Positive(t, ctx.delay)
+				a.onKill(ctx, &vivid.OnKill{})
+				a.onJoinRetry(ctx, ctx.retry.(joinRetry))
+				_, err := a.Readiness().Wait(nil, time.Second).Result()
+				assert.ErrorIs(t, err, vivid.ErrorActorSystemStopped)
+				assert.NotErrorIs(t, err, vivid.ErrorClusterJoinFailed)
+				assert.Nil(t, a.joinErrors)
+				assert.Equal(t, 1, ctx.requests, "停止后不得执行已排队的重试")
+				return
+			}
+			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), index: 0, attempt: 1, err: cause})
+			require.Equal(t, 1, ctx.requests, "传输错误应等待退避后再重试")
+			retry := ctx.retry
+			require.NotNil(t, retry)
+			ctx.retry = nil
+			a.onJoinRetry(ctx, retry.(joinRetry))
 			require.Equal(t, 2, ctx.requests)
-			require.Len(t, a.joinErrors, 1)
-			// 上一个种子、旧请求和旧实例的结果不能重复记录或结束当前请求。
+			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), index: 0, attempt: 2, err: cause})
+			retry = ctx.retry
+			require.NotNil(t, retry)
+			ctx.retry = nil
+			a.onJoinRetry(ctx, retry.(joinRetry))
+			require.Equal(t, 3, ctx.requests)
+			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), index: 0, attempt: 3, err: cause})
+			require.Equal(t, 4, ctx.requests, "同一个种子失败前应使用完三次请求预算，再尝试下一个种子")
+			// 旧种子、旧请求和旧实例的结果不能结束新种子的当前请求。
 			for _, reply := range []joinReply{
-				{instanceID: local.ID(), index: 0, attempt: 1, err: cause},
+				{instanceID: local.ID(), index: 0, attempt: 3, err: cause},
 				{instanceID: local.ID(), index: 1, attempt: 0, err: cause},
 				{instanceID: "old-local", index: 1, attempt: 1, err: cause},
 			} {
 				a.onJoinReply(ctx, reply)
 			}
 			require.Len(t, a.joinErrors, 1)
-			if stop {
-				a.onKill(ctx, &vivid.OnKill{})
-				a.onJoinReply(ctx, joinReply{instanceID: local.ID(), index: 1, attempt: 1, err: cause})
-				_, err := a.Readiness().Wait(nil, time.Second).Result()
-				assert.ErrorIs(t, err, vivid.ErrorActorSystemStopped)
-				assert.NotErrorIs(t, err, vivid.ErrorClusterJoinFailed)
-				assert.Nil(t, a.joinErrors)
-				return
-			}
 			for attempt := 1; attempt <= joinAttemptsPerSeed; attempt++ {
 				a.onJoinReply(ctx, joinReply{instanceID: local.ID(), index: 1, attempt: attempt, err: vivid.ErrorFutureTimeout})
 			}
@@ -219,7 +253,7 @@ func TestActor_GossipJoinFailureCauses(t *testing.T) {
 			var operation *net.OpError
 			require.ErrorAs(t, err, &operation)
 			assert.Same(t, cause, operation, "聚合后仍保留原始类型错误")
-			assert.Equal(t, 1+joinAttemptsPerSeed, ctx.requests)
+			assert.Equal(t, 2*joinAttemptsPerSeed, ctx.requests)
 			assert.Nil(t, a.joinErrors, "最终原因由只读就绪结果持有，不额外保留收集切片")
 		})
 	}

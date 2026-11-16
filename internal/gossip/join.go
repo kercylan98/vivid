@@ -18,6 +18,12 @@ const joinAttemptsPerSeed = 3
 
 type launchJoin struct{ instanceID string }
 
+type joinRetry struct {
+	instanceID string
+	index      int
+	attempt    int
+}
+
 type joinReply struct {
 	instanceID string
 	index      int
@@ -142,8 +148,21 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 		}
 	}
 	if err != nil {
+		remaining := time.Until(a.joinDeadline)
 		if errors.Is(err, vivid.ErrorFutureTimeout) {
-			a.tryNextSeed(ctx)
+			if a.joinAttempt < joinAttemptsPerSeed && remaining > 0 {
+				a.tryNextSeed(ctx)
+			} else {
+				a.failJoinSeed(ctx, err)
+			}
+			return
+		}
+		if a.joinAttempt < joinAttemptsPerSeed && remaining > 0 {
+			delay := remaining / time.Duration(joinAttemptsPerSeed-a.joinAttempt+1)
+			message := joinRetry{instanceID: a.info.ID(), index: a.joinIndex, attempt: a.joinAttempt}
+			if scheduleErr := ctx.Scheduler().Once(ctx.Ref(), delay, message, vivid.WithSchedulerReference(joinRetrySchedulerRef)); scheduleErr != nil {
+				a.failJoinSeed(ctx, vivid.ErrorGossipScheduleFailed.With(scheduleErr))
+			}
 			return
 		}
 		a.failJoinSeed(ctx, err)
@@ -156,6 +175,12 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 	changeStatus(ctx, a, EventUp)
 	if a.joinError == nil {
 		a.readiness.complete(vivid.ClusterJoinResult{LocalID: a.info.ID(), SeedAddress: seed}, nil)
+	}
+}
+
+func (a *Actor) onJoinRetry(ctx vivid.ActorContext, retry joinRetry) {
+	if retry.instanceID == a.info.ID() && retry.index == a.joinIndex && retry.attempt == a.joinAttempt && a.joinRequest == nil && !a.stopping && a.info.Status == endpoint.StatusJoining {
+		a.tryNextSeed(ctx)
 	}
 }
 
