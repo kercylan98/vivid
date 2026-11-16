@@ -25,6 +25,7 @@ import (
 
 const (
 	ready int32 = iota
+	starting
 	start
 	stopping
 	stop
@@ -52,6 +53,7 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 		futureAgents:      make(map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef),
 		guardClosedSignal: make(chan struct{}),
 		stopCompleted:     make(chan struct{}),
+		startCompleted:    make(chan struct{}),
 		scheduler:         scheduler.NewScheduler(opts.Context),
 	}
 
@@ -72,6 +74,8 @@ type System struct {
 	futureLock             sync.RWMutex                                      // Future 的锁，保证 Future 的并发安全
 	guardClosedSignal      chan struct{}                                     // 用于通知系统关闭的信号
 	stopCompleted          chan struct{}                                     // 有序关闭及系统资源清理均已完成
+	startCompleted         chan struct{}                                     // 首次启动初始化链已结束
+	startOnce              sync.Once                                         // 确保初始化链结束信号只关闭一次
 	remotingRef            vivid.ActorRef                                    // 远程服务器引用
 	remotingMailbox        vivid.Mailbox                                     // 所有远程地址共享的发送入口
 	remotingAdmission      *remoting.OutboundAdmission                       // 远程信封在进入邮箱前共享的准入名额
@@ -206,6 +210,9 @@ func (s *System) Start() error {
 		s.statusLock.Lock()
 		defer s.statusLock.Unlock()
 		switch s.status {
+		case starting:
+			s.Logger().Warn("actor system is starting")
+			return vivid.ErrorActorSystemAlreadyStarted
 		case start:
 			s.Logger().Warn("actor system already started")
 			return vivid.ErrorActorSystemAlreadyStarted
@@ -213,25 +220,28 @@ func (s *System) Start() error {
 			s.Logger().Warn("actor system already stopped")
 			return vivid.ErrorActorSystemAlreadyStopped
 		default:
-			s.status = start
+			s.status = starting
 			return nil
 		}
 	}(s)
 	if stateError != nil {
 		return stateError
 	}
+	defer s.completeStart()
 
 	s.startTime = time.Now()
 	if s.options.RemotingBindAddress != "" || s.options.RemotingAdvertiseAddress != "" {
 		address, ok := utils.NormalizeRemoteAddress(s.options.RemotingAdvertiseAddress)
 		if !ok || s.options.RemotingBindAddress == "" {
 			err := vivid.ErrorIllegalArgument.WithMessage("remoting requires a bind address and an advertise address with a specific host and port: " + s.options.RemotingAdvertiseAddress)
+			s.completeStart()
 			return vivid.ErrorActorSystemStartFailed.With(err).With(s.Stop(s.options.StopTimeout))
 		}
 		s.options.RemotingAdvertiseAddress = address
 	}
 	if s.options.ClusterOptions != nil {
 		if err := s.options.ClusterOptions.Validate(); err != nil {
+			s.completeStart()
 			return vivid.ErrorActorSystemStartFailed.With(err).With(s.Stop(s.options.StopTimeout))
 		}
 	}
@@ -254,17 +264,38 @@ func (s *System) Start() error {
 
 	if startErr != nil {
 		s.Logger().Error("actor system start failed", log.Any("err", startErr))
-		return vivid.ErrorActorSystemStartFailed.With(startErr).With(s.Stop(s.options.StopTimeout))
+		s.statusLock.Lock()
+		stopWon := s.status == stopping || s.status == stop
+		s.statusLock.Unlock()
+		s.completeStart()
+		stopErr := s.Stop(s.options.StopTimeout)
+		if stopWon {
+			return vivid.ErrorActorSystemStopped.With(stopErr)
+		}
+		return vivid.ErrorActorSystemStartFailed.With(startErr).With(stopErr)
 	}
-
-	s.Logger().Debug("actor system started")
 
 	// 守护系统上下文
 	go func() {
 		<-s.options.Context.Done()
 		_ = s.stop(false) // 无意义错误
 	}()
+
+	s.statusLock.Lock()
+	if s.status != starting {
+		s.statusLock.Unlock()
+		s.completeStart()
+		return vivid.ErrorActorSystemStopped
+	}
+	s.status = start
+	s.statusLock.Unlock()
+	s.completeStart()
+	s.Logger().Debug("actor system started")
 	return nil
+}
+
+func (s *System) completeStart() {
+	s.startOnce.Do(func() { close(s.startCompleted) })
 }
 func (s *System) Stop(timeout ...time.Duration) error {
 	return s.stop(true, timeout...)
@@ -323,6 +354,7 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 }
 
 func (s *System) finishStop() {
+	<-s.startCompleted
 	s.statusLock.Lock()
 	readiness := s.clusterReadiness
 	s.statusLock.Unlock()
