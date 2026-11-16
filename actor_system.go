@@ -71,8 +71,8 @@ type ActorSystem interface {
 	// 未启动、已停止或未启用集群时，Future 返回相应错误。
 	ClusterSnapshot(timeout ...time.Duration) Future[ClusterSnapshot]
 
-	// ClusterReady 等待本次启动的初始加入结果，超时规则与 Ask 相同。
-	// 超时或 Close 只结束当前调用的等待，不取消节点加入；成功结果不代表持续健康。
+	// ClusterReady 等待本次启动的初始加入结果；省略超时或传入 <= 0 时等待至结果完成或系统停止。
+	// 正超时或 Close 只结束当前调用的等待，不取消节点加入；成功结果不代表持续健康。
 	ClusterReady(timeout ...time.Duration) Future[ClusterJoinResult]
 }
 

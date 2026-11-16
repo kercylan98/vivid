@@ -38,6 +38,14 @@ func pendingClusterSystem(t *testing.T, address string, options ...vivid.ActorSy
 }
 
 func TestSystem_ClusterReady(t *testing.T) {
+	t.Run("default_wait_covers_launch_delay", func(t *testing.T) {
+		system := pendingClusterSystem(t, clusterTestAddress(t),
+			vivid.WithActorSystemClusterLaunchDelay(vivid.DefaultAskTimeout+100*time.Millisecond),
+		)
+		result, err := system.ClusterReady().Result()
+		require.NoError(t, err)
+		assert.True(t, result.Bootstrapped)
+	})
 	t.Run("bootstrap", func(t *testing.T) {
 		system := pendingClusterSystem(t, clusterTestAddress(t))
 		result, err := system.ClusterReady(time.Second).Result()

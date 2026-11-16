@@ -23,7 +23,7 @@ func (s *System) ClusterReady(timeout ...time.Duration) vivid.Future[vivid.Clust
 	if s.clusterReadiness == nil {
 		return future.NewFutureFail[vivid.ClusterJoinResult](vivid.ErrorGossipRequires.WithMessage("cluster is not initialized"))
 	}
-	waitTimeout := s.options.DefaultAskTimeout
+	var waitTimeout time.Duration
 	if len(timeout) > 0 {
 		waitTimeout = timeout[0]
 	}
