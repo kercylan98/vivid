@@ -89,10 +89,13 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 
 func (c *systemChains) spawnGuardActor(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
-		system.Context, err = NewContext(system, nil, guard.NewActor(system.guardClosedSignal))
+		ctx, err := NewContext(system, nil, guard.NewActor(system.guardClosedSignal))
 		if err != nil {
 			return err
 		}
+		system.actorOfLock.Lock()
+		system.Context = ctx
+		system.actorOfLock.Unlock()
 		return nil
 	})
 }

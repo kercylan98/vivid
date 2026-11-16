@@ -38,6 +38,10 @@ system := bootstrap.NewActorSystem(
 )
 ```
 
+## Actor 创建
+
+系统根 Actor 创建前调用 **`ActorSystem.ActorOf`** 会返回 **`ErrorActorSystemNotStarted`**。
+
 ## 系统停止
 
 **`system.Stop(timeout...)`** 通过系统消息发起关闭，普通邮箱暂停不会阻断停止。框架执行 **OnKill** 和多阶段收尾，先停止业务 Actor，再依次停止集群、远程通信和指标组件。停止不保证排空普通消息；需要保存状态或完成业务请求时，应先取得业务完成确认。请在该系统的 Actor 消息线程之外调用。

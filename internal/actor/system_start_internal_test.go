@@ -137,3 +137,33 @@ func TestSystem_StopDuringStartup(t *testing.T) {
 		})
 	}
 }
+
+func TestSystem_ActorOfDuringCodecRegistration(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	releaseRegistration := func() { once.Do(func() { close(release) }) }
+	system := NewSystem(
+		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError), log.WithErrorStack(false))),
+		vivid.WithActorSystemMessageRegister(vivid.MessageRegisterFN(func(vivid.MessageRegistry) {
+			close(entered)
+			<-release
+		})),
+	)
+	_, err := system.ActorOf(vivid.ActorFN(func(vivid.ActorContext) {}))
+	require.ErrorIs(t, err, vivid.ErrorActorSystemNotStarted)
+
+	t.Cleanup(func() {
+		releaseRegistration()
+		_ = system.Stop(time.Second)
+	})
+	started := make(chan error, 1)
+	go func() { started <- system.Start() }()
+	receiveRetryResult(t, entered)
+
+	require.NotPanics(t, func() {
+		_, err = system.ActorOf(vivid.ActorFN(func(vivid.ActorContext) {}))
+	})
+	require.ErrorIs(t, err, vivid.ErrorActorSystemNotStarted)
+	releaseRegistration()
+	require.NoError(t, receiveRetryResult(t, started))
+}

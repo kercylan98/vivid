@@ -202,6 +202,9 @@ func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid
 	if unavailable {
 		return nil, vivid.ErrorActorSystemStopped
 	}
+	if s.Context == nil {
+		return nil, vivid.ErrorActorSystemNotStarted
+	}
 	return s.Context.ActorOf(actor, options...)
 }
 
