@@ -70,6 +70,8 @@ type System struct {
 	futureLock             sync.RWMutex                                      // Future 的锁，保证 Future 的并发安全
 	guardClosedSignal      chan struct{}                                     // 用于通知系统关闭的信号
 	remotingRef            vivid.ActorRef                                    // 远程服务器引用
+	remotingMailbox        vivid.Mailbox                                     // 所有远程地址共享的发送入口
+	remotingAdmission      *remoting.OutboundAdmission                       // 远程信封在进入邮箱前共享的准入名额
 	remotingEnvelopHandler remoting.NetworkEnvelopHandler                    // 远程信封处理器
 	eventStream            vivid.EventStream                                 // 事件流
 	metrics                metrics.Metrics                                   // 指标收集器
@@ -285,6 +287,10 @@ func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 	}
 
 	var stopTimeout = sugar.Max(sugar.FirstOrDefault(timeout, s.options.StopTimeout), 0)
+	if s.remotingAdmission != nil {
+		// 即使组件停止超时，也不能保留尚未完成的远程信封索引。
+		defer s.remotingAdmission.Stop()
+	}
 	s.statusLock.Lock()
 	readiness := s.clusterReadiness
 	s.statusLock.Unlock()
@@ -445,7 +451,7 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 			s.Logger().Warn("remote disabled, remote actor ref not allowed", log.String("ref", ref.String()))
 			return s.Mailbox()
 		}
-		return vivid.Mailbox(remoting.NewMailbox(s.options.Context, s, s.remotingRef, s))
+		return s.remotingMailbox
 	}
 
 	// 在 actorContexts 中查找指定路径（GetPath）对应的 Context，并尝试获取其邮箱（Mailbox）。

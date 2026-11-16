@@ -59,13 +59,15 @@ var (
 
 // Remoting 相关错误。
 var (
-	ErrorRemotingStopped                = RegisterError(140000, "remoting stopped")                                  // 远程通信已停止
-	ErrorRemotingListen                 = RegisterError(140001, "listen failed", ErrorException)                     // 监听失败
-	ErrorRemotingAccept                 = RegisterError(140002, "accept endpoint session failed", ErrorException)    // 接受连接失败
-	ErrorRemotingEndpointUnableToCreate = RegisterError(140003, "unable to create endpoint", ErrorActorSpawnFailed)  // 无法创建端点
-	ErrorRemotingEndpointSendData       = RegisterError(140004, "failed to send data to remote endpoint")            // 发送数据到远程端点失败
-	ErrorRemotingHandshake              = RegisterError(140005, "handshake negotiation with remote endpoint failed") // 与远程端点握手协商失败
-	ErrorRemotingDialQueueFull          = RegisterError(140006, "outbound dial queue full")                          // 出站拨号等待队列已满
+	ErrorRemotingStopped                  = RegisterError(140000, "remoting stopped")                                  // 远程通信已停止
+	ErrorRemotingListen                   = RegisterError(140001, "listen failed", ErrorException)                     // 监听失败
+	ErrorRemotingAccept                   = RegisterError(140002, "accept endpoint session failed", ErrorException)    // 接受连接失败
+	ErrorRemotingEndpointUnableToCreate   = RegisterError(140003, "unable to create endpoint", ErrorActorSpawnFailed)  // 无法创建端点
+	ErrorRemotingEndpointSendData         = RegisterError(140004, "failed to send data to remote endpoint")            // 发送数据到远程端点失败
+	ErrorRemotingHandshake                = RegisterError(140005, "handshake negotiation with remote endpoint failed") // 与远程端点握手协商失败
+	ErrorRemotingDialQueueFull            = RegisterError(140006, "outbound dial queue full")                          // 出站拨号等待队列已满
+	ErrorRemotingPendingEnvelopsFull      = RegisterError(140007, "remote endpoint pending envelops full")             // 单地址待发送远程信封已满
+	ErrorRemotingTotalPendingEnvelopsFull = RegisterError(140008, "total pending remote envelops full")                // 系统待发送远程信封总量已满
 )
 
 // Virtual 相关错误。

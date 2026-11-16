@@ -415,8 +415,11 @@ func (e *endpoint) dial(task *pendingConnection) (net.Conn, error) {
 }
 
 func (e *endpoint) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
+	if !outboundEnvelopActive(envelop) {
+		return
+	}
 	if e.stopping {
-		e.envelopHandler.HandleFailedRemotingEnvelop(envelop)
+		failOutboundEnvelop(e.envelopHandler, envelop)
 		return
 	}
 	if err := e.outboundBuffer.Push(envelop); err != nil {
@@ -427,7 +430,7 @@ func (e *endpoint) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
 			TargetAddress: e.address,
 			Error:         err,
 		})
-		e.envelopHandler.HandleFailedRemotingEnvelop(envelop)
+		failOutboundEnvelop(e.envelopHandler, envelop)
 		return
 	}
 	ctx.Metrics().Gauge(metrics.RemotingPendingEnvelopsGauge).Inc()
@@ -550,7 +553,7 @@ func (e *endpoint) onWriterAck(ctx vivid.ActorContext, message endpointWriterAck
 		e.writing = false
 		return
 	}
-	e.outboundBuffer.Pop()
+	completeOutboundEnvelop(e.outboundBuffer.Pop())
 	ctx.Metrics().Gauge(metrics.RemotingPendingEnvelopsGauge).Dec()
 	e.writing = false
 	e.retryCount = 0
@@ -573,7 +576,7 @@ func (e *endpoint) onWriterFailed(ctx vivid.ActorContext, message endpointWriter
 				TargetAddress: e.address,
 				Error:         message.err,
 			})
-			e.envelopHandler.HandleFailedRemotingEnvelop(current)
+			failOutboundEnvelop(e.envelopHandler, current)
 		}
 		e.trySend(ctx)
 		return

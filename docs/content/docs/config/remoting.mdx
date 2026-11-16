@@ -31,6 +31,8 @@ description: Remoting 启用、消息注册、Codec 与位置透明
 配置好 Remoting 与 Codec 后，业务侧**无需区分**目标 Actor 在本机还是远程：`ctx.Tell(ref, msg)`、`ctx.Ask(ref, msg)` 等调用方式完全一致，框架根据 `ref` 的地址自动完成本地投递或跨网络序列化与发送。这就是 **location transparency**（位置透明）。
 </Callout>
 
+位置透明表示投递 API 一致。普通 ActorRef 绑定具体地址和路径，目标更换地址后需使用新的引用，已有引用不会自动跟随迁移。当前虚拟 Actor 在本系统内按逻辑标识激活，不提供跨节点位置解析或迁移。
+
 ## 启用 Remoting
 
 通过 **WithActorSystemRemoting(bindAddr, advertiseAddr?)** 启用：
@@ -228,7 +230,22 @@ system := bootstrap.NewActorSystem(
 
 每个 ActorSystem 默认最多同时执行 **64** 个出站拨号与握手，另允许 **1024** 个地址按入队顺序等待名额。通过 `WithActorSystemRemotingMaxConcurrentDials` 和 `WithActorSystemRemotingMaxPendingDials` 分别配置，正值生效。等待不启动拨号任务、不额外消耗重试次数；拨号与握手超时从获得名额后开始计算，`Ask` 的等待超时仍包含排队时间。
 
-等待队列满时，该端点的待发消息转为死信，并发布 `ves.RemotingConnectionFailedEvent`，可通过 `errors.Is(event.Error, vivid.ErrorRemotingDialQueueFull)` 判断；本次不再重试，后续新消息可重新尝试。入站连接接管或端点停止会取消其等待。已有健康连接继续复用，不占拨号名额。这些限制不代表整个系统的消息内存上限；单地址待发消息数仍由 `WithActorSystemRemotingMaxPendingEnvelops` 控制，默认 1024。
+等待队列满时，该端点的待发消息转为死信，并发布 `ves.RemotingConnectionFailedEvent`，可通过 `errors.Is(event.Error, vivid.ErrorRemotingDialQueueFull)` 判断；本次不再重试，后续新消息可重新尝试。入站连接接管或端点停止会取消其等待。已有健康连接继续复用，不占拨号名额。
+
+### 待发送消息上限
+
+远程消息在进入发送邮箱前检查额度，覆盖入口排队、端点排队、重连和正在写入的消息，所有远程地址共享系统总量上限：
+
+| 配置函数 | 默认值 | 范围 |
+|----------|--------|------|
+| `WithActorSystemRemotingMaxPendingEnvelops` | 1024 | 单个远程地址，包含该地址下的所有 Actor |
+| `WithActorSystemRemotingMaxTotalPendingEnvelops` | 16384 | 单个 ActorSystem 的全部远程地址 |
+
+两项均只接受正值；结构体字段未设置或非正值时使用默认值。额度满时，新消息立即转为死信，不阻塞调用，也不触发连接重试；已有消息继续发送。通过 `ves.RemotingEnvelopSendFailedEvent.Error` 与 `errors.Is` 判断 `vivid.ErrorRemotingPendingEnvelopsFull`（单地址）或 `vivid.ErrorRemotingTotalPendingEnvelopsFull`（系统总量）。两项同时超限时返回单地址错误。`Tell` 不直接返回该错误；`Ask` 仍可能因未收到应答而超时。
+
+本地写入完成或消息失败后归还额度，等待重连仍占用额度。系统停止时处理剩余待发消息；停止不保证消息已交付，失败时也不能证明远端没有执行。限制按消息条数统计，不限制单条业务对象大小，也不限制本地邮箱、死信和事件订阅者的积压，不能视为进程内存上限。
+
+### 连接失败重试
 
 向远程节点发送消息时，连接失败后按 **ActorSystemRemotingOptions** 中的策略有限重试。**NewActorSystemRemotingOptions()** 默认提供：额外重试 10 次、初始延迟 500ms、最大延迟 10s、退避因子 2.5，启用随机抖动。可通过 **WithActorSystemRemotingOption** 配置单项或使用 **WithActorSystemRemotingReconnect** 批量配置：
 

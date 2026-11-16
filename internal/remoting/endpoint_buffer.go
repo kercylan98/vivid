@@ -1,12 +1,6 @@
 package remoting
 
-import (
-	"errors"
-
-	"github.com/kercylan98/vivid"
-)
-
-var errEndpointOutboundBufferFull = errors.New("remote endpoint outbound buffer full")
+import "github.com/kercylan98/vivid"
 
 const defaultEndpointMaxPendingEnvelops = 1024
 
@@ -43,7 +37,7 @@ func (b *endpointOutboundBuffer) Push(envelop vivid.Envelop) error {
 		return vivid.ErrorIllegalArgument.WithMessage("endpoint outbound envelop is nil")
 	}
 	if b.limit > 0 && len(b.items) >= b.limit {
-		return errEndpointOutboundBufferFull
+		return vivid.ErrorRemotingPendingEnvelopsFull
 	}
 	b.items = append(b.items, envelop)
 	return nil
@@ -61,6 +55,7 @@ func (b *endpointOutboundBuffer) Pop() vivid.Envelop {
 		return nil
 	}
 	item := b.items[0]
+	b.items[0] = nil
 	b.items = b.items[1:]
 	if len(b.items) == 0 {
 		b.items = nil
@@ -77,10 +72,9 @@ func (b *endpointOutboundBuffer) Empty() bool {
 }
 
 func (b *endpointOutboundBuffer) FailAll(handler NetworkEnvelopHandler) {
-	if handler != nil {
-		for _, envelop := range b.items {
-			handler.HandleFailedRemotingEnvelop(envelop)
-		}
-	}
+	items := b.items
 	b.items = nil
+	for _, envelop := range items {
+		failOutboundEnvelop(handler, envelop)
+	}
 }

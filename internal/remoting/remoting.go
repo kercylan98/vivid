@@ -16,7 +16,7 @@ var (
 	_ vivid.PrelaunchActor = (*Remoting)(nil)
 )
 
-func New(availableSignal <-chan struct{}, bindAddr, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions) *Remoting {
+func New(availableSignal <-chan struct{}, bindAddr, advertiseAddr string, codec *serialization.VividCodec, envelopHandler NetworkEnvelopHandler, options vivid.ActorSystemRemotingOptions, admission *OutboundAdmission) *Remoting {
 	retryPolicy := newEndpointRetryPolicy(&options)
 	bufferPolicy := newEndpointBufferPolicy(&options)
 	associationPolicy := newEndpointAssociationPolicy(&options)
@@ -37,6 +37,7 @@ func New(availableSignal <-chan struct{}, bindAddr, advertiseAddr string, codec 
 		stopTimeout:        stopTimeout,
 		phaseKillCompleted: make(chan struct{}),
 		endpointManager:    newEndpointManager(options),
+		admission:          admission,
 	}
 }
 
@@ -56,6 +57,7 @@ type Remoting struct {
 	phaseKillCompleted chan struct{}
 	phaseKillOnce      sync.Once
 	endpointManager    *EndpointManager
+	admission          *OutboundAdmission
 }
 
 // OnPrelaunch 在注册前创建监听，使监听失败同步返回启动调用方。
@@ -93,12 +95,15 @@ func (r *Remoting) onLaunch(ctx vivid.ActorContext) {
 }
 
 func (r *Remoting) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
+	if !outboundEnvelopActive(envelop) {
+		return
+	}
 	if r.stopping {
 		ctx.EventStream().Publish(ctx, ves.RemotingEnvelopSendFailedEvent{
 			TargetAddress: ensureEnvelopReceiverAddress(envelop),
 			Error:         vivid.ErrorRemotingStopped,
 		})
-		r.envelopHandler.HandleFailedRemotingEnvelop(envelop)
+		failOutboundEnvelop(r.envelopHandler, envelop)
 		return
 	}
 	if err := r.endpointManager.EmitToEndpoint(ctx, envelop, func(address string) (vivid.ActorRef, error) {
@@ -112,13 +117,14 @@ func (r *Remoting) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
 			TargetAddress: ensureEnvelopReceiverAddress(envelop),
 			Error:         err,
 		})
-		ctx.Failed(vivid.ErrorRemotingEndpointSendData.With(err))
+		failOutboundEnvelop(r.envelopHandler, envelop)
 	}
 }
 
 func (r *Remoting) onKill(ctx vivid.ActorContext) {
 	r.stopping = true
 	r.endpointManager.Stop()
+	r.admission.Stop()
 
 	// 关闭监听器，停止接受新连接。
 	if r.listener != nil {

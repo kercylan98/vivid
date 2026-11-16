@@ -16,6 +16,7 @@ import (
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/virtual"
 	"github.com/kercylan98/vivid/pkg/metrics"
+	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 const (
@@ -129,6 +130,16 @@ func (c *systemChains) initializeRemoting(system *System) chain.Chain {
 			remotingOptions.StopTimeout = system.options.StopTimeout
 		}
 		system.options.Logger = system.options.Logger.With("addr", system.options.RemotingAdvertiseAddress)
+		system.remotingAdmission = remoting.NewOutboundAdmission(remotingOptions, system.remotingEnvelopHandler, func(envelop vivid.Envelop, err error) {
+			var address string
+			if receiver := envelop.Receiver(); receiver != nil {
+				address = receiver.GetAddress()
+			}
+			system.EventStream().Publish(system, ves.RemotingEnvelopSendFailedEvent{
+				TargetAddress: address,
+				Error:         err,
+			})
+		})
 		ref, err := system.ActorOf(remoting.New(
 			c.availableSignal,
 			system.options.RemotingBindAddress,
@@ -136,11 +147,13 @@ func (c *systemChains) initializeRemoting(system *System) chain.Chain {
 			system.codec,
 			system.remotingEnvelopHandler,
 			remotingOptions,
+			system.remotingAdmission,
 		), vivid.WithActorName(remotingActorName))
 		if err != nil {
 			return err
 		}
 		system.remotingRef = ref
+		system.remotingMailbox = remoting.NewMailbox(system.options.Context, system, ref, system, system.remotingAdmission)
 		system.TellSelf(&guard.RegisterStopPriority{
 			ActorRef: ref,
 			Priority: remotingStopPriority,

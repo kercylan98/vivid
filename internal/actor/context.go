@@ -14,6 +14,7 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/messages"
+	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/ves"
@@ -414,6 +415,9 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 			c.handleMessage(envelop, c.phaseKill.behavior)
 			return
 		} // 是否处于僵尸状态
+		if remoting.FailOutboundMessage(envelop.Message()) {
+			return
+		}
 		if _, ok := envelop.Message().(ves.DeathLetterEvent); ok {
 			// 避免在已终止阶段将死信再次投递给自己，形成无限递归的死信风暴。
 			return
@@ -430,6 +434,9 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// 僵尸状态的消息处理仅用作能正确的确保 Actor 被释放
 	behavior := c.behaviorStack.Peek()
 	if c.zombie {
+		if remoting.FailOutboundMessage(envelop.Message()) {
+			return
+		}
 		behavior = emptyBehavior
 	}
 
