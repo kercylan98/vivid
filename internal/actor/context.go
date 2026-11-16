@@ -467,7 +467,7 @@ func (c *Context) handleMessage(envelop vivid.Envelop, behavior vivid.Behavior) 
 	case *SchedulerMessage:
 		c.onScheduler(message, behavior)
 	case *phaseKill:
-		c.onPhaseKill()
+		c.onPhaseKill(message)
 	default:
 		if c.IsMetricsEnabled() {
 			c.Metrics().Counter(metrics.MessagesProcessedTotalCounter).Inc()
@@ -476,10 +476,15 @@ func (c *Context) handleMessage(envelop vivid.Envelop, behavior vivid.Behavior) 
 	}
 }
 
-func (c *Context) onPhaseKill() {
+func (c *Context) onPhaseKill(message *phaseKill) {
+	// 重复通知及重启前的旧通知不能推进当前终止流程。
+	if message == nil || message != c.phaseKill || message.completed || message.envelope == nil || atomic.LoadInt32(&c.state) != killing {
+		return
+	}
 	// 多阶段终止流程结束
-	c.envelop = c.phaseKill.envelope // 恢复 OnKill 消息
-	c.phaseKill.completed = true
+	c.envelop = message.envelope // 恢复 OnKill 消息
+	message.envelope = nil
+	message.completed = true
 	c.doKill(c.Message().(*vivid.OnKill), c.behaviorStack.Peek())
 }
 
@@ -688,15 +693,15 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 	c.system.removeFuturesByAgentPath(c.ref.GetPath(), vivid.ErrorActorDeaded)
 
 	// 等待所有子 Actor 结束，假设是重启，子 Actor 不应该跟随重启，应该由父节点决定是否重启
-	// 多阶段终止时，子节点已在 apply 阶段通过 behavior（OnKill）通知过，此处不再重复发送 OnKill，避免死信
+	// 多阶段终止由 OnKill 收尾逻辑负责通知子节点，此处不再重复发送 OnKill，避免死信。
 	if c.phaseKill == nil || !c.phaseKill.completed {
 		for _, child := range c.children {
 			c.Kill(child, message.Poison, message.Reason)
 		}
 	}
 
-	// 宣告自己进入死亡中
-	if c.restarting != nil {
+	// 宣告自己进入死亡中，多阶段流程已在等待前执行过 OnKill，重启时也不重复执行。
+	if c.restarting != nil && c.phaseKill == nil {
 		// 失败意味着资源可能无法正确释放，但不应阻止新实例的创建。
 		// 可能存在资源泄漏，应当记录警告
 		logger := c.Logger()

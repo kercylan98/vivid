@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,7 +140,8 @@ func TestSystem_RemotingAdmissionBeforeMailbox(t *testing.T) {
 				require.Empty(t, failed)
 				if stop {
 					require.Empty(t, accepted)
-					remoteContext.mailbox.Resume()
+					require.Eventually(t, func() bool { return atomic.LoadInt32(&remoteContext.state) == killed }, time.Second, time.Millisecond)
+					require.True(t, remoteContext.mailbox.IsPaused(), "组件终止不能依赖恢复普通邮箱")
 					require.NoError(t, system.Stop(time.Second))
 					return
 				}

@@ -133,6 +133,9 @@ func (h *killedHandler) handleRestart() {
 		return
 	}
 
+	// 多阶段终止属于旧实例，新实例需在预启动中重新注册。
+	h.ctx.phaseKill = nil
+
 	// 如果提供了提供者，则使用提供者提供新的 Actor 实例
 	if h.ctx.options.Provider != nil {
 		h.ctx.actor = h.ctx.options.Provider.Provide()

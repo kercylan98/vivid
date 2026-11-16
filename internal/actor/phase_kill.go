@@ -30,12 +30,10 @@ func (p *phaseKill) apply(ctx *Context, envelope vivid.Envelop) {
 		defer timer.Stop()
 		select {
 		case <-p.c:
-			if !timer.Stop() {
-				<-timer.C
-			}
 		case <-timer.C:
 			ctx.Logger().Warn("phase kill timeout", log.String("path", ctx.ref.GetPath()), log.Duration("timeout", p.timeout))
 		}
-		ctx.TellSelf(p)
+		// 完成通知属于生命周期控制，不能被普通邮箱暂停阻塞。
+		ctx.tell(true, ctx.ref, p)
 	}()
 }

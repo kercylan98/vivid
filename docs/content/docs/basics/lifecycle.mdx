@@ -175,6 +175,12 @@ system.Kill(targetRef, poison, "reason")
 - **reason**：可变参数，会拼接为字符串写入 **OnKill.Reason**。
 - 终止请求**异步**，调用后立即返回；目标终止后会向所有 **Watch** 该 ref 的 Actor 发送 **OnKilled**。监听其他 Actor 终止见 [Watch 与 Unwatch](/docs/basics/watch-unwatch)。
 
+### 多阶段终止
+
+在预启动中通过 **`PrelaunchContext.WithPhaseKill(completed, timeout, behavior)`** 注册多阶段终止。收到 **OnKill** 后先执行当前行为的收尾逻辑，收到 `completed` 信号、通道关闭或等待超时后继续终止。等待期间可消费的普通消息由 `behavior` 处理；子 Actor 需由收尾逻辑主动终止，自身仍需等待子 Actor 结束。
+
+普通邮箱暂停不阻塞系统终止请求和阶段完成通知，也不会因完成通知恢复普通消息消费；毒丸请求仍需等待普通邮箱恢复。`timeout` 仅限制完成信号的等待时间，不能打断正在执行的行为，也不是整个终止流程的耗时保证。需要支持重启时，应在每次预启动中重新注册完成通道。
+
 ---
 
 ## 相关专题
