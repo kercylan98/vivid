@@ -53,6 +53,8 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 			a.view.Members().Upsert(local)
 			a.view.Version().Update(local.ID(), 1)
 			a.joinRequest = future.NewFuture[vivid.Message](nil, 0, nil)
+			a.joinAttempt = 1
+			a.joinDeadline = time.Now().Add(time.Hour)
 			if name == "accepted" {
 				a.joinErrors = []error{vivid.ErrorFutureTimeout}
 			}
@@ -139,10 +141,10 @@ func TestActor_GossipJoinResponse(t *testing.T) {
 			// 与当前请求不匹配的返回不能结束等待或改变本实例状态。
 			a.onJoinReply(ctx, joinReply{instanceID: "old-local-instance", message: message})
 			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), index: 1, message: message})
-			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), attempt: 1, message: message})
+			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), attempt: 2, message: message})
 			require.NotNil(t, a.joinRequest)
 			require.Equal(t, endpoint.StatusJoining, local.Status)
-			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), message: message})
+			a.onJoinReply(ctx, joinReply{instanceID: local.ID(), attempt: 1, message: message})
 			result, err := a.Readiness().Wait(nil, time.Second).Result()
 			if name == "accepted" || name == "invalid_relay" || name == "nil_relay" {
 				assert.Len(t, a.view.Members().List(), 2, "加入时同样忽略无效转发记录")

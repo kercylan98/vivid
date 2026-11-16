@@ -146,6 +146,11 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 		case !a.validJoinPong(pong):
 			err = vivid.ErrorClusterJoinFailed.WithMessage("invalid join response")
 		}
+		if err != nil {
+			// 已收到响应时，拒绝或无效内容不是传输失败，直接尝试下一种子。
+			a.failJoinSeed(ctx, err)
+			return
+		}
 	}
 	if err != nil {
 		remaining := time.Until(a.joinDeadline)
