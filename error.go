@@ -65,6 +65,7 @@ var (
 	ErrorRemotingEndpointUnableToCreate = RegisterError(140003, "unable to create endpoint", ErrorActorSpawnFailed)  // 无法创建端点
 	ErrorRemotingEndpointSendData       = RegisterError(140004, "failed to send data to remote endpoint")            // 发送数据到远程端点失败
 	ErrorRemotingHandshake              = RegisterError(140005, "handshake negotiation with remote endpoint failed") // 与远程端点握手协商失败
+	ErrorRemotingDialQueueFull          = RegisterError(140006, "outbound dial queue full")                          // 出站拨号等待队列已满
 )
 
 // Virtual 相关错误。

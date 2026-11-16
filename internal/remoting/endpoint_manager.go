@@ -1,21 +1,39 @@
 package remoting
 
 import (
+	"container/list"
 	"sync"
 
 	"github.com/kercylan98/vivid"
 )
 
-func newEndpointManager() *EndpointManager {
+func newEndpointManager(opts ...vivid.ActorSystemRemotingOptions) *EndpointManager {
+	options := vivid.NewActorSystemRemotingOptions()
+	if len(opts) > 0 {
+		if opts[0].MaxConcurrentDials > 0 {
+			options.MaxConcurrentDials = opts[0].MaxConcurrentDials
+		}
+		if opts[0].MaxPendingDials > 0 {
+			options.MaxPendingDials = opts[0].MaxPendingDials
+		}
+	}
 	return &EndpointManager{
 		endpoints: make(map[string]endpointRegistration),
 		pending:   make(map[*pendingConnection]struct{}),
+		dials:     make(map[*outboundDial]struct{}),
+		dialLimit: options.MaxConcurrentDials,
+		waitLimit: options.MaxPendingDials,
 	}
 }
 
 type EndpointManager struct {
 	endpoints map[string]endpointRegistration // endpoint-address -> endpoint-ref 与已投递数量
 	pending   map[*pendingConnection]struct{}
+	dials     map[*outboundDial]struct{}
+	waitDials list.List // 等待拨号名额的请求，按入队顺序分配
+	dialLimit int
+	waitLimit int
+	dialCount int // 已分配的名额，包含通知尚未处理的请求与取消后尚未退出的任务
 	stopped   bool
 	mu        sync.RWMutex
 }
@@ -48,6 +66,11 @@ func (e *EndpointManager) detachEndpoint(address string, endpoint vivid.ActorRef
 func (e *EndpointManager) Stop() {
 	e.mu.Lock()
 	e.stopped = true
+	for dial := range e.dials {
+		if !dial.started {
+			dial.removeLocked()
+		}
+	}
 	pending := make([]*pendingConnection, 0, len(e.pending))
 	for connection := range e.pending {
 		pending = append(pending, connection)

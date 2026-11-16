@@ -28,7 +28,7 @@ func (c *retireTestContext) Tell(ref vivid.ActorRef, message vivid.Message) { c.
 func (c *retireTestContext) Kill(ref vivid.ActorRef, _ bool, _ ...string) { c.kill(ref) }
 
 func TestEndpoint_RetireOnlyWhenIdle(t *testing.T) {
-	for _, field := range []string{"idle", "association", "inbound", "fallback", "connecting", "task", "retry", "writing", "buffer", "queued", "unstarted", "replaced", "stopping", "manager_stopped"} {
+	for _, field := range []string{"idle", "association", "inbound", "fallback", "connecting", "task", "dial", "retry", "writing", "buffer", "queued", "unstarted", "replaced", "stopping", "manager_stopped"} {
 		t.Run(field, func(t *testing.T) {
 			manager := newEndpointManager()
 			defer manager.Stop()
@@ -46,6 +46,8 @@ func TestEndpoint_RetireOnlyWhenIdle(t *testing.T) {
 				e.connecting = true
 			case "task":
 				e.connectTask = manager.newPendingConnection(0)
+			case "dial":
+				e.dialRequest, _, _ = manager.requestDial(nil)
 			case "retry":
 				e.retryScheduled = true
 			case "writing":

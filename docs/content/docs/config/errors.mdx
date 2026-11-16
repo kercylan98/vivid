@@ -157,11 +157,13 @@ ActorRef 解析、格式及 Agent 引用。
 
 | 代码 | 变量名 | 说明 | 父类 |
 |------|--------|------|------|
-| 140000 | **ErrorRemotingMessageSendFailed** | 远程消息发送失败 | — |
-| 140001 | **ErrorRemotingMessageEncodeFailed** | 远程消息编码失败 | — |
-| 140002 | **ErrorRemotingMessageDecodeFailed** | 远程消息解码失败 | — |
-| 140003 | **ErrorRemotingMessageHandleFailed** | 远程消息处理失败 | — |
-| 140004 | **ErrorRemotingHandshakeFailed** | 远程握手失败 | — |
+| 140000 | **ErrorRemotingStopped** | 远程通信已停止 | — |
+| 140001 | **ErrorRemotingListen** | 监听失败 | ErrorException |
+| 140002 | **ErrorRemotingAccept** | 接受连接失败 | ErrorException |
+| 140003 | **ErrorRemotingEndpointUnableToCreate** | 无法创建端点 | ErrorActorSpawnFailed |
+| 140004 | **ErrorRemotingEndpointSendData** | 发送数据到远程端点失败 | — |
+| 140005 | **ErrorRemotingHandshake** | 与远程端点握手协商失败 | — |
+| 140006 | **ErrorRemotingDialQueueFull** | 出站拨号等待队列已满 | — |
 
 ### 集群
 

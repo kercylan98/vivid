@@ -36,6 +36,7 @@ func New(availableSignal <-chan struct{}, bindAddr, advertiseAddr string, codec 
 		associationPolicy:  associationPolicy,
 		stopTimeout:        stopTimeout,
 		phaseKillCompleted: make(chan struct{}),
+		endpointManager:    newEndpointManager(options),
 	}
 }
 
@@ -68,7 +69,6 @@ func (r *Remoting) OnPrelaunch(ctx vivid.PrelaunchContext) error {
 		return vivid.ErrorRemotingListen.With(err)
 	}
 	r.listener = listener
-	r.endpointManager = newEndpointManager()
 	return nil
 }
 

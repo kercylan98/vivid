@@ -226,6 +226,10 @@ system := bootstrap.NewActorSystem(
 
 ## 远程连接重试与死信
 
+每个 ActorSystem 默认最多同时执行 **64** 个出站拨号与握手，另允许 **1024** 个地址按入队顺序等待名额。通过 `WithActorSystemRemotingMaxConcurrentDials` 和 `WithActorSystemRemotingMaxPendingDials` 分别配置，正值生效。等待不启动拨号任务、不额外消耗重试次数；拨号与握手超时从获得名额后开始计算，`Ask` 的等待超时仍包含排队时间。
+
+等待队列满时，该端点的待发消息转为死信，并发布 `ves.RemotingConnectionFailedEvent`，可通过 `errors.Is(event.Error, vivid.ErrorRemotingDialQueueFull)` 判断；本次不再重试，后续新消息可重新尝试。入站连接接管或端点停止会取消其等待。已有健康连接继续复用，不占拨号名额。这些限制不代表整个系统的消息内存上限；单地址待发消息数仍由 `WithActorSystemRemotingMaxPendingEnvelops` 控制，默认 1024。
+
 向远程节点发送消息时，连接失败后按 **ActorSystemRemotingOptions** 中的策略有限重试。**NewActorSystemRemotingOptions()** 默认提供：额外重试 10 次、初始延迟 500ms、最大延迟 10s、退避因子 2.5，启用随机抖动。可通过 **WithActorSystemRemotingOption** 配置单项或使用 **WithActorSystemRemotingReconnect** 批量配置：
 
 - **ReconnectLimit**：首次拨号失败后的额外重试次数，0 表示不重试。对应 **WithActorSystemRemotingReconnectLimit**。
