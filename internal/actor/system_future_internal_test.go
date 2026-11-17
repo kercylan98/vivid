@@ -50,7 +50,7 @@ func TestSystem_FutureRegistrationCompleted(t *testing.T) {
 			}
 			receiveRetryResult(t, cleaned)
 			// 固定完成回调已先于注册结束的窗口，不依赖极短超时能否抢占构造函数。
-			system.appendFuture(agent, f)
+			system.appendFuture(agent, f, nil, 0)
 			requireFutureUnregistered(t, system, agent)
 			result, err := f.Result()
 			switch completion {
@@ -77,7 +77,7 @@ func TestSystem_FutureRegistrationConcurrent(t *testing.T) {
 				}
 				agent, f, cleaned := newRegistrationFuture(t, system, timeout)
 				if completion == "actor closing" {
-					system.appendFuture(agent, f)
+					system.appendFuture(agent, f, nil, 0)
 				}
 				start := make(chan struct{})
 				var workers sync.WaitGroup
@@ -88,7 +88,7 @@ func TestSystem_FutureRegistrationConcurrent(t *testing.T) {
 					if completion == "actor closing" {
 						system.removeFuturesByAgentPath(agent.agent.GetPath(), vivid.ErrorActorDeaded)
 					} else {
-						system.appendFuture(agent, f)
+						system.appendFuture(agent, f, nil, 0)
 					}
 				}()
 				go func() {

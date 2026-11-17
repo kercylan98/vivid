@@ -88,6 +88,13 @@ func (h *killedHandler) executeBehavior() {
 	}
 }
 
+// cleanupRequests 在自身收尾结束后关闭请求登记，重启时同样清理旧实例的请求。
+func (h *killedHandler) cleanupRequests() {
+	if h.shouldContinue {
+		h.ctx.system.closeContextRequests(h.ctx)
+	}
+}
+
 // cleanupIfNotRestarting 如果不是重启状态，进行清理
 func (h *killedHandler) cleanupIfNotRestarting() {
 	if !h.shouldContinue || h.restarting {
@@ -157,6 +164,8 @@ func (h *killedHandler) handleRestart() {
 		})
 	}
 	if success {
+		// 新实例的初始化可以发起请求，旧生命周期中尚未登记的请求仍会被拒绝。
+		h.ctx.system.reopenContextRequests(h.ctx)
 		h.ctx.behaviorStack.Clear().Push(h.ctx.actor.OnReceive)
 		h.ctx.Logger().Debug("actor restarted", log.String("path", h.ctx.ref.GetPath()))
 	}
@@ -177,6 +186,7 @@ func (h *killedHandler) handleRestart() {
 
 	// 当子 Actor 重启失败时，不再通知父 Actor 其死亡，而是让其进入"僵尸状态"，避免异常状态扩散。
 	if !success {
+		h.ctx.system.closeContextRequests(h.ctx)
 		// 记录错误并释放资源
 		h.ctx.Logger().Error("restart failed; actor is now in zombie state", log.String("path", h.ctx.ref.GetPath()))
 		h.ctx.zombie = true

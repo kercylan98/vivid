@@ -1,11 +1,8 @@
 package virtual
 
 import (
-	"time"
-
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/bridge"
-	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/pkg/log"
 )
 
@@ -86,14 +83,10 @@ func (c *CoordinatorActor) TellVirtual(sender, recipient vivid.ActorRef, message
 	return nil
 }
 
-func (c *CoordinatorActor) AskVirtual(sender, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
+func (c *CoordinatorActor) ResolveVirtual(recipient vivid.ActorRef) (vivid.ActorRef, error) {
 	identity, ok := recipient.(*Identity)
 	if !ok {
-		return future.NewFutureFail[vivid.Message](vivid.ErrorVirtualRecipientException.WithMessage(recipient.String()))
+		return nil, vivid.ErrorVirtualRecipientException.WithMessage(recipient.String())
 	}
-	ref, err := c.activation.activate(c.coordinatorCtx, identity)
-	if err != nil {
-		return future.NewFutureFail[vivid.Message](err)
-	}
-	return c.system.AskWithSender(sender, ref, message, timeout...)
+	return c.activation.activate(c.coordinatorCtx, identity)
 }

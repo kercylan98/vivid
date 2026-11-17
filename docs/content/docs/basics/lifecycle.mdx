@@ -161,6 +161,8 @@ case *vivid.OnKill:
 
 消息中的 **Ref** 为被终止的 Actor 引用，可根据 **Ref** 判断是谁终止，并做清理、重新创建或告警。主动监听非子级 Actor 见 [Watch 与 Unwatch](/docs/basics/watch-unwatch)。
 
+**OnKill** 与自身 **OnKilled** 中仍可发起 Ask 或 Entrust 做收尾；自身 OnKilled 回调结束后，尚未完成的收尾等待以 **ErrorActorDeaded** 失败。等待结束不撤销已投递的请求，也不强制中断任务。重启同样清理旧实例的等待，新实例可正常发起请求。
+
 ---
 
 ## 发起终止（Kill）

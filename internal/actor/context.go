@@ -95,6 +95,7 @@ type Context struct {
 	stash         []vivid.Envelop                    // 暂存区
 	scheduler     *Scheduler                         // 调度器
 	phaseKill     *phaseKill                         // 多阶段终止流程
+	requestEpoch  atomic.Uint64                      // 请求生命周期，奇数表示收尾结束，登记与切换由 futureLock 协调
 }
 
 func (c *Context) WithPhaseKill(completed <-chan struct{}, timeout time.Duration, behavior vivid.Behavior) error {
@@ -316,34 +317,54 @@ func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vi
 	if c.system.requestsStopped() {
 		return future.NewFutureFail[vivid.Message](vivid.ErrorActorSystemStopped)
 	}
+	owner := c
+	// 显式转发的请求仍归属于本地发送方的生命周期。
+	if sender != c.ref && sender.GetAddress() == c.ref.GetAddress() {
+		value, _ := c.system.actorContexts.Load(sender.GetPath())
+		ctx, ok := value.(*Context)
+		if !ok {
+			return future.NewFutureFail[vivid.Message](vivid.ErrorActorDeaded)
+		}
+		owner = ctx
+	}
+	generation := owner.requestEpoch.Load()
+	if generation&1 != 0 {
+		return future.NewFutureFail[vivid.Message](vivid.ErrorActorDeaded)
+	}
 	var askTimeout = c.options.DefaultAskTimeout
 	if len(timeout) > 0 {
 		askTimeout = timeout[0]
 	}
 
-	if !recipient.IsVirtual() {
-		// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
-		agentRef, _ := NewAgentRef(sender.(*Ref))
-		futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
-			c.system.removeFuture(agentRef)
-		})
-		if err := c.system.appendFuture(agentRef, futureIns); err != nil {
-			futureIns.Close(err)
-			return futureIns
+	if recipient.IsVirtual() {
+		resolved, err := c.system.virtualCoordinator.ResolveVirtual(recipient)
+		if err != nil {
+			return future.NewFutureFail[vivid.Message](err)
 		}
-
-		envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
-		c.enqueueToMailbox(recipient, envelop)
-
-		return futureIns
-	} else {
-		return c.system.virtualCoordinator.AskVirtual(sender, recipient, message, timeout...)
+		recipient = resolved
 	}
+	// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
+	agentRef, _ := NewAgentRef(sender.(*Ref))
+	futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
+		c.system.removeFuture(agentRef)
+	})
+	if err := c.system.appendFuture(agentRef, futureIns, owner, generation); err != nil {
+		futureIns.Close(err)
+		return futureIns
+	}
+
+	envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
+	c.enqueueToMailbox(recipient, envelop)
+	return futureIns
 }
 
 func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.Future[vivid.Message] {
 	if c.system.requestsStopped() {
 		return future.NewFutureFail[vivid.Message](vivid.ErrorActorSystemStopped)
+	}
+	generation := c.requestEpoch.Load()
+	if generation&1 != 0 {
+		return future.NewFutureFail[vivid.Message](vivid.ErrorActorDeaded)
 	}
 	if task == nil {
 		return future.NewFutureFail[vivid.Message](vivid.ErrorFutureInvalid.WithMessage("no task to be executed"))
@@ -354,7 +375,7 @@ func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.F
 	futureIns := future.NewFuture[vivid.Message](c, timeout, func() {
 		c.system.removeFuture(agentRef)
 	})
-	if err := c.system.appendFuture(agentRef, futureIns); err != nil {
+	if err := c.system.appendFuture(agentRef, futureIns, c, generation); err != nil {
 		futureIns.Close(err)
 		return futureIns
 	}
@@ -739,6 +760,7 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 		handler.shouldContinue = true
 		handler.prepareSelfKilledMessage()
 		handler.restarting = false
+		handler.cleanupRequests()
 		handler.cleanupIfNotRestarting()
 		return
 	}
@@ -747,6 +769,7 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 		Append(chain.VoidFN(handler.checkAndMarkKilled)).
 		Append(chain.VoidFN(handler.prepareSelfKilledMessage)).
 		Append(chain.VoidFN(handler.executeBehavior)).
+		Append(chain.VoidFN(handler.cleanupRequests)).
 		Append(chain.VoidFN(handler.cleanupIfNotRestarting)).
 		Append(chain.VoidFN(handler.cleanupScheduler)).
 		Append(chain.VoidFN(handler.handleRestart)).

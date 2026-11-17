@@ -20,9 +20,9 @@ type stoppedRequestCoordinator struct {
 	calls atomic.Int32
 }
 
-func (c *stoppedRequestCoordinator) AskVirtual(sender, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
+func (c *stoppedRequestCoordinator) ResolveVirtual(recipient vivid.ActorRef) (vivid.ActorRef, error) {
 	c.calls.Add(1)
-	return future.NewFutureFail[vivid.Message](vivid.ErrorIllegalArgument)
+	return nil, vivid.ErrorIllegalArgument
 }
 
 func requireStoppedRequest(t *testing.T, request interface {
@@ -91,7 +91,7 @@ func TestSystem_RequestRegistrationAndStop(t *testing.T) {
 		go func() {
 			defer workers.Done()
 			<-start
-			if err := system.appendFuture(agent, request); err != nil {
+			if err := system.appendFuture(agent, request, nil, 0); err != nil {
 				request.Close(err)
 			}
 		}()
@@ -119,7 +119,7 @@ func TestSystem_StopClosesLateRootRequest(t *testing.T) {
 	pending := make(chan vivid.Future[vivid.Message], 1)
 	system.eventStream = &startupEventStream{EventStream: system.eventStream, observe: func(event vivid.Message) {
 		if event, ok := event.(ves.ActorKilledEvent); ok && event.ActorRef.Equals(system.Ref()) {
-			// 根 Actor 已完成自身的 Future 清理，迟到登记只能由最终关闭接纳或拒绝。
+			// 根 Actor 已结束收尾，迟到请求应由其生命周期直接拒绝。
 			pending <- system.Ask(local, "late root request", 0)
 		}
 	}}
@@ -128,7 +128,7 @@ func TestSystem_StopClosesLateRootRequest(t *testing.T) {
 	local, err = system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
 	require.NoError(t, err)
 	require.NoError(t, system.Stop(time.Second))
-	requireStoppedRequest(t, receiveRetryResult(t, pending))
+	require.ErrorIs(t, receiveRetryResult(t, pending).Wait(), vivid.ErrorActorDeaded)
 	system.futureLock.RLock()
 	require.Empty(t, system.futureAgents)
 	system.futureLock.RUnlock()

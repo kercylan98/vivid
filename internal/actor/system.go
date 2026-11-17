@@ -408,7 +408,7 @@ func (s *System) requestsStopped() bool {
 	}
 }
 
-func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) error {
+func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message], owner *Context, generation uint64) error {
 	s.actorContexts.Store(agentRef.ref.GetPath(), future)
 
 	s.futureLock.Lock()
@@ -417,6 +417,10 @@ func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Me
 	if s.requestsClosed {
 		s.actorContexts.Delete(agentRef.ref.GetPath())
 		return vivid.ErrorActorSystemStopped
+	}
+	if owner != nil && (generation&1 != 0 || owner.requestEpoch.Load() != generation) {
+		s.actorContexts.Delete(agentRef.ref.GetPath())
+		return vivid.ErrorActorDeaded
 	}
 	// 完成回调可能先清理再遇到路由注册，锁内复核结果并撤销迟到登记。
 	if future.IsCompleted() {
@@ -431,6 +435,24 @@ func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Me
 	}
 	futureMap[agentRef.ref.GetPath()] = agentRef
 	return nil
+}
+
+func (s *System) closeContextRequests(ctx *Context) {
+	s.futureLock.Lock()
+	if ctx.requestEpoch.Load()&1 == 0 {
+		ctx.requestEpoch.Add(1)
+	}
+	s.futureLock.Unlock()
+	// 关闭登记后再清理，后续请求无法越过最终快照。
+	s.removeFuturesByAgentPath(ctx.ref.GetPath(), vivid.ErrorActorDeaded)
+}
+
+func (s *System) reopenContextRequests(ctx *Context) {
+	s.futureLock.Lock()
+	if ctx.requestEpoch.Load()&1 != 0 {
+		ctx.requestEpoch.Add(1)
+	}
+	s.futureLock.Unlock()
 }
 
 func (s *System) closeFutureRequests() {
