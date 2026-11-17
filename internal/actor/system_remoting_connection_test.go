@@ -16,11 +16,13 @@ import (
 
 // delayedRemotingProxy 只延迟每个方向的首个数据帧，控制帧仍按 TCP 顺序转发。
 type delayedRemotingProxy struct {
-	listener net.Listener
-	mu       sync.Mutex
-	conns    map[net.Conn]struct{}
-	closed   bool
-	wait     sync.WaitGroup
+	listener   net.Listener
+	mu         sync.Mutex
+	conns      map[net.Conn]struct{}
+	closed     bool
+	accepting  bool
+	generation uint64
+	wait       sync.WaitGroup
 }
 
 func TestSystem_RemotingConnectionReuse(t *testing.T) {
@@ -86,10 +88,14 @@ func TestSystem_RemotingConnectionReuse(t *testing.T) {
 }
 
 func newDelayedRemotingProxy(t *testing.T, backend string) *delayedRemotingProxy {
+	return newDelayedRemotingProxyWithRegister(t, backend, nil)
+}
+
+func newDelayedRemotingProxyWithRegister(t *testing.T, backend string, beforeRegister func()) *delayedRemotingProxy {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	p := &delayedRemotingProxy{listener: listener, conns: make(map[net.Conn]struct{})}
+	p := &delayedRemotingProxy{listener: listener, conns: make(map[net.Conn]struct{}), accepting: true}
 	p.wait.Add(1)
 	go func() {
 		defer p.wait.Done()
@@ -97,6 +103,14 @@ func newDelayedRemotingProxy(t *testing.T, backend string) *delayedRemotingProxy
 			front, err := listener.Accept()
 			if err != nil {
 				return
+			}
+			p.mu.Lock()
+			generation := p.generation
+			accepting := !p.closed && p.accepting
+			p.mu.Unlock()
+			if !accepting {
+				_ = front.Close()
+				continue
 			}
 			p.wait.Add(1)
 			go func() {
@@ -107,8 +121,11 @@ func newDelayedRemotingProxy(t *testing.T, backend string) *delayedRemotingProxy
 					return
 				}
 				defer back.Close()
+				if beforeRegister != nil {
+					beforeRegister()
+				}
 				p.mu.Lock()
-				if p.closed {
+				if p.closed || !p.accepting || p.generation != generation {
 					p.mu.Unlock()
 					return
 				}
@@ -135,6 +152,67 @@ func newDelayedRemotingProxy(t *testing.T, backend string) *delayedRemotingProxy
 		}
 	}()
 	return p
+}
+
+// SetAccepting 控制新连接接入，代次变化也会拒绝尚未登记的旧拨号结果。
+func (p *delayedRemotingProxy) SetAccepting(accepting bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.accepting != accepting {
+		p.accepting = accepting
+		p.generation++
+	}
+}
+
+func TestDelayedRemotingProxy_Admission(t *testing.T) {
+	server := startRemotingTLSSystem(t, nil)
+	proxy := newDelayedRemotingProxy(t, server.Ref().GetAddress())
+	t.Cleanup(proxy.Close)
+	for _, accepting := range []bool{false, true} {
+		proxy.SetAccepting(accepting)
+		conn, err := net.DialTimeout("tcp", proxy.listener.Addr().String(), time.Second)
+		require.NoError(t, err)
+		require.NoError(t, conn.SetDeadline(time.Now().Add(time.Second)))
+		err = (&remoting.Handshake{AdvertiseAddr: "127.0.0.1:1"}).Send(conn)
+		if err == nil {
+			err = new(remoting.Handshake).Wait(conn)
+		}
+		require.NoError(t, conn.Close())
+		if accepting {
+			require.NoError(t, err, "恢复接入后应完成真实握手")
+		} else {
+			require.Error(t, err, "暂停接入时不能只关闭已登记连接")
+		}
+	}
+}
+
+func TestDelayedRemotingProxy_StaleRegistration(t *testing.T) {
+	server := startRemotingTLSSystem(t, nil)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var enteredOnce, releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	proxy := newDelayedRemotingProxyWithRegister(t, server.Ref().GetAddress(), func() {
+		enteredOnce.Do(func() { close(entered); <-release })
+	})
+	t.Cleanup(proxy.Close)
+	conn, err := net.DialTimeout("tcp", proxy.listener.Addr().String(), time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, conn.SetDeadline(time.Now().Add(time.Second)))
+	require.NoError(t, (&remoting.Handshake{AdvertiseAddr: "127.0.0.1:1"}).Send(conn))
+	receiveTellResult(t, entered)
+	// 后端拨号已完成但尚未登记，隔离与恢复后也不得接入这个旧结果。
+	proxy.SetAccepting(false)
+	proxy.SetAccepting(true)
+	unblock()
+	require.Error(t, new(remoting.Handshake).Wait(conn))
+	next, err := net.DialTimeout("tcp", proxy.listener.Addr().String(), time.Second)
+	require.NoError(t, err)
+	defer next.Close()
+	require.NoError(t, next.SetDeadline(time.Now().Add(time.Second)))
+	require.NoError(t, (&remoting.Handshake{AdvertiseAddr: "127.0.0.1:2"}).Send(next))
+	require.NoError(t, new(remoting.Handshake).Wait(next), "恢复后新建的连接应正常接入")
 }
 
 func (*delayedRemotingProxy) forward(destination, source net.Conn) {

@@ -112,6 +112,7 @@ func TestSystem_RemotingRetireAndSimultaneousReconnect(t *testing.T) {
 		system := startRemotingTLSSystem(t, nil,
 			vivid.WithActorSystemRemoting(backend, proxy.listener.Addr().String()),
 			vivid.WithActorSystemRemotingOption(vivid.WithActorSystemRemotingReconnectLimit(0)),
+			vivid.WithActorSystemEnableMetrics(true),
 		)
 		systems = append(systems, system)
 		created, removed, _ := observeRetiringEndpoints(t, system)
@@ -125,6 +126,9 @@ func TestSystem_RemotingRetireAndSimultaneousReconnect(t *testing.T) {
 		refs[index] = ref
 	}
 	for round := range 8 {
+		for _, proxy := range proxies {
+			proxy.SetAccepting(true)
+		}
 		start, completed := make(chan struct{}), make(chan error, 2)
 		for index := range 2 {
 			go func() {
@@ -141,7 +145,10 @@ func TestSystem_RemotingRetireAndSimultaneousReconnect(t *testing.T) {
 			require.NoError(t, receiveTellResult(t, completed))
 		}
 		active := []vivid.ActorRef{receiveTellResult(t, spawned[0]), receiveTellResult(t, spawned[1])}
-		// 主动断开代理中已经建立的链路，下一轮沿用同一业务引用重新通信。
+		// 先阻止所有方向的新接入，再断开已有链路，避免迟到的拨号重新建立连接。
+		for _, proxy := range proxies {
+			proxy.SetAccepting(false)
+		}
 		for _, proxy := range proxies {
 			proxy.mu.Lock()
 			for conn := range proxy.conns {
@@ -150,7 +157,15 @@ func TestSystem_RemotingRetireAndSimultaneousReconnect(t *testing.T) {
 			proxy.mu.Unlock()
 		}
 		for index := range 2 {
-			require.True(t, active[index].Equals(receiveTellResult(t, killed[index])))
+			select {
+			case removed := <-killed[index]:
+				require.True(t, active[index].Equals(removed), "第 %d 轮节点 %d 的端点应被回收", round, index)
+			case <-time.After(3 * time.Second):
+				t.Fatalf("第 %d 轮节点 %d 等待端点 %s 回收超时", round, index, active[index])
+			}
+			_, err := systems[index].FindActor(active[index].String())
+			require.ErrorIs(t, err, vivid.ErrorNotFound)
+			require.Zero(t, systems[index].Metrics().Snapshot().GaugeOrZero(metrics.RemotingOutboundEndpointsGauge))
 		}
 	}
 }
