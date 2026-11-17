@@ -150,7 +150,7 @@ func (s *System) HeartbeatProbe(ref vivid.ActorRef) *vivid.Heartbeat {
 
 func (s *System) Probe(ref vivid.ActorRef, timeout ...time.Duration) vivid.Future[*vivid.Heartbeat] {
 	if ref.GetAddress() != s.Ref().GetAddress() {
-		return vivid.NewTypedFuture[vivid.Message, *vivid.Heartbeat](s.Ask(ref, heartbeatMessage))
+		return vivid.NewTypedFuture[vivid.Message, *vivid.Heartbeat](s.Ask(ref, heartbeatMessage, timeout...))
 	}
 
 	f := future.NewFuture[*vivid.Heartbeat](s, 0, nil)

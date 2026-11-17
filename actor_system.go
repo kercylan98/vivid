@@ -66,6 +66,7 @@ type ActorSystem interface {
 
 	// Probe 查询指定 Actor 的框架可用状态；重启初始化中或重启失败的 Actor 不可用。
 	// 本地直接查询，远程通过传输层应答；不执行用户行为，不保证业务健康或后续投递成功。
+	// 远程等待沿用 Ask：省略 timeout 使用系统默认值，首个值 <= 0 时不设超时；超时不撤销已投递请求。
 	Probe(ref ActorRef, timeout ...time.Duration) Future[*Heartbeat]
 
 	// ClusterSnapshot 查询本地成员及可达性观察，超时规则与 Ask 相同；查询不会探测远端节点。
