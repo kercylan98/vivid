@@ -96,7 +96,7 @@ func WithActorSystemClusterBootstrap(bootstrap bool) ActorSystemClusterOption {
 	return func(o *ActorSystemClusterOptions) { o.Bootstrap = bootstrap }
 }
 
-// WithActorSystemClusterJoinTimeout 设置每个去重后的非本地种子的加入总超时，包含有限重发。
+// WithActorSystemClusterJoinTimeout 设置每个去重后的非本地种子的加入总超时，包含有限重发和本地响应处理等待。
 func WithActorSystemClusterJoinTimeout(timeout time.Duration) ActorSystemClusterOption {
 	return func(o *ActorSystemClusterOptions) { o.JoinTimeout = timeout }
 }

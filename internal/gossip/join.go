@@ -132,6 +132,11 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 		return
 	}
 	a.joinRequest = nil
+	// Future 完成后结果仍需等待消息线程处理，不能用迟到响应突破种子的总预算。
+	if time.Until(a.joinDeadline) <= 0 {
+		a.failJoinSeed(ctx, vivid.ErrorFutureTimeout.WithMessage(a.opts.JoinTimeout.String()))
+		return
+	}
 	pong, ok := reply.message.(*gossipmessages.Pong)
 	rejected, isRejection := reply.message.(*gossipmessages.JoinRejected)
 	err := reply.err

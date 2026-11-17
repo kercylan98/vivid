@@ -2,6 +2,7 @@ package gossip_test
 
 import (
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,95 @@ import (
 type droppedJoinReplyContext struct{ vivid.ActorContext }
 
 func (*droppedJoinReplyContext) Reply(vivid.Message) {}
+
+type heldJoinContext struct {
+	vivid.ActorContext
+	completed chan<- error
+}
+
+func (c *heldJoinContext) Ask(ref vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
+	return &heldJoinFuture{Future: c.ActorContext.Ask(ref, message, timeout...), completed: c.completed}
+}
+
+type heldJoinFuture struct {
+	vivid.Future[vivid.Message]
+	completed chan<- error
+}
+
+func (f *heldJoinFuture) Result() (vivid.Message, error) {
+	message, err := f.Future.Result()
+	f.completed <- err
+	return message, err
+}
+
+type heldJoinActor struct {
+	*gossip.SnapshotActor
+	completed chan error
+	release   <-chan struct{}
+}
+
+func (a *heldJoinActor) OnReceive(ctx vivid.ActorContext) {
+	if _, ok := ctx.Message().(*vivid.OnLaunch); ok {
+		a.SnapshotActor.OnReceive(&heldJoinContext{ActorContext: ctx, completed: a.completed})
+		<-a.release
+		return
+	}
+	a.SnapshotActor.OnReceive(ctx)
+}
+
+func TestActor_GossipJoinReplyQueuedPastDeadline(t *testing.T) {
+	newSystem := func() vivid.PrimaryActorSystem {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		address := listener.Addr().String()
+		require.NoError(t, listener.Close())
+		system := bootstrap.NewActorSystem(
+			vivid.WithActorSystemRemoting(address),
+			vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError), log.WithErrorStack(false))),
+		)
+		require.NoError(t, system.Start())
+		t.Cleanup(func() { require.NoError(t, system.Stop(3*time.Second)) })
+		return system
+	}
+	seedSystem, system := newSystem(), newSystem()
+	seed := gossip.NewSnapshotActor(vivid.NewActorSystemClusterOptions(
+		vivid.WithActorSystemClusterName("vivid-test"),
+		vivid.WithActorSystemClusterLaunchDelay(0),
+		vivid.WithActorSystemClusterGracefulShutdownTimeout(50*time.Millisecond),
+	))
+	seedRef, err := seedSystem.ActorOf(seed)
+	require.NoError(t, err)
+	_, err = seed.Readiness().Wait(seedSystem, time.Second).Result()
+	require.NoError(t, err)
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	const joinTimeout = time.Second
+	member := &heldJoinActor{
+		SnapshotActor: gossip.NewSnapshotActor(vivid.NewActorSystemClusterOptions(
+			vivid.WithActorSystemClusterName("vivid-test"),
+			vivid.WithActorSystemClusterSeeds(seedRef.GetAddress()),
+			vivid.WithActorSystemClusterLaunchDelay(0),
+			vivid.WithActorSystemClusterJoinTimeout(joinTimeout),
+		)),
+		completed: make(chan error, 1),
+		release:   release,
+	}
+	_, err = system.ActorOf(member)
+	require.NoError(t, err)
+	select {
+	case err := <-member.completed:
+		require.NoError(t, err, "Future 应在期限内成功收到种子确认")
+	case <-time.After(3 * time.Second):
+		t.Fatal("join response was not received")
+	}
+	<-time.After(joinTimeout)
+	unblock()
+	_, err = member.Readiness().Wait(system, time.Second).Result()
+	require.ErrorIs(t, err, vivid.ErrorClusterJoinFailed)
+	require.ErrorIs(t, err, vivid.ErrorFutureTimeout)
+}
 
 type lossyJoinActor struct {
 	*gossip.SnapshotActor
