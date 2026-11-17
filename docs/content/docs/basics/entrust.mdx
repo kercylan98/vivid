@@ -31,6 +31,7 @@ result, err := future.Result()
 - 任务在独立 goroutine 中运行，不阻塞当前消息处理。
 - 任务内发生 **panic** 会被捕获并转换为错误写入 Future。
 - 返回的 Future 与 Ask 返回的 Future 用法一致：**Result()**、**Wait()**、**Close(err)**。
+- 系统停止完成后，新请求返回 **ErrorActorSystemStopped**，被拒绝的任务不会启动；此前接纳的任务可能继续运行，已结束的 Future 不再接受任务结果。
 
 ## 适用场景
 

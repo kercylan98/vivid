@@ -313,6 +313,9 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 }
 
 func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
+	if c.system.requestsStopped() {
+		return future.NewFutureFail[vivid.Message](vivid.ErrorActorSystemStopped)
+	}
 	var askTimeout = c.options.DefaultAskTimeout
 	if len(timeout) > 0 {
 		askTimeout = timeout[0]
@@ -324,7 +327,10 @@ func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vi
 		futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
 			c.system.removeFuture(agentRef)
 		})
-		c.system.appendFuture(agentRef, futureIns)
+		if err := c.system.appendFuture(agentRef, futureIns); err != nil {
+			futureIns.Close(err)
+			return futureIns
+		}
 
 		envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
 		c.enqueueToMailbox(recipient, envelop)
@@ -336,6 +342,9 @@ func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vi
 }
 
 func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.Future[vivid.Message] {
+	if c.system.requestsStopped() {
+		return future.NewFutureFail[vivid.Message](vivid.ErrorActorSystemStopped)
+	}
 	if task == nil {
 		return future.NewFutureFail[vivid.Message](vivid.ErrorFutureInvalid.WithMessage("no task to be executed"))
 	}
@@ -345,7 +354,10 @@ func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.F
 	futureIns := future.NewFuture[vivid.Message](c, timeout, func() {
 		c.system.removeFuture(agentRef)
 	})
-	c.system.appendFuture(agentRef, futureIns)
+	if err := c.system.appendFuture(agentRef, futureIns); err != nil {
+		futureIns.Close(err)
+		return futureIns
+	}
 
 	go func() {
 		defer func() {

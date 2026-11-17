@@ -39,6 +39,7 @@ type ActorSystem interface {
 	//   - 先停止业务 Actor，再依次停止集群、远程通信和指标组件；不保证排空普通消息或完成业务持久化。
 	//   - timeout 控制本次调用的等待时间，未传时使用系统配置；小于等于 0 表示一直等待。
 	//   - 等待超时返回 [ErrorActorSystemStopFailed]，保留 context.DeadlineExceeded 原因；后台继续有序关闭，不提前取消收尾所需的系统上下文和调度器。
+	//   - 停止完成后，新 Ask、Probe 与 Entrust 返回 [ErrorActorSystemStopped]；被拒绝的托管任务不会启动，已接纳的任务不强制中断。
 	//
 	// 注意事项：
 	//   - 停止中重复调用会再次等待同一次关闭；关闭已完成后调用返回 [ErrorActorSystemAlreadyStopped]。
@@ -67,6 +68,7 @@ type ActorSystem interface {
 	// Probe 查询指定 Actor 的框架可用状态；重启初始化中或重启失败的 Actor 不可用。
 	// 本地直接查询，远程通过传输层应答；不执行用户行为，不保证业务健康或后续投递成功。
 	// 远程等待沿用 Ask：省略 timeout 使用系统默认值，首个值 <= 0 时不设超时；超时不撤销已投递请求。
+	// 本系统停止完成后返回 [ErrorActorSystemStopped]。
 	Probe(ref ActorRef, timeout ...time.Duration) Future[*Heartbeat]
 
 	// ClusterSnapshot 查询本地成员及可达性观察，超时规则与 Ask 相同；查询不会探测远端节点。

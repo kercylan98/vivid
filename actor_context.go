@@ -501,6 +501,7 @@ type ActorLiaison interface {
 	//
 	// 行为特性：
 	//   - 支持多种超时控制与异常捕捉，超时后 Future 状态自动为失败，可通过 Future.Error() 获取超时错误。
+	//   - 所属系统停止完成后，新请求以 ErrorActorSystemStopped 失败。
 	//   - 若目标 Actor 不存在或已终止，Future 会立即失败。
 	//   - 适用于 RPC、协作、需结果确认等双向通信场景。
 	//
@@ -526,6 +527,7 @@ type ActorLiaison interface {
 	//
 	// 功能与行为说明：
 	//   - 支持将任何实现 EntrustTask 接口的异步任务委托给 ActorContext 持有的独立执行环境；
+	//   - 所属系统停止完成后，新请求以 ErrorActorSystemStopped 失败，被拒绝的任务不会启动；
 	//   - 所有异步任务均在独立的 Goroutine 中调度运行，任务实际执行流程与 Actor 独立，不会阻塞本地业务流程；
 	//   - 提供超时管理能力，timeout 参数用于指定此次任务最大等待时长（如为 0，则不设置超时限制）；
 	//   - 返回值 Future[Message] 可在客户端异步等待、回调处理或超时监控，适用于任务结果依赖、链式业务处理等异步编程场景；

@@ -72,6 +72,7 @@ type System struct {
 	actorContexts          sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
 	futureAgents           map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
 	futureLock             sync.RWMutex                                      // Future 的锁，保证 Future 的并发安全
+	requestsClosed         bool                                              // 根 Actor 收尾后关闭请求登记，由 futureLock 保护
 	guardClosedSignal      chan struct{}                                     // 用于通知系统关闭的信号
 	stopCompleted          chan struct{}                                     // 有序关闭及系统资源清理均已完成
 	startCompleted         chan struct{}                                     // 首次启动初始化链已结束
@@ -149,6 +150,9 @@ func (s *System) HeartbeatProbe(ref vivid.ActorRef) *vivid.Heartbeat {
 }
 
 func (s *System) Probe(ref vivid.ActorRef, timeout ...time.Duration) vivid.Future[*vivid.Heartbeat] {
+	if s.requestsStopped() {
+		return future.NewFutureFail[*vivid.Heartbeat](vivid.ErrorActorSystemStopped)
+	}
 	if ref.GetAddress() != s.Ref().GetAddress() {
 		return vivid.NewTypedFuture[vivid.Message, *vivid.Heartbeat](s.Ask(ref, heartbeatMessage, timeout...))
 	}
@@ -381,6 +385,7 @@ func (s *System) finishStop() {
 	if s.Context != nil {
 		<-s.guardClosedSignal
 	}
+	s.closeFutureRequests()
 	if s.remotingAdmission != nil {
 		s.remotingAdmission.Stop()
 	}
@@ -394,16 +399,29 @@ func (s *System) finishStop() {
 	s.Logger().Debug("actor system stopped")
 }
 
-func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) {
+func (s *System) requestsStopped() bool {
+	select {
+	case <-s.stopCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Message]) error {
 	s.actorContexts.Store(agentRef.ref.GetPath(), future)
 
 	s.futureLock.Lock()
 	defer s.futureLock.Unlock()
 
+	if s.requestsClosed {
+		s.actorContexts.Delete(agentRef.ref.GetPath())
+		return vivid.ErrorActorSystemStopped
+	}
 	// 完成回调可能先清理再遇到路由注册，锁内复核结果并撤销迟到登记。
 	if future.IsCompleted() {
 		s.actorContexts.Delete(agentRef.ref.GetPath())
-		return
+		return nil
 	}
 	agentPath := agentRef.agent.GetPath()
 	futureMap, exists := s.futureAgents[agentPath]
@@ -412,6 +430,27 @@ func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Me
 		s.futureAgents[agentPath] = futureMap
 	}
 	futureMap[agentRef.ref.GetPath()] = agentRef
+	return nil
+}
+
+func (s *System) closeFutureRequests() {
+	s.futureLock.Lock()
+	// 根 Actor 已结束，此后登记必须被拒绝；此前接纳的请求先复制，再在锁外完成。
+	s.requestsClosed = true
+	var pending []*future.Future[vivid.Message]
+	for _, requests := range s.futureAgents {
+		for path := range requests {
+			if value, exists := s.actorContexts.Load(path); exists {
+				if request, ok := value.(*future.Future[vivid.Message]); ok {
+					pending = append(pending, request)
+				}
+			}
+		}
+	}
+	s.futureLock.Unlock()
+	for _, request := range pending {
+		request.Close(vivid.ErrorActorSystemStopped)
+	}
 }
 
 func (s *System) removeFuture(agentRef *AgentRef) {
