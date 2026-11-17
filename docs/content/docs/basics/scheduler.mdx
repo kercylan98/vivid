@@ -10,6 +10,7 @@ description: 定时与周期消息投递（Once、Loop、Cron）及任务管理
 - **生命周期**：任务与创建它的 Actor 绑定，Actor 终止或重启时自动清理；重启后需要重新注册。
 - **作用域**：reference 在所属 Scheduler 内唯一；不同 Actor、同路径重建的 Actor 可使用相同 reference，清理任务互不影响。`system.Scheduler()` 属于根 Actor。
 - **投递边界**：取消或清理任务不会撤回已经投递的消息。
+- **并发操作**：同一 Scheduler 支持并发注册、查询、取消与清理；相同 reference 的重复注册失败，不替换原任务。注册失败不会新增登记，`Exists` 只反映查询当时的状态。
 
 <Mermaid diagram={`flowchart LR
   subgraph Scheduler
@@ -126,7 +127,7 @@ err := ctx.Scheduler().Cancel(refID)
 
 **方法**：`Clear()`
 
-- 无参数、无返回值，调用后该 Actor 的调度器上不再有任何任务。
+- 无参数、无返回值，清除当前任务；不禁止后续注册，并发注册的任务可能在清理后加入。
 
 ---
 

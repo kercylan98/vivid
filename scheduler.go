@@ -11,7 +11,7 @@ import (
 // 并支持通过引用标识管理、取消及查询调度任务的状态。
 // 引用标识仅在所属 Scheduler 内唯一，同路径重建的 Actor 使用独立的任务分组。
 // Actor 终止或重启会清理任务；取消与清理不会撤回已经投递的消息。
-// 实现类需保证线程安全与高效的任务调度能力。
+// 同一 Scheduler 支持并发注册、查询、取消与清理。
 type Scheduler interface {
 	// Cron 安排一个基于 Cron 表达式的周期性调度任务，定时向目标 Actor 投递消息。
 	//
@@ -59,6 +59,7 @@ type Scheduler interface {
 	Cancel(reference string) error
 
 	// Clear 清除当前调度器实例中所有已注册的调度任务。
+	// 清理与注册串行完成，不禁止后续注册；并发注册的任务可能在清理后加入。
 	Clear()
 }
 
