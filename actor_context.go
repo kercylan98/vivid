@@ -315,7 +315,7 @@ type ActorContext interface {
 
 	// Available 是基于 [ActorSystem.Probe] 检查 Actor 自身是否还处于可用状态的函数。
 	//
-	// 当 Actor 处于可用状态时意味着投递消息任能被处理，否则将进入死信。
+	// 不执行用户行为，不保证业务健康或后续投递成功；重启初始化中或失败时返回 false。
 	Available() bool
 }
 

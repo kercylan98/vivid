@@ -117,6 +117,10 @@ func (s *System) HeartbeatProbe(ref vivid.ActorRef) *vivid.Heartbeat {
 	if !exists {
 		return heartbeat
 	}
+	// 终止或重启初始化后保留的上下文不能作为可用依据；僵尸也保持 killed 状态。
+	if ctx, ok := value.(*Context); ok && atomic.LoadInt32(&ctx.state) == killed {
+		return heartbeat
+	}
 
 	// 是否即将被关闭
 	_, closing := s.closingActors.Load(ref.GetPath())

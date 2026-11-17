@@ -83,5 +83,5 @@ func (p *PipeResult) GetError() error {
 
 type Heartbeat struct {
 	Ref       ActorRef // 心跳目标 ActorRef
-	Available bool     // 是否可用，当不可用时，表示目标已关闭或即将被关闭
+	Available bool     // 框架可用状态，不存在、终止后或重启初始化中（含失败）为 false
 }
