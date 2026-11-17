@@ -47,6 +47,12 @@ func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, option
 		launchTime:    time.Now(),
 	}
 	ctx.scheduler = newScheduler(ctx)
+	initialized := false
+	defer func() {
+		if !initialized {
+			ctx.rollbackInitialization()
+		}
+	}()
 
 	initializer := newContextInitializer(ctx, actor, initContextOptions(ctx, actor, options)...)
 
@@ -60,6 +66,7 @@ func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, option
 		Run(); err != nil {
 		return nil, vivid.ErrorActorSpawnFailed.With(err)
 	}
+	initialized = true
 	return ctx, nil
 }
 
@@ -202,6 +209,7 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivi
 	}
 
 	if c.system.appendActorContext(childCtx) {
+		childCtx.rollbackInitialization()
 		return nil, vivid.ErrorActorAlreadyExists.WithMessage(childCtx.Ref().GetPath())
 	}
 

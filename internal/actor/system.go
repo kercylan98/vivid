@@ -68,6 +68,8 @@ type System struct {
 	*Context                                                                 // ActorSystem 本身就表示了根 Actor
 	codec                  *serialization.VividCodec                         // 内部消息编解码器
 	actorOfLock            sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
+	actorInitLock          sync.Mutex                                        // 保护创建中的名称，不在用户初始化回调期间持有
+	initializingActors     map[vivid.ActorPath]*Context                      // 仅保留正在初始化的 Actor
 	options                *vivid.ActorSystemOptions                         // 系统选项
 	actorContexts          sync.Map                                          // 用于加速访问的 ActorContext 缓存（含有 Future）
 	futureAgents           map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
@@ -508,8 +510,29 @@ func (s *System) removeFuturesByAgentPath(agentPath vivid.ActorPath, err error) 
 
 // appendActorContext 用于添加指定路径的 ActorContext。
 func (s *System) appendActorContext(ctx *Context) bool {
+	s.actorInitLock.Lock()
+	defer s.actorInitLock.Unlock()
 	_, loaded := s.actorContexts.LoadOrStore(ctx.Ref().GetPath(), ctx)
+	if !loaded {
+		delete(s.initializingActors, ctx.Ref().GetPath())
+	}
 	return loaded
+}
+
+// reserveActorContext 在预启动前取得名称，避免失败实例影响同名 Actor 的资源。
+func (s *System) reserveActorContext(ctx *Context) error {
+	s.actorInitLock.Lock()
+	defer s.actorInitLock.Unlock()
+	path := ctx.Ref().GetPath()
+	_, exists := s.actorContexts.Load(path)
+	if path == "/" || exists || s.initializingActors[path] != nil {
+		return vivid.ErrorActorAlreadyExists.WithMessage(path)
+	}
+	if s.initializingActors == nil {
+		s.initializingActors = make(map[vivid.ActorPath]*Context)
+	}
+	s.initializingActors[path] = ctx
+	return nil
 }
 
 // removeActorContext 用于移除指定路径的 ActorContext。

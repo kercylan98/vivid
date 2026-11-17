@@ -101,7 +101,7 @@ childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
 | 维度 | Prelaunch（OnPrelaunch） | OnLaunch |
 |------|--------------------------|----------|
 | **时机** | 在 Actor 正式“启动”之前，尚未开始接收消息 | 启动后收到的第一条消息，已具备完整邮箱与上下文 |
-| **上下文** | 仅 **PrelaunchContext**（Logger、Ref），**不能** Tell/ActorOf/Watch | **ActorContext** 完整可用，可发消息、创建子 Actor、订阅等 |
+| **上下文** | **PrelaunchContext** 提供基础系统访问与预启动配置，**不能**直接 Tell/ActorOf/Watch | **ActorContext** 完整可用，可发消息、创建子 Actor、订阅等 |
 | **典型场景** | 配置校验、环境检查、依赖注入、预加载只读数据；任一失败可令启动中止（返回 error） | 向注册中心注册、订阅 EventStream、创建子 Actor、发起首次 Tell/调度；需要与系统其它部分交互的“上线”逻辑 |
 | **失败后果** | 返回 error → Actor 不启动，**ActorOf** 返回错误 | 若在此 panic 或 **Failed**，由父级监督策略处理（如重启） |
 
@@ -119,7 +119,9 @@ childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
 |------|------|----------|
 | **PrelaunchActor** | `OnPrelaunch(ctx PrelaunchContext) error` | 正式启动前（在 OnLaunch 之前）；返回 error 则启动失败 |
 
-**PrelaunchContext** 提供 **Logger()**、**Ref()**；不提供消息发送、子 Actor 创建等运行时能力。不定义新类型时可用 **`vivid.NewPrelaunchActor(prelaunchFn, actor)`** 挂载预启动逻辑；未传入的 `actor` 使用占位空实现。
+**PrelaunchContext** 提供 **System()**、**Logger()**、**Ref()**、**EventStream()** 与 **WithPhaseKill(...)**；不提供消息发送、子 Actor 创建等运行时能力。不定义新类型时可用 **`vivid.NewPrelaunchActor(prelaunchFn, actor)`** 挂载预启动逻辑；未传入的 `actor` 使用占位空实现。
+
+首次创建会在预启动前检查并预留名称，同名 Actor 已存在或正在初始化时返回 **ErrorActorAlreadyExists**，不执行本次预启动回调。预启动返回错误时，框架释放本次订阅和名称，不触发 OnLaunch、OnKill 或 OnKilled；自行申请的外部资源需在回调失败前自行释放。回调 panic 时同样回滚框架登记，但 panic 仍向调用方传播。
 
 ---
 

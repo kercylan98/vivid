@@ -3,6 +3,7 @@ package actor
 import (
 	"fmt"
 	"net/url"
+	"sync/atomic"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/mailbox"
@@ -56,7 +57,33 @@ func (i *contextInitializer) initRef() error {
 		return vivid.ErrorRefInvalidPath.With(joinPathErr).With(newRefErr)
 	}
 	i.ctx.ref = ref
+	if i.ctx.parent != nil {
+		return i.ctx.system.reserveActorContext(i.ctx)
+	}
 	return nil
+}
+
+// rollbackInitialization 只清理本次创建占有的资源，不触发尚未启动 Actor 的终止行为。
+func (c *Context) rollbackInitialization() {
+	if c.ref == nil {
+		return
+	}
+	system := c.system
+	system.actorInitLock.Lock()
+	owned := c.parent == nil || system.initializingActors[c.ref.GetPath()] == c
+	system.actorInitLock.Unlock()
+	if !owned {
+		return
+	}
+	// 名称保留到清理结束，失败回调持有的上下文也不能再次登记请求。
+	atomic.StoreInt32(&c.state, killed)
+	system.closeContextRequests(c)
+	c.EventStream().UnsubscribeAll(c)
+	c.scheduler.Clear()
+	c.phaseKill = nil
+	system.actorInitLock.Lock()
+	delete(system.initializingActors, c.ref.GetPath())
+	system.actorInitLock.Unlock()
 }
 
 func (i *contextInitializer) prelaunch() error {
