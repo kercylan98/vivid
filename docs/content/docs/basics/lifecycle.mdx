@@ -113,7 +113,7 @@ childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
 
 ### Prelaunch
 
-在**首次创建与启动**时，若 Actor 实现了 **PrelaunchActor**，系统会在投递 **OnLaunch** 之前先调用 **OnPrelaunch**，用于依赖注入、配置校验、资源预加载等。该阶段在生命周期图中对应「预启动」。
+在**首次创建与重启**时，若 Actor 实现了 **PrelaunchActor**，系统会在投递 **OnLaunch** 之前先调用 **OnPrelaunch**，用于依赖注入、配置校验、资源预加载等。该阶段在生命周期图中对应「预启动」。
 
 | 接口 | 方法 | 调用时机 |
 |------|------|----------|
@@ -128,6 +128,8 @@ childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
 ### OnLaunch
 
 Actor 通过预启动（若有）并完成创建后，收到的**第一条系统消息**。此时已有完整 **ActorContext**（可 Tell/Ask、ActorOf、Watch、EventStream、Scheduler 等），适合做**需要运行时上下文**的操作：向外部或本系统其它 Actor 注册自己、订阅事件流、创建子 Actor、调度首次任务等。
+
+成功重启后，被重启的 Actor 会再次收到 **OnLaunch**，然后继续处理排队的业务消息；父 Actor 不会因此再次收到启动消息。初始化逻辑需支持重复执行。
 
 ### OnKill
 

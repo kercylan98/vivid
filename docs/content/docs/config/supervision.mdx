@@ -80,6 +80,8 @@ ref, _ := ctx.ActorOf(&MyActor{}, vivid.WithActorSupervisionStrategy(strategy))
 
 当决策为**重启**时，若该 Actor 创建时配置了 **WithActorProvider(provider)**，系统会通过 **provider.Provide()** 获取新实例替换原 Actor；未配置则重启不替换实例。详见 [Actor 配置 - Actor 提供者](/docs/config/actor-config#actor-提供者provider)。
 
+两种方式均保留原 **ActorRef**。重启时依次执行新实例或复用实例的 **OnRestarted**、**OnPrelaunch**（若实现）；成功后向该 Actor 投递 **OnLaunch**，再继续处理排队的业务消息。初始化方式见 [创建与生命周期](/docs/basics/lifecycle#onlaunch)。
+
 ## 重启阶段的扩展钩子（PreRestart / Restarted）
 
 当监督决策为**重启**时，被重启的 Actor 可在以下两个阶段挂载可选逻辑：
