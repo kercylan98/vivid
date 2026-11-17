@@ -9,14 +9,16 @@ import (
 // Scheduler 接口定义了分布式 Actor 调度系统中所有调度相关的核心操作。
 // 调度器允许对指定的 Actor 以多种调度策略（定时、延时、循环等）投递消息，
 // 并支持通过引用标识管理、取消及查询调度任务的状态。
+// 引用标识仅在所属 Scheduler 内唯一，同路径重建的 Actor 使用独立的任务分组。
+// Actor 终止或重启会清理任务；取消与清理不会撤回已经投递的消息。
 // 实现类需保证线程安全与高效的任务调度能力。
 type Scheduler interface {
 	// Cron 安排一个基于 Cron 表达式的周期性调度任务，定时向目标 Actor 投递消息。
 	//
 	// receiver: 目标 Actor 的引用（ActorRef），消息将被投递至该 Actor。
-	// cron: Cron 表达式字符串，定义任务的运行时间计划。如："0 0 * * *" 表示每日 0 点。
+	// cron: 六段或七段 Cron 表达式字符串，包含秒及可选年份。如："0 0 0 * * ?" 表示每日 0 点。
 	// message: 待调度投递的消息（Message），可以为任意实现了 Message 接口的对象。
-	// options: 调度器可选配置（如 Location, Reference），可通过 WithScheduleXXX 方法链式传递。
+	// options: 调度器可选配置（如 WithScheduleLocation、WithSchedulerReference）。
 	//
 	// 返回 error：若调度安排失败，返回具体错误，否则为 nil。
 	Cron(receiver ActorRef, cron string, message Message, options ...ScheduleOption) error
@@ -41,7 +43,8 @@ type Scheduler interface {
 	// 返回 error：若调度失败返回具体错误，否则为 nil。
 	Loop(receiver ActorRef, interval time.Duration, message Message, options ...ScheduleOption) error
 
-	// Exists 检查指定引用标识(reference)的调度任务是否存在（未被取消或尚未到期）。
+	// Exists 检查当前 Scheduler 是否保留指定引用标识(reference)的登记。
+	// 一次任务触发后仍可能保留登记，不能用此方法判断消息是否已投递或处理。
 	//
 	// reference: 调度任务的唯一引用标识符（string）。
 	//

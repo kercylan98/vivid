@@ -3,7 +3,8 @@ package actor
 import (
 	"context"
 	"errors"
-	"fmt"
+	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/kercylan98/vivid"
@@ -13,14 +14,9 @@ import (
 	"github.com/reugn/go-quartz/quartz"
 )
 
-// uniqueJobKey 使用 Context.instanceID 保证按 Actor 实例隔离，避免跨 ActorSystem/同 Ref 时同一 reference 导致任务互相覆盖。
-func uniqueJobKey(ctx *Context, reference string) *quartz.JobKey {
-	jobKey := fmt.Sprintf("%s:%s", ctx.ref.GetPath(), reference)
-	return quartz.NewJobKey(jobKey)
-}
-
 var (
-	_ vivid.Scheduler = (*Scheduler)(nil)
+	_                  vivid.Scheduler = (*Scheduler)(nil)
+	schedulerNamespace atomic.Uint64
 )
 
 // quartzErrorToVivid 将 Quartz 错误转换为 Vivid 错误
@@ -46,6 +42,7 @@ func newScheduler(ctx *Context) *Scheduler {
 	return &Scheduler{
 		ctx:       ctx,
 		scheduler: ctx.system.scheduler,
+		namespace: strconv.FormatUint(schedulerNamespace.Add(1), 10),
 		jobKeys:   make(map[string]*quartz.JobKey),
 	}
 }
@@ -53,7 +50,12 @@ func newScheduler(ctx *Context) *Scheduler {
 type Scheduler struct {
 	ctx       *Context
 	scheduler *scheduler.Scheduler
-	jobKeys   map[string]*quartz.JobKey // actor reference -> job key
+	namespace string                    // 实例独立的任务分组，不依赖可复用的 Actor 路径
+	jobKeys   map[string]*quartz.JobKey // reference -> job key
+}
+
+func (s *Scheduler) jobKey(reference string) *quartz.JobKey {
+	return quartz.NewJobKeyWithGroup(reference, s.namespace)
 }
 
 func (s *Scheduler) Clear() {
@@ -91,7 +93,7 @@ func (s *Scheduler) tell(receiver vivid.ActorRef, message vivid.Message, options
 
 // scheduleJob 注册任务并调度，将 reference 与 jobKey 记入 jobKeys 供 Exists/Cancel 使用
 func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, opts *vivid.ScheduleOptions, trigger quartz.Trigger, logKind string, logFields ...any) error {
-	jobKey := uniqueJobKey(s.ctx, opts.Reference)
+	jobKey := s.jobKey(opts.Reference)
 	s.jobKeys[opts.Reference] = jobKey
 	fn := job.NewFunctionJob(func(ctx context.Context) (any, error) {
 		s.tell(receiver, message, opts)

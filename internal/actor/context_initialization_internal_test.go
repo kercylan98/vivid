@@ -91,7 +91,7 @@ func TestContext_InitializationRollback(t *testing.T) {
 			require.True(t, rootSubscribed)
 			require.NoError(t, system.Scheduler().Cancel("unrelated"))
 			require.Empty(t, failed.scheduler.jobKeys)
-			require.Error(t, system.scheduler.DeleteJob(uniqueJobKey(failed, "pending")), "底层调度任务应已删除")
+			require.Error(t, system.scheduler.DeleteJob(failed.scheduler.jobKey("pending")), "底层调度任务应已删除")
 			require.ErrorIs(t, ask.Wait(), vivid.ErrorActorDeaded)
 			require.ErrorIs(t, task.Wait(), vivid.ErrorActorDeaded)
 			require.ErrorIs(t, failed.Ask(target, "late", 0).Wait(), vivid.ErrorActorDeaded)

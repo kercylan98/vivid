@@ -7,8 +7,9 @@ description: 定时与周期消息投递（Once、Loop、Cron）及任务管理
 
 每个 **ActorContext** 拥有独立的 **Scheduler** 实例，通过 `ctx.Scheduler()` 获取。调度器用于在指定时间或周期向**目标 ActorRef**（通常为当前 Actor 或子 Actor）**投递消息**。
 
-- **生命周期**：任务与当前 Actor 绑定，Actor 终止时其调度器上的任务会被自动清理。
-- **作用域**：系统不提供全局 Scheduler，所有调度均通过某一 Actor 的 Context 创建。
+- **生命周期**：任务与创建它的 Actor 绑定，Actor 终止或重启时自动清理；重启后需要重新注册。
+- **作用域**：reference 在所属 Scheduler 内唯一；不同 Actor、同路径重建的 Actor 可使用相同 reference，清理任务互不影响。`system.Scheduler()` 属于根 Actor。
+- **投递边界**：取消或清理任务不会撤回已经投递的消息。
 
 <Mermaid diagram={`flowchart LR
   subgraph Scheduler
@@ -77,13 +78,13 @@ err := ctx.Scheduler().Loop(ctx.Ref(), 10*time.Second, &TickMessage{})
 | 参数 | 说明 |
 |------|------|
 | **receiver** | 接收消息的 ActorRef |
-| **cron** | 标准五段 Cron 表达式：分 时 日 月 周，如 `"0 0 * * *"` 表示每天 0 点 |
+| **cron** | 六段 Cron 表达式：秒 分 时 日 月 周，可追加第七段年份，如 `"0 0 0 * * ?"` 表示每天 0 点 |
 | **message** | 在匹配时间点投递的消息 |
 | **options** | 可选，**WithScheduleLocation(loc)** 控制时区（默认 **time.Local**），**WithSchedulerReference** 便于取消 |
 
 ```go
 // 每天 0 点
-err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 * * *", &DailyJob{})
+err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 0 * * ?", &DailyJob{})
 ```
 
 - 若 Cron 表达式非法，返回 **ErrorCronParse**。
@@ -96,11 +97,11 @@ err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 * * *", &DailyJob{})
 
 ### 检查任务是否存在（Exists）
 
-判断指定 reference 的调度任务是否仍存在（未取消且未到期）。
+查询当前 Scheduler 是否保留指定 reference 的登记。
 
 **方法**：`Exists(reference string) bool`
 
-- 返回 **true** 表示该 reference 对应的任务仍在调度器中；**false** 表示不存在或已取消/已到期。
+- 返回 **true** 表示仍有登记，**false** 表示没有登记。一次任务触发后仍可能返回 **true**，不能据此判断消息是否已投递或处理。
 
 ### 取消任务（Cancel）
 
@@ -110,6 +111,7 @@ err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 * * *", &DailyJob{})
 
 - 取消成功返回 **nil**。
 - 若 reference 不存在，返回 **ErrorNotFound**。
+- 一次任务已触发时，取消可能返回底层任务不存在的错误，并移除本地登记。
 
 ```go
 refID := "my-timer-1"
