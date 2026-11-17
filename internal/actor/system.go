@@ -400,6 +400,11 @@ func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Me
 	s.futureLock.Lock()
 	defer s.futureLock.Unlock()
 
+	// 完成回调可能先清理再遇到路由注册，锁内复核结果并撤销迟到登记。
+	if future.IsCompleted() {
+		s.actorContexts.Delete(agentRef.ref.GetPath())
+		return
+	}
 	agentPath := agentRef.agent.GetPath()
 	futureMap, exists := s.futureAgents[agentPath]
 	if !exists {

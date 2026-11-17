@@ -76,6 +76,16 @@ func (f *Future[T]) Close(err error) {
 	f.close(err)
 }
 
+// IsCompleted 报告结果是否已发布，不等待完成回调。
+func (f *Future[T]) IsCompleted() bool {
+	select {
+	case <-f.done:
+		return true
+	default:
+		return false
+	}
+}
+
 func (f *Future[T]) PipeTo(forwarders vivid.ActorRefs) {
 	if len(forwarders) == 0 {
 		return
