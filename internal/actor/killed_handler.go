@@ -137,15 +137,32 @@ func (h *killedHandler) handleRestart() {
 	h.ctx.phaseKill = nil
 
 	// 如果提供了提供者，则使用提供者提供新的 Actor 实例
+	var success = true
 	if h.ctx.options.Provider != nil {
-		h.ctx.actor = h.ctx.options.Provider.Provide()
+		success = h.ctx.restarting.recoverExec(h.ctx.Logger(), "provide actor", true, func() error {
+			actor := h.ctx.options.Provider.Provide()
+			if actor == nil {
+				return vivid.ErrorIllegalArgument.WithMessage("actor provider returned nil")
+			}
+			// 接口中的 nil 指针、函数等也不是有效实例，不能依赖其方法是否会 panic。
+			value := reflect.ValueOf(actor)
+			switch value.Kind() {
+			case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+				if value.IsNil() {
+					return vivid.ErrorIllegalArgument.WithMessage("actor provider returned nil")
+				}
+			}
+			h.ctx.actor = actor
+			return nil
+		})
 	}
-	h.ctx.behaviorStack.Clear().Push(h.ctx.actor.OnReceive)
-	h.ctx.Logger().Debug("actor restarted", log.String("path", h.ctx.ref.GetPath()))
+	if success {
+		h.ctx.behaviorStack.Clear().Push(h.ctx.actor.OnReceive)
+		h.ctx.Logger().Debug("actor restarted", log.String("path", h.ctx.ref.GetPath()))
+	}
 
 	// 触发重启后的回调
-	var success = true
-	if restartedActor, ok := h.ctx.actor.(vivid.RestartedActor); ok {
+	if restartedActor, ok := h.ctx.actor.(vivid.RestartedActor); ok && success {
 		success = h.ctx.restarting.recoverExec(h.ctx.Logger(), "on restarted", true, func() error {
 			return restartedActor.OnRestarted(h.ctx)
 		})

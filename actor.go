@@ -88,7 +88,7 @@ type Actor interface {
 	OnReceive(ctx ActorContext)
 }
 
-// ActorProvider 提供 Actor 实例的接口。
+// ActorProvider 提供有效的非 nil Actor 实例；重启时 panic 或返回 nil（含接口中的 nil 值）会使 Actor 进入僵尸状态。
 type ActorProvider interface {
 	Provide() Actor
 }

@@ -88,10 +88,10 @@ ref, _ := ctx.ActorOf(&MyActor{}, vivid.WithActorSupervisionStrategy(strategy))
 
 | 接口 | 方法 | 调用时机 |
 |------|------|----------|
-| **PreRestartActor** | `OnPreRestart(ctx RestartContext) error` | 监督触发重启**前**；返回 error 则中止本次重启 |
-| **RestartedActor** | `OnRestarted(ctx RestartContext) error` | 重启**完成**后；返回 error 仅记录，不阻止运行 |
+| **PreRestartActor** | `OnPreRestart(ctx RestartContext) error` | 清理旧实例前；error 或 panic 会记录日志并继续重启 |
+| **RestartedActor** | `OnRestarted(ctx RestartContext) error` | 新实例或复用实例的预启动前；error 或 panic 会进入僵尸状态 |
 
-**RestartContext** 提供 **Logger()**、**Ref()**，可在钩子内打日志或获取当前 Actor 引用；不提供消息发送、子 Actor 创建等运行时能力。与**首次启动**相关的 **PrelaunchActor** 见 [创建与生命周期 - 启动阶段：PrelaunchActor](/docs/basics/lifecycle#启动阶段prelaunchactor)。
+**RestartContext** 提供 **Logger()**、**Ref()**，可在钩子内打日志或获取当前 Actor 引用；不提供消息发送、子 Actor 创建等运行时能力。首次创建与重启均会调用的 **PrelaunchActor** 见 [创建与生命周期 - Prelaunch](/docs/basics/lifecycle#prelaunch)。
 
 ### 便捷构造器
 
@@ -100,11 +100,11 @@ ref, _ := ctx.ActorOf(&MyActor{}, vivid.WithActorSupervisionStrategy(strategy))
 - **`vivid.NewPreRestartActor(preRestartFn, actor)`**
 - **`vivid.NewRestartedActor(restartedFn, actor)`**
 
-未传入的 `actor` 会使用占位空实现。若 **OnRestarted** / **OnPreRestart** 等钩子失败，该 Actor 会进入 [僵尸状态](#重启失败与僵尸状态)，需通过 **Kill** 或随系统/父级退出才能释放。
+未传入的 `actor` 会使用占位空实现。若 **OnRestarted** 或 **OnPrelaunch** 失败，该 Actor 会进入 [僵尸状态](#重启失败与僵尸状态)，需通过 **Kill** 或随系统/父级退出才能释放。
 
 ## 重启失败与僵尸状态
 
-当子 Actor 在**监督触发重启**的过程中失败（如 **OnRestarted**、**OnPreRestart** 或 **OnPrelaunch** 返回错误，或重启流程内部异常）时，系统不会无限重试，也不会向父级上报，而是将该 Actor 标记为**僵尸状态**。
+当 Provider panic、返回无效实例，或 **OnRestarted**、**OnPrelaunch** 返回错误或 panic 时，该 Actor 进入**僵尸状态**，不会自动重试本次重启，也不会重新向父级上报。旧实例的 **OnPreRestart**、**OnKill**、**OnKilled** 失败会记录日志并继续重启。
 
 - **含义**：该 Actor 仍占用其 **ActorRef** 与邮箱，但**不再执行任何业务逻辑**。后续消息由框架以“空行为”处理（仅投递与邮箱排空，不调用用户 **OnReceive**），避免错误逻辑继续执行或状态扩散。
 - **影响**：
