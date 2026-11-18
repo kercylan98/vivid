@@ -179,6 +179,10 @@ func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, 
 	if receiver == nil || reference == "" {
 		return nil, vivid.ErrorIllegalArgument.WithMessage("receiver and reference are required")
 	}
+	// 非正周期会不断产生已经到期的任务，必须在进入底层队列前拒绝。
+	if loop, ok := trigger.(*quartz.SimpleTrigger); ok && loop.Interval <= 0 {
+		return nil, vivid.ErrorIllegalArgument.WithMessage("loop interval must be positive")
+	}
 	if _, exists := s.tasks[reference]; exists {
 		return nil, quartz.ErrJobAlreadyExists
 	}

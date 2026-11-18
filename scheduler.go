@@ -40,7 +40,7 @@ type Scheduler interface {
 	// Loop 安排一个固定间隔重复执行的调度任务，每间隔指定时间向目标 Actor 投递消息。
 	//
 	// receiver: 目标 Actor 引用。
-	// interval: 循环调度的时间间隔（time.Duration）。
+	// interval: 循环调度的时间间隔（time.Duration），必须大于零，否则返回 ErrorIllegalArgument。
 	// message: 投递消息的内容。
 	// options: 其他可选配置参数。
 	//

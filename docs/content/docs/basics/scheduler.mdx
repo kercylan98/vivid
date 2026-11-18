@@ -65,13 +65,15 @@ task, err := ctx.Scheduler().Once(ctx.Ref(), 5*time.Second, &MyMessage{Data: "de
 | 参数 | 说明 |
 |------|------|
 | **receiver** | 接收消息的 ActorRef |
-| **interval** | 两次投递之间的时间间隔 |
+| **interval** | 两次投递之间的时间间隔，必须大于零 |
 | **message** | 每次触发时投递的消息 |
 | **options** | 可选，如 **WithSchedulerReference(reference)** 便于后续取消 |
 
 ```go
 task, err := ctx.Scheduler().Loop(ctx.Ref(), 10*time.Second, &TickMessage{})
 ```
+
+周期为零或负值时，返回 `nil` 和 `ErrorIllegalArgument`，不创建任务。立即异步投递一次请使用 `Once`。
 
 ---
 
