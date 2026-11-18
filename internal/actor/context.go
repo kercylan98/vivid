@@ -46,7 +46,7 @@ func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, option
 		behaviorStack: NewBehaviorStack(),
 		launchTime:    time.Now(),
 	}
-	ctx.scheduler = newScheduler(ctx)
+	ctx.scheduler.Store(newScheduler(ctx))
 	initialized := false
 	defer func() {
 		if !initialized {
@@ -100,7 +100,7 @@ type Context struct {
 	restarting    *RestartMessage                    // 正在重启的消息
 	watchers      map[string]vivid.ActorRef          // 正在监听该 Actor 终止事件的 ActorRef，其中 key 为 ActorRef 的完整路径
 	stash         []vivid.Envelop                    // 暂存区
-	scheduler     *Scheduler                         // 调度器
+	scheduler     atomic.Pointer[Scheduler]          // 当前生命周期的调度器
 	phaseKill     *phaseKill                         // 多阶段终止流程
 	requestEpoch  atomic.Uint64                      // 请求生命周期，奇数表示收尾结束，登记与切换由 futureLock 协调
 }
@@ -194,7 +194,7 @@ func (c *Context) EventStream() vivid.EventStream {
 }
 
 func (c *Context) Scheduler() vivid.Scheduler {
-	return c.scheduler
+	return c.scheduler.Load()
 }
 
 func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {

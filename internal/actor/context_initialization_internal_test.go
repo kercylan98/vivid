@@ -51,7 +51,7 @@ func TestContext_InitializationRollback(t *testing.T) {
 				failed = ctx.(*Context)
 				ctx.EventStream().Subscribe(ctx, initializationEvent{})
 				// 内部资源同样随初始化回滚；公开 PrelaunchContext 不提供调度及请求接口。
-				if err := failed.scheduler.Once(target, time.Hour, "pending", vivid.WithSchedulerReference("pending")); err != nil {
+				if err := failed.scheduler.Load().Once(target, time.Hour, "pending", vivid.WithSchedulerReference("pending")); err != nil {
 					return err
 				}
 				ask = failed.Ask(target, "pending", 0)
@@ -90,8 +90,8 @@ func TestContext_InitializationRollback(t *testing.T) {
 			es.mu.RUnlock()
 			require.True(t, rootSubscribed)
 			require.NoError(t, system.Scheduler().Cancel("unrelated"))
-			require.Empty(t, failed.scheduler.jobKeys)
-			require.Error(t, system.scheduler.DeleteJob(failed.scheduler.jobKey("pending")), "底层调度任务应已删除")
+			require.Empty(t, failed.scheduler.Load().jobKeys)
+			require.Error(t, system.scheduler.DeleteJob(failed.scheduler.Load().jobKey("pending")), "底层调度任务应已删除")
 			require.ErrorIs(t, ask.Wait(), vivid.ErrorActorDeaded)
 			require.ErrorIs(t, task.Wait(), vivid.ErrorActorDeaded)
 			require.ErrorIs(t, failed.Ask(target, "late", 0).Wait(), vivid.ErrorActorDeaded)

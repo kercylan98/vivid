@@ -7,10 +7,12 @@ description: 定时与周期消息投递（Once、Loop、Cron）及任务管理
 
 每个 **ActorContext** 拥有独立的 **Scheduler** 实例，通过 `ctx.Scheduler()` 获取。调度器用于在指定时间或周期向**目标 ActorRef**（通常为当前 Actor 或子 Actor）**投递消息**。
 
-- **生命周期**：任务与创建它的 Actor 绑定，Actor 终止或重启时自动清理；重启后需要重新注册。
+- **生命周期**：任务与创建它的 Actor 绑定，终止或重启收尾后自动清理，旧 Scheduler 永久拒绝新任务；重启初始化时需重新调用 `ctx.Scheduler()` 并注册任务。`OnKill`、自身 `OnKilled` 收尾期间仍可注册，随后一并清理；`Stop` 等待超时不提前关闭仍在收尾的调度器。
 - **作用域**：reference 在所属 Scheduler 内唯一；不同 Actor、同路径重建的 Actor 可使用相同 reference，清理任务互不影响。`system.Scheduler()` 属于根 Actor。
 - **投递边界**：取消或清理任务不会撤回已经投递的消息。
 - **并发操作**：同一 Scheduler 支持并发注册、查询、取消与清理；相同 reference 的重复注册失败，不替换原任务。注册失败不会新增登记，`Exists` 只反映查询当时的状态。
+
+调度在本进程运行；向远程 Actor 投递沿用普通消息传输，不提供任务持久化或故障后补执行。Actor 已收尾时注册返回 `ErrorActorDeaded`，系统停止完成后返回 `ErrorActorSystemStopped`；初始化失败也会关闭并清理本次调度器。
 
 <Mermaid diagram={`flowchart LR
   subgraph Scheduler

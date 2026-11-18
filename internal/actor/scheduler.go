@@ -52,6 +52,7 @@ type Scheduler struct {
 	ctx       *Context
 	scheduler *scheduler.Scheduler
 	mu        sync.Mutex                // 协调本地登记与底层任务的注册和清理
+	closed    bool                      // 当前生命周期结束后永久关闭登记
 	namespace string                    // 实例独立的任务分组，不依赖可复用的 Actor 路径
 	jobKeys   map[string]*quartz.JobKey // reference -> job key
 }
@@ -63,6 +64,19 @@ func (s *Scheduler) jobKey(reference string) *quartz.JobKey {
 func (s *Scheduler) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.clear()
+}
+
+// close 与登记共用锁，已进入底层注册的任务先提交，再随本次关闭清理。
+func (s *Scheduler) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	s.clear()
+}
+
+// clear 在持有登记锁时清理任务，不改变生命周期准入。
+func (s *Scheduler) clear() {
 	for reference, jobKey := range s.jobKeys {
 		_ = s.scheduler.DeleteJob(jobKey)
 		delete(s.jobKeys, reference)
@@ -105,6 +119,12 @@ func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, 
 	// 本地登记与底层注册共同提交，清理不能越过尚未完成的注册。
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.ctx.system.requestsStopped() {
+		return vivid.ErrorActorSystemStopped
+	}
+	if s.closed {
+		return vivid.ErrorActorDeaded
+	}
 	if err := s.scheduler.Schedule(quartz.NewJobDetail(fn, jobKey), trigger); err != nil {
 		return schedulerErrorConvert(err)
 	}

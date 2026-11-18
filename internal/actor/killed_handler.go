@@ -127,8 +127,8 @@ func (h *killedHandler) cleanupScheduler() {
 	if !h.shouldContinue {
 		return
 	}
-	// 清理调度器，重启也清理
-	h.ctx.scheduler.Clear()
+	// 旧句柄永久关闭，重启初始化使用新的调度器。
+	h.ctx.scheduler.Load().close()
 	h.ctx.Logger().Debug("actor killed",
 		log.String("path", h.ctx.ref.GetPath()),
 		log.Bool("restarting", h.restarting))
@@ -164,6 +164,7 @@ func (h *killedHandler) handleRestart() {
 		})
 	}
 	if success {
+		h.ctx.scheduler.Store(newScheduler(h.ctx))
 		// 新实例的初始化可以发起请求，旧生命周期中尚未登记的请求仍会被拒绝。
 		h.ctx.system.reopenContextRequests(h.ctx)
 		h.ctx.behaviorStack.Clear().Push(h.ctx.actor.OnReceive)
@@ -187,6 +188,7 @@ func (h *killedHandler) handleRestart() {
 	// 当子 Actor 重启失败时，不再通知父 Actor 其死亡，而是让其进入"僵尸状态"，避免异常状态扩散。
 	if !success {
 		h.ctx.system.closeContextRequests(h.ctx)
+		h.ctx.scheduler.Load().close()
 		// 记录错误并释放资源
 		h.ctx.Logger().Error("restart failed; actor is now in zombie state", log.String("path", h.ctx.ref.GetPath()))
 		h.ctx.zombie = true

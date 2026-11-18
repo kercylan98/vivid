@@ -6,11 +6,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// Scheduler 接口定义了分布式 Actor 调度系统中所有调度相关的核心操作。
+// Scheduler 接口定义了由本地 Actor 生命周期管理的消息调度操作。
 // 调度器允许对指定的 Actor 以多种调度策略（定时、延时、循环等）投递消息，
 // 并支持通过引用标识管理、取消及查询调度任务的状态。
 // 引用标识仅在所属 Scheduler 内唯一，同路径重建的 Actor 使用独立的任务分组。
 // Actor 终止或重启会清理任务；取消与清理不会撤回已经投递的消息。
+// 收尾结束后旧 Scheduler 永久拒绝新任务，重启后需通过 ActorContext.Scheduler 获取新实例。
+// Actor 已终止时注册返回 ErrorActorDeaded，系统停止完成后返回 ErrorActorSystemStopped。
 // 同一 Scheduler 支持并发注册、查询、取消与清理。
 type Scheduler interface {
 	// Cron 安排一个基于 Cron 表达式的周期性调度任务，定时向目标 Actor 投递消息。

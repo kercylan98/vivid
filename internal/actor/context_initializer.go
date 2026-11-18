@@ -79,7 +79,7 @@ func (c *Context) rollbackInitialization() {
 	atomic.StoreInt32(&c.state, killed)
 	system.closeContextRequests(c)
 	c.EventStream().UnsubscribeAll(c)
-	c.scheduler.Clear()
+	c.scheduler.Load().close()
 	c.phaseKill = nil
 	system.actorInitLock.Lock()
 	delete(system.initializingActors, c.ref.GetPath())

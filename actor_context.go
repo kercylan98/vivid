@@ -62,6 +62,7 @@ type ActorContext interface {
 	// 功能与用途说明：
 	//   - Scheduler 支持定时（Once）、周期性（Loop）、Cron 表达式等多种类型的异步消息调度与定时任务投递。
 	//   - 所有调度任务的回调投递均自动封装为 Actor 消息，确保线程安全、串行化处理，并支持伴随 Actor 生命周期自动清理。
+	//   - 终止或重启收尾后，已保存的 Scheduler 永久失效；重启初始化时重新获取调度器并注册任务。
 	//
 	// 典型应用场景：
 	//   - 定时发送心跳、延迟执行操作、定制定时业务逻辑。
@@ -71,9 +72,9 @@ type ActorContext interface {
 	// 推荐用法：
 	//   - 一次性延时投递：c.Scheduler().Once(c.Ref(), time.Second, MyMessage{})
 	//   - 周期性发送：c.Scheduler().Loop(c.Ref(), 10*time.Second, HealthCheck{})
-	//   - Cron 调度：c.Scheduler().Cron(c.Ref(), "0 0 * * *", DoSomething{})
+	//   - Cron 调度：c.Scheduler().Cron(c.Ref(), "0 0 0 * * ?", DoSomething{})
 	//   - 取消定时任务：c.Scheduler().Cancel(reference)
-	//   - 全部取消：c.Scheduler().CancelAll()
+	//   - 全部取消：c.Scheduler().Clear()
 	//
 	// 返回值：
 	//   - Scheduler：面向当前 ActorContext 生命周期、隔离的调度器实例。

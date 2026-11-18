@@ -17,7 +17,7 @@ import (
 func TestScheduler_ConcurrentRegistration(t *testing.T) {
 	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
 	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
-	scheduler := system.Context.scheduler
+	scheduler := system.Context.scheduler.Load()
 	const workers, rounds = 16, 100
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -96,7 +96,7 @@ func TestScheduler_ConcurrentSameReference(t *testing.T) {
 func TestScheduler_ConcurrentClear(t *testing.T) {
 	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
 	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
-	scheduler := system.Context.scheduler
+	scheduler := system.Context.scheduler.Load()
 	const workers, rounds = 8, 100
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -156,7 +156,7 @@ func TestScheduler_RegistrationAndCleanup(t *testing.T) {
 		t.Run(map[bool]string{false: "clear", true: "cancel"}[cancel], func(t *testing.T) {
 			system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
 			t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
-			scheduler := system.Context.scheduler
+			scheduler := system.Context.scheduler.Load()
 			trigger := &schedulerRegistrationTrigger{
 				Trigger: quartz.NewRunOnceTrigger(time.Hour),
 				entered: make(chan struct{}), release: make(chan struct{}),
@@ -198,7 +198,7 @@ func TestScheduler_RegistrationAndCleanup(t *testing.T) {
 func TestScheduler_FailedRegistration(t *testing.T) {
 	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
 	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
-	scheduler := system.Context.scheduler
+	scheduler := system.Context.scheduler.Load()
 	rejected := errors.New("schedule rejected")
 	release := make(chan struct{})
 	close(release)
