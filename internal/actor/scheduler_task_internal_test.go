@@ -9,7 +9,6 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/pkg/log"
-	"github.com/reugn/go-quartz/quartz"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,7 +30,6 @@ func requireScheduledTaskReleased(t *testing.T, task vivid.ScheduledTask) {
 	internal := task.(*scheduledTask)
 	require.Nil(t, internal.owner.Load(), "已结束句柄不保留 Actor 上下文")
 	require.Nil(t, internal.timer, "已结束句柄不通过计时器保留消息")
-	require.Nil(t, internal.jobKey)
 }
 
 func TestScheduledTask_GeneratedReference(t *testing.T) {
@@ -139,13 +137,14 @@ func TestScheduledTask_RegistrationFailure(t *testing.T) {
 		task, err := registerScheduledTask(scheduler, nil, kind)
 		require.ErrorIs(t, err, vivid.ErrorIllegalArgument)
 		require.Nil(t, task)
-		task, err = registerScheduledTask(scheduler, system.Ref(), kind, vivid.WithScheduleOptions(vivid.ScheduleOptions{Location: time.Local}))
-		require.ErrorIs(t, err, vivid.ErrorIllegalArgument)
-		require.Nil(t, task)
+		task, err = registerScheduledTask(scheduler, system.Ref(), kind, vivid.WithScheduleOptions(vivid.ScheduleOptions{}))
+		require.NoError(t, err)
+		require.NotEmpty(t, task.Reference())
+		require.NoError(t, task.Cancel())
 		current, err := registerScheduledTask(scheduler, system.Ref(), kind, vivid.WithSchedulerReference("same"))
 		require.NoError(t, err)
 		task, err = registerScheduledTask(scheduler, system.Ref(), kind, vivid.WithSchedulerReference("same"))
-		require.ErrorIs(t, err, quartz.ErrJobAlreadyExists)
+		require.ErrorIs(t, err, vivid.ErrorScheduledTaskAlreadyExists)
 		require.Nil(t, task)
 		require.True(t, current.Exists())
 		require.NoError(t, current.Cancel())

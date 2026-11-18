@@ -10,7 +10,7 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/pkg/log"
-	"github.com/reugn/go-quartz/quartz"
+	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,7 +48,6 @@ func TestScheduler_ConcurrentRegistration(t *testing.T) {
 		for round := range rounds {
 			reference := strconv.Itoa(worker) + "/" + strconv.Itoa(round)
 			require.False(t, scheduler.Exists(reference))
-			require.Error(t, system.scheduler.DeleteJob(scheduler.jobKey(reference)), "取消后不能残留底层任务")
 		}
 	}
 }
@@ -67,7 +66,7 @@ func TestScheduler_ConcurrentSameReference(t *testing.T) {
 				<-start
 				if err := schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("same"))); err == nil {
 					registered.Add(1)
-				} else if !errors.Is(err, quartz.ErrJobAlreadyExists) {
+				} else if !errors.Is(err, vivid.ErrorScheduledTaskAlreadyExists) {
 					t.Error(err)
 				}
 			})
@@ -130,26 +129,29 @@ func TestScheduler_ConcurrentClear(t *testing.T) {
 		for round := range rounds {
 			reference := strconv.Itoa(worker) + "/" + strconv.Itoa(round)
 			require.False(t, scheduler.Exists(reference))
-			require.Error(t, system.scheduler.DeleteJob(scheduler.jobKey(reference)), "并发清理后不能残留底层任务")
 		}
 	}
 }
 
-type schedulerRegistrationTrigger struct {
-	quartz.Trigger
+type schedulerRegistrationSchedule struct {
+	plan    cron.Schedule
 	entered chan struct{}
 	release chan struct{}
-	err     error
+	expired bool
 }
 
-func (t *schedulerRegistrationTrigger) NextFireTime(prev int64) (int64, error) {
+func (t *schedulerRegistrationSchedule) Next(after time.Time) time.Time {
 	close(t.entered)
 	<-t.release
-	if t.err != nil {
-		return 0, t.err
+	if t.expired {
+		return time.Time{}
 	}
-	return t.Trigger.NextFireTime(prev)
+	return t.plan.Next(after)
 }
+
+type schedulerDelayedSchedule struct{ delay time.Duration }
+
+func (s *schedulerDelayedSchedule) Next(after time.Time) time.Time { return after.Add(s.delay) }
 
 func TestScheduler_RegistrationAndCleanup(t *testing.T) {
 	for _, cancel := range []bool{false, true} {
@@ -157,8 +159,8 @@ func TestScheduler_RegistrationAndCleanup(t *testing.T) {
 			system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
 			t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
 			scheduler := system.Context.scheduler.Load()
-			trigger := &schedulerRegistrationTrigger{
-				Trigger: quartz.NewRunOnceTrigger(time.Hour),
+			trigger := &schedulerRegistrationSchedule{
+				plan:    &schedulerDelayedSchedule{delay: time.Hour},
 				entered: make(chan struct{}), release: make(chan struct{}),
 			}
 			var releaseOnce sync.Once
@@ -166,10 +168,10 @@ func TestScheduler_RegistrationAndCleanup(t *testing.T) {
 			defer release()
 			registered, cleaned := make(chan error, 1), make(chan error, 1)
 			go func() {
-				registered <- schedulerResultError(scheduler.scheduleJob(system.Ref(), 1, vivid.NewScheduleOptions(vivid.WithSchedulerReference("pending")), trigger, "once"))
+				registered <- schedulerResultError(scheduler.scheduleCron(system.Ref(), 1, vivid.NewScheduleOptions(vivid.WithSchedulerReference("pending")), trigger))
 			}()
 			receiveRetryResult(t, trigger.entered)
-			// 底层尚未注册，取消与清理不能越过正在提交的登记。
+			// 计时器尚未发布，取消与清理不能越过正在提交的登记。
 			go func() {
 				if cancel {
 					cleaned <- scheduler.Cancel("pending")
@@ -180,14 +182,13 @@ func TestScheduler_RegistrationAndCleanup(t *testing.T) {
 			}()
 			select {
 			case err := <-cleaned:
-				t.Fatalf("清理提前完成，可能遗漏底层任务: %v", err)
+				t.Fatalf("清理提前完成，可能遗漏计时器: %v", err)
 			case <-time.After(20 * time.Millisecond):
 			}
 			release()
 			require.NoError(t, receiveRetryResult(t, registered))
 			require.NoError(t, receiveRetryResult(t, cleaned))
 			require.False(t, scheduler.Exists("pending"))
-			require.Error(t, system.scheduler.DeleteJob(scheduler.jobKey("pending")))
 			// Clear 只清理任务，不关闭后续注册。
 			require.NoError(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("pending"))))
 			require.NoError(t, scheduler.Cancel("pending"))
@@ -199,18 +200,17 @@ func TestScheduler_FailedRegistration(t *testing.T) {
 	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
 	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
 	scheduler := system.Context.scheduler.Load()
-	rejected := errors.New("schedule rejected")
 	release := make(chan struct{})
 	close(release)
-	trigger := &schedulerRegistrationTrigger{entered: make(chan struct{}), release: release, err: rejected}
+	trigger := &schedulerRegistrationSchedule{entered: make(chan struct{}), release: release, expired: true}
 	opts := vivid.NewScheduleOptions(vivid.WithSchedulerReference("failed"))
-	task, err := scheduler.scheduleJob(system.Ref(), 1, opts, trigger, "once")
-	require.ErrorIs(t, err, rejected)
+	task, err := scheduler.scheduleCron(system.Ref(), 1, opts, trigger)
+	require.ErrorIs(t, err, vivid.ErrorScheduledTaskExpired)
 	require.Nil(t, task)
-	require.False(t, scheduler.Exists("failed"), "底层注册失败不能留下本地登记")
+	require.False(t, scheduler.Exists("failed"), "注册失败不能留下本地登记")
 	require.ErrorIs(t, scheduler.Cancel("failed"), vivid.ErrorNotFound)
 	require.NoError(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("failed"))))
-	require.ErrorIs(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("failed"))), quartz.ErrJobAlreadyExists)
+	require.ErrorIs(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("failed"))), vivid.ErrorScheduledTaskAlreadyExists)
 	require.True(t, scheduler.Exists("failed"), "重复注册失败不能删除已有任务的登记")
 	require.NoError(t, scheduler.Cancel("failed"))
 }

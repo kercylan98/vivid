@@ -68,7 +68,6 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 		registry.RegisterMessageWithEncoderAndDecoder("*messages.PongMessage", new(messages.PongMessage), messagecodecs.PongMessageEncoder(), messagecodecs.PongMessageDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*messages.WatchMessage", new(messages.WatchMessage), messagecodecs.WatchMessageEncoder(), messagecodecs.WatchMessageDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*messages.UnwatchMessage", new(messages.UnwatchMessage), messagecodecs.UnwatchMessageEncoder(), messagecodecs.UnwatchMessageDecoder())
-		registry.RegisterMessageWithEncoderAndDecoder("*actor.SchedulerMessage", new(SchedulerMessage), messagecodecs.SchedulerMessageEncoder(), messagecodecs.SchedulerMessageDecoder())
 		registry.RegisterMessage("*virtual.Identity", new(virtual.Identity))
 		registry.RegisterMessageWithEncoderAndDecoder("*endpoint.Information", new(endpoint.Information), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 		registry.RegisterMessage("*memberlist.MemberList", new(memberlist.MemberList))

@@ -10,7 +10,6 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/pkg/log"
-	"github.com/reugn/go-quartz/quartz"
 	"github.com/stretchr/testify/require"
 )
 
@@ -156,7 +155,7 @@ func TestScheduler_OnceSharesReferenceScope(t *testing.T) {
 					}
 				}
 				require.NoError(t, register(first))
-				require.ErrorIs(t, register(second), quartz.ErrJobAlreadyExists)
+				require.ErrorIs(t, register(second), vivid.ErrorScheduledTaskAlreadyExists)
 				require.NoError(t, scheduler.Cancel("shared"))
 				require.NoError(t, register(second), "取消后可以跨任务类型复用 reference")
 				require.NoError(t, scheduler.Cancel("shared"))
@@ -171,7 +170,7 @@ type onceFailureLogger struct {
 }
 
 func (l *onceFailureLogger) Error(message string, args ...any) {
-	if message == "scheduler once delivery failed" {
+	if message == "scheduler delivery failed" {
 		l.failed <- struct{}{}
 	}
 }
@@ -187,7 +186,7 @@ func TestScheduler_OnceDeliveryPanic(t *testing.T) {
 	require.NoError(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("failed"))))
 	require.NoError(t, scheduler.Cancel("failed"))
 	require.ErrorIs(t, schedulerResultError(scheduler.Once(nil, time.Hour, 1)), vivid.ErrorIllegalArgument)
-	require.ErrorIs(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithScheduleOptions(vivid.ScheduleOptions{}))), vivid.ErrorIllegalArgument)
+	require.NoError(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithScheduleOptions(vivid.ScheduleOptions{}))))
 }
 
 type onceClaimedRef struct {

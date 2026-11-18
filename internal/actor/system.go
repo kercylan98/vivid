@@ -13,7 +13,6 @@ import (
 	"github.com/kercylan98/vivid/internal/gossip"
 	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/remoting"
-	"github.com/kercylan98/vivid/internal/scheduler"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/internal/utils"
@@ -54,7 +53,6 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 		guardClosedSignal: make(chan struct{}),
 		stopCompleted:     make(chan struct{}),
 		startCompleted:    make(chan struct{}),
-		scheduler:         scheduler.NewScheduler(opts.Context),
 	}
 
 	system.options.Context, system.cancel = context.WithCancel(system.options.Context)
@@ -85,7 +83,6 @@ type System struct {
 	remotingEnvelopHandler remoting.NetworkEnvelopHandler                    // 远程信封处理器
 	eventStream            vivid.EventStream                                 // 事件流
 	metrics                metrics.Metrics                                   // 指标收集器
-	scheduler              *scheduler.Scheduler                              // 调度器
 	status                 int32                                             // 系统状态
 	statusLock             sync.Mutex                                        // 系统状态锁
 	cancel                 context.CancelFunc                                // 上下文停止函数
@@ -392,7 +389,6 @@ func (s *System) finishStop() {
 		s.remotingAdmission.Stop()
 	}
 	s.cancel()
-	s.scheduler.Stop()
 
 	s.statusLock.Lock()
 	s.status = stop

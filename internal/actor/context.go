@@ -505,8 +505,6 @@ func (c *Context) handleMessage(envelop vivid.Envelop, behavior vivid.Behavior) 
 		c.onWatch(message)
 	case *messages.UnwatchMessage:
 		c.onUnwatch(message)
-	case *SchedulerMessage:
-		c.onScheduler(message, behavior)
 	case *phaseKill:
 		c.onPhaseKill(message)
 	default:
@@ -550,15 +548,6 @@ func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 		}
 	}()
 	behavior(c)
-}
-
-func (c *Context) onScheduler(message *SchedulerMessage, behavior vivid.Behavior) {
-	// 消息替换
-	c.envelop = newReplacedEnvelop(c.envelop, message.Message)
-	if c.IsMetricsEnabled() {
-		c.Metrics().Counter(metrics.MessagesProcessedTotalCounter).Inc()
-	}
-	c.executeBehaviorWithRecovery(behavior)
 }
 
 func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {

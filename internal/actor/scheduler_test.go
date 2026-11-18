@@ -62,7 +62,7 @@ func TestScheduler_Loop(t *testing.T) {
 	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
-			assert.NoError(t, schedulerResultError(actor.NewTestSystem(t).Scheduler().Loop(ctx.Ref(), interval, 1)))
+			assert.NoError(t, schedulerResultError(ctx.Scheduler().Loop(ctx.Ref(), interval, 1)))
 		case int:
 			count++
 			ctx.Logger().Debug("scheduler received", log.String("reference", "test"), log.Time("time", time.Now()), log.String("messageType", "int"))
@@ -95,6 +95,7 @@ func TestScheduler_Cron(t *testing.T) {
 			case *vivid.OnLaunch:
 				schedulerResultError(ctx.Scheduler().Cron(ctx.Ref(), "* * * * * *", 1))
 			case int:
+				ctx.Scheduler().Clear()
 				close(wait)
 			}
 		}))

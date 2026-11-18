@@ -8,7 +8,6 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/pkg/log"
-	"github.com/reugn/go-quartz/quartz"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,85 +37,54 @@ func TestScheduler_CronReleasesRegistration(t *testing.T) {
 	requireScheduledTaskReleased(t, next)
 }
 
-type schedulerFiniteTrigger struct {
-	delay    time.Duration
-	started  bool
-	delivery bool
-	next     int64
-	entered  chan struct{}
-	release  chan struct{}
-}
+type schedulerFiniteSchedule struct{ at time.Time }
 
-func (t *schedulerFiniteTrigger) NextFireTime(prev int64) (int64, error) {
-	// 在途测试只在 Quartz 接纳本次投递时结束，避免机器繁忙触发 misfire 而跳过观测点。
-	if !t.started || t.delivery && prev != t.next {
-		t.started = true
-		t.next = prev + int64(t.delay)
-		return t.next, nil
+func (s *schedulerFiniteSchedule) Next(after time.Time) time.Time {
+	if s.at.After(after) {
+		return s.at
 	}
-	if t.entered != nil {
-		close(t.entered)
-		<-t.release
-	}
-	return 0, quartz.ErrTriggerExpired
+	return time.Time{}
 }
 
-func (t *schedulerFiniteTrigger) Description() string {
-	return "finite"
-}
-
-func TestScheduler_CronMissedFinalFire(t *testing.T) {
+func TestScheduler_CronExpiredRegistration(t *testing.T) {
 	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
 	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
 	scheduler := system.Context.scheduler.Load()
-	observed := &onceObservedRef{ActorRef: system.Ref()}
-	// 末次时间已超出 Quartz 的过期窗口，不执行 job，仍需回收登记。
-	trigger := &schedulerCronTrigger{Trigger: &schedulerFiniteTrigger{delay: -time.Second}}
-	task, err := scheduler.scheduleJob(observed, 1, vivid.NewScheduleOptions(), trigger, "cron")
-	require.NoError(t, err)
-	require.Eventually(t, func() bool { return !task.Exists() }, time.Second, time.Millisecond)
-	requireScheduledTaskReleased(t, task)
-	require.Zero(t, observed.called.Load(), "错过的末次任务不能为回收登记而补投递")
-	require.Error(t, system.scheduler.DeleteJob(scheduler.jobKey(task.Reference())))
+	option := vivid.WithSchedulerReference("expired")
+	for _, expression := range []string{"0 0 0 1 1 ? 2000", "0 0 0 31 2 ?"} {
+		task, err := scheduler.Cron(system.Ref(), expression, 1, option)
+		require.ErrorIs(t, err, vivid.ErrorScheduledTaskExpired)
+		require.Nil(t, task)
+		require.False(t, scheduler.Exists("expired"))
+	}
+	next, err := scheduler.Cron(system.Ref(), "0 0 0 1 1 ? 9999", 1, option)
+	require.NoError(t, err, "远期年份不能因纳秒时间戳回绕而失败")
+	require.True(t, next.Exists())
+	require.NoError(t, next.Cancel())
 }
 
-func TestScheduler_CronExpiryAndCleanup(t *testing.T) {
+func TestScheduler_CronLateCallback(t *testing.T) {
 	for _, action := range []string{"cancel", "clear", "close"} {
 		t.Run(action, func(t *testing.T) {
 			system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
 			t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
 			scheduler := system.Context.scheduler.Load()
-			finite := &schedulerFiniteTrigger{delay: -time.Second, entered: make(chan struct{}), release: make(chan struct{})}
-			var releaseOnce sync.Once
-			release := func() { releaseOnce.Do(func() { close(finite.release) }) }
-			defer release()
+			receiver := &onceObservedRef{ActorRef: system.Ref()}
 			option := vivid.WithSchedulerReference("same")
-			task, err := scheduler.scheduleJob(system.Ref(), 1, vivid.NewScheduleOptions(option), &schedulerCronTrigger{Trigger: finite}, "cron")
+			plan := &schedulerFiniteSchedule{at: time.Now().Add(time.Hour)}
+			task, err := scheduler.scheduleCron(receiver, 1, vivid.NewScheduleOptions(option), plan)
 			require.NoError(t, err)
-			receiveRetryResult(t, finite.entered)
-			cleaned := make(chan error, 1)
-			go func() {
-				switch action {
-				case "cancel":
-					cleaned <- task.Cancel()
-				case "clear":
-					scheduler.Clear()
-					cleaned <- nil
-				case "close":
-					scheduler.close()
-					cleaned <- nil
-				}
-			}()
-			// 固定登记锁 -> 队列锁的清理窗口，终结通知不能反向等待登记锁。
-			require.Eventually(t, func() bool {
-				if scheduler.mu.TryLock() {
-					scheduler.mu.Unlock()
-					return false
-				}
-				return true
-			}, time.Second, time.Millisecond)
-			release()
-			require.NoError(t, receiveRetryResult(t, cleaned), "底层已自然移除时取消也应成功")
+			old := task.(*scheduledTask)
+			timer := old.timer
+			switch action {
+			case "cancel":
+				require.NoError(t, task.Cancel())
+			case "clear":
+				scheduler.Clear()
+			case "close":
+				scheduler.close()
+			}
+			require.False(t, timer.Stop(), "取消、清理和关闭都停止计时器")
 			requireScheduledTaskReleased(t, task)
 			current := scheduler
 			if action == "close" {
@@ -126,79 +94,65 @@ func TestScheduler_CronExpiryAndCleanup(t *testing.T) {
 			for _, kind := range []string{"once", "loop", "cron"} {
 				next, err := registerScheduledTask(current, system.Ref(), kind, option)
 				require.NoError(t, err)
-				// 重放未取得登记锁的旧终结通知，不能移除同名新登记或底层任务。
-				scheduler.expireTask(task.(*scheduledTask))
-				require.True(t, next.Exists())
+				scheduler.fireCron(old, receiver, 1, plan, time.Now().Add(-time.Second))
+				require.Zero(t, receiver.called.Load(), "旧回调不能继续投递")
+				require.True(t, next.Exists(), "旧回调不能删除同名新任务")
 				require.NoError(t, next.Cancel())
 			}
 		})
 	}
 }
 
-func TestScheduler_CronExpiredRegistration(t *testing.T) {
+func TestScheduler_CronEarlyCallback(t *testing.T) {
 	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
 	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
 	scheduler := system.Context.scheduler.Load()
-	option := vivid.WithSchedulerReference("expired")
-	task, err := scheduler.Cron(system.Ref(), "0 0 0 1 1 ? 2000", 1, option)
-	require.ErrorIs(t, err, quartz.ErrTriggerExpired)
-	require.Nil(t, task)
-	require.False(t, scheduler.Exists("expired"))
-	next, err := scheduler.Cron(system.Ref(), "0 0 0 1 1 ? 2099", 1, option)
+	receiver := &onceObservedRef{ActorRef: system.Ref()}
+	at := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	plan := &schedulerFiniteSchedule{at: at}
+	task, err := scheduler.scheduleCron(receiver, 1, vivid.NewScheduleOptions(), plan)
 	require.NoError(t, err)
-	require.True(t, next.Exists())
-	require.NoError(t, next.Cancel())
-	trigger := &schedulerCronTrigger{Trigger: &quartz.RunOnceTrigger{Expired: true}}
-	failed, err := scheduler.scheduleJob(system.Ref(), 1, vivid.NewScheduleOptions(option), trigger, "cron")
-	require.ErrorIs(t, err, quartz.ErrTriggerExpired)
-	require.Nil(t, failed)
-	requireScheduledTaskReleased(t, trigger.task)
-}
-
-func TestScheduler_CronImmediateExpiry(t *testing.T) {
-	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
-	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
-	scheduler := system.Context.scheduler.Load()
-	for range 32 {
-		// 末次触发可紧跟底层提交，回收必须等待本地登记发布。
-		trigger := &schedulerCronTrigger{Trigger: &schedulerFiniteTrigger{delay: -time.Second}}
-		task, err := scheduler.scheduleJob(system.Ref(), 1, vivid.NewScheduleOptions(vivid.WithSchedulerReference("immediate")), trigger, "cron")
-		require.NoError(t, err)
-		require.Eventually(t, func() bool { return !task.Exists() }, time.Second, time.Millisecond)
-		requireScheduledTaskReleased(t, task)
-	}
+	internal := task.(*scheduledTask)
+	require.True(t, internal.timer.Stop())
+	// 固定模拟超长等待的分段计时器提前唤醒，不实际等待数百年。
+	scheduler.fireCron(internal, receiver, 1, plan, at)
+	require.Zero(t, receiver.called.Load())
+	require.True(t, task.Exists())
+	require.True(t, internal.timer.Stop(), "未到日历时间应继续等待")
+	require.NoError(t, task.Cancel())
 }
 
 func TestScheduler_CronExpiryPrecedesDelivery(t *testing.T) {
 	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
 	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
 	delivered := make(chan int, 1)
-	ready := make(chan vivid.Scheduler, 1)
+	ready := make(chan *Context, 1)
 	target, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch message := ctx.Message().(type) {
 		case *vivid.OnLaunch:
-			ready <- ctx.Scheduler()
+			ready <- ctx.(*Context)
 		case int:
 			delivered <- message
 		}
 	}))
 	require.NoError(t, err)
+	ctx := receiveRetryResult(t, ready)
 	receiver := &onceClaimedRef{ActorRef: target, entered: make(chan struct{}), release: make(chan struct{})}
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(receiver.release) }) }
 	defer release()
-	scheduler := receiveRetryResult(t, ready).(*Scheduler)
+	scheduler := ctx.scheduler.Load()
 	option := vivid.WithSchedulerReference("in-flight")
-	trigger := &schedulerCronTrigger{Trigger: &schedulerFiniteTrigger{delay: time.Millisecond, delivery: true}}
-	task, err := scheduler.scheduleJob(receiver, 1, vivid.NewScheduleOptions(option), trigger, "cron")
+	plan := &schedulerFiniteSchedule{at: time.Now().Add(20 * time.Millisecond)}
+	task, err := scheduler.scheduleCron(receiver, 1, vivid.NewScheduleOptions(option), plan)
 	require.NoError(t, err)
 	receiveRetryResult(t, receiver.entered)
-	require.Eventually(t, func() bool { return !task.Exists() }, time.Second, time.Millisecond)
 	requireScheduledTaskReleased(t, task)
-	next, err := scheduler.Loop(target, time.Hour, 2, option)
-	require.NoError(t, err)
+	next, err := scheduler.Once(target, time.Hour, 2, option)
+	require.NoError(t, err, "末次投递阻塞时即可复用名称")
 	release()
-	require.Equal(t, 1, receiveRetryResult(t, delivered), "回收不能撤回末次在途投递")
-	require.True(t, next.Exists(), "末次消息投递完成不能清理同名新任务")
+	// 已被取出的末次投递仍可以完成，且不会撤销新登记。
+	require.Equal(t, 1, receiveRetryResult(t, delivered))
+	require.True(t, next.Exists())
 	require.NoError(t, next.Cancel())
 }

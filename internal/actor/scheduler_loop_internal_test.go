@@ -24,7 +24,6 @@ func TestScheduler_LoopRejectsNonPositiveInterval(t *testing.T) {
 			require.ErrorIs(t, err, vivid.ErrorIllegalArgument)
 			require.Nil(t, task)
 			require.False(t, scheduler.Exists("invalid"))
-			require.Error(t, system.scheduler.DeleteJob(scheduler.jobKey("invalid")), "非法周期不能进入底层队列")
 			current, err := scheduler.Loop(system.Ref(), time.Hour, 1, option)
 			require.NoError(t, err, "失败注册不占用名称")
 			require.True(t, current.Exists())

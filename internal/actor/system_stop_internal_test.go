@@ -27,7 +27,6 @@ func TestSystem_StopPausedTree(t *testing.T) {
 		}
 		_ = system.Stop(time.Second)
 		receiveRetryResult(t, system.guardClosedSignal)
-		system.scheduler.Stop()
 	})
 	launched := make(chan *Context, 2)
 	var messages, kills atomic.Int32
@@ -86,7 +85,6 @@ func TestSystem_StopTimeoutContinues(t *testing.T) {
 		once.Do(func() { close(release) })
 		_ = system.Stop(time.Second)
 		receiveRetryResult(t, system.guardClosedSignal)
-		system.scheduler.Stop()
 	})
 	var kills atomic.Int32
 	_, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {

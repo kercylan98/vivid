@@ -37,12 +37,12 @@ var (
 
 // 参数、调度与状态相关错误。
 var (
-	ErrorIllegalArgument = RegisterError(120000, "illegal argument")                            // 参数无效或缺失
-	ErrorCronParse       = RegisterError(120001, "parse cron expression", ErrorIllegalArgument) // Cron 表达式解析失败
-	//ErrorTriggerExpired          = RegisterError(120002, "trigger has expired")        // 触发器已过期
+	ErrorIllegalArgument      = RegisterError(120000, "illegal argument")                            // 参数无效或缺失
+	ErrorCronParse            = RegisterError(120001, "parse cron expression", ErrorIllegalArgument) // Cron 表达式解析失败
+	ErrorScheduledTaskExpired = RegisterError(120002, "scheduled task has expired")                  // 调度任务没有未来触发时间
 	//ErrorIllegalState            = RegisterError(120003, "illegal state")              // 违反当前状态或上下文
 	//ErrorQueueEmpty              = RegisterError(120004, "queue is empty")             // 队列空无法出队
-	//ErrorJobAlreadyExists        = RegisterError(120005, "job already exists")         // 任务已注册
+	ErrorScheduledTaskAlreadyExists = RegisterError(120005, "scheduled task already exists") // 当前调度器已保留同名任务
 	//ErrorJobIsSuspended          = RegisterError(120006, "job is suspended")           // Job 已挂起时再次挂起
 	//ErrorJobIsActive             = RegisterError(120007, "job is active")              // Job 已激活时再次激活
 	//ErrorActorRefAddressMismatch = RegisterError(120008, "actor ref address mismatch") // ActorRef 地址不一致

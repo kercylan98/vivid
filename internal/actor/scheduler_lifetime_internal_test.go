@@ -8,7 +8,6 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/pkg/log"
-	"github.com/reugn/go-quartz/quartz"
 	"github.com/stretchr/testify/require"
 )
 
@@ -125,8 +124,8 @@ func TestScheduler_LifetimeCloseDuringRegistration(t *testing.T) {
 			result := make(chan error, 1)
 			go func() {
 				if committing {
-					trigger := &schedulerRegistrationTrigger{Trigger: quartz.NewRunOnceTrigger(time.Hour), entered: entered, release: release}
-					result <- schedulerResultError(scheduler.scheduleJob(system.Ref(), 1, vivid.NewScheduleOptions(vivid.WithSchedulerReference("pending")), trigger, "once"))
+					trigger := &schedulerRegistrationSchedule{plan: &schedulerDelayedSchedule{delay: time.Hour}, entered: entered, release: release}
+					result <- schedulerResultError(scheduler.scheduleCron(system.Ref(), 1, vivid.NewScheduleOptions(vivid.WithSchedulerReference("pending")), trigger))
 				} else {
 					result <- schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, func(opts *vivid.ScheduleOptions) {
 						opts.Reference = "pending"
@@ -148,7 +147,6 @@ func TestScheduler_LifetimeCloseDuringRegistration(t *testing.T) {
 			}
 			receiveRetryResult(t, ownerLogger.done)
 			require.False(t, scheduler.Exists("pending"))
-			require.Error(t, system.scheduler.DeleteJob(scheduler.jobKey("pending")), "关闭不能漏掉先取得登记锁的底层任务")
 		})
 	}
 }
