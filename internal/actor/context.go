@@ -758,6 +758,7 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 		handler.prepareSelfKilledMessage()
 		handler.restarting = false
 		handler.cleanupRequests()
+		handler.cleanupScheduler()
 		handler.cleanupIfNotRestarting()
 		return
 	}
@@ -767,8 +768,8 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 		Append(chain.VoidFN(handler.prepareSelfKilledMessage)).
 		Append(chain.VoidFN(handler.executeBehavior)).
 		Append(chain.VoidFN(handler.cleanupRequests)).
-		Append(chain.VoidFN(handler.cleanupIfNotRestarting)).
 		Append(chain.VoidFN(handler.cleanupScheduler)).
+		Append(chain.VoidFN(handler.cleanupIfNotRestarting)).
 		Append(chain.VoidFN(handler.handleRestart)).
 		Run()
 }

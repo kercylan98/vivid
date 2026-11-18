@@ -18,7 +18,7 @@ var (
 )
 
 func newScheduler(ctx *Context) *Scheduler {
-	return &Scheduler{ctx: ctx, tasks: make(map[string]*scheduledTask)}
+	return &Scheduler{ctx: ctx}
 }
 
 type Scheduler struct {
@@ -31,7 +31,7 @@ type Scheduler struct {
 type scheduledTask struct {
 	owner     atomic.Pointer[Scheduler] // 任务结束后解除对调度器及 Actor 上下文的引用
 	reference string
-	timer     *time.Timer
+	timer     *scheduler.Timer
 }
 
 func (t *scheduledTask) Reference() string { return t.reference }
@@ -79,6 +79,7 @@ func (s *Scheduler) clear() {
 		delete(s.tasks, reference)
 		task.release()
 	}
+	s.tasks = nil
 }
 
 // validate 在登记锁内复核生命周期与参数，不能调用用户提供的引用方法。
@@ -108,6 +109,9 @@ func (s *Scheduler) register(reference string) (*scheduledTask, error) {
 	}
 	if _, exists := s.tasks[reference]; exists {
 		return nil, vivid.ErrorScheduledTaskAlreadyExists.WithMessage(reference)
+	}
+	if s.tasks == nil {
+		s.tasks = make(map[string]*scheduledTask)
 	}
 	task := &scheduledTask{reference: reference}
 	task.owner.Store(s)
@@ -164,7 +168,7 @@ func (s *Scheduler) scheduleCron(receiver vivid.ActorRef, message vivid.Message,
 		task.release()
 		return nil, vivid.ErrorScheduledTaskExpired
 	}
-	task.timer = time.AfterFunc(time.Until(next), func() { s.fireCron(task, receiver, message, plan, next) })
+	task.timer = s.ctx.system.timers.AfterFunc(time.Until(next), func() { s.fireCron(task, receiver, message, plan, next) })
 	s.tasks[task.reference] = task
 	return task, nil
 }
@@ -204,7 +208,7 @@ func (s *Scheduler) fireCron(task *scheduledTask, receiver vivid.ActorRef, messa
 		task.release()
 		return
 	}
-	task.timer = time.AfterFunc(time.Until(next), func() { s.fireCron(task, receiver, message, plan, next) })
+	task.timer = s.ctx.system.timers.AfterFunc(time.Until(next), func() { s.fireCron(task, receiver, message, plan, next) })
 }
 
 func (s *Scheduler) Once(receiver vivid.ActorRef, delay time.Duration, message vivid.Message, options ...vivid.ScheduleOption) (vivid.ScheduledTask, error) {
@@ -228,7 +232,7 @@ func (s *Scheduler) scheduleTimer(receiver vivid.ActorRef, delay time.Duration, 
 	if err != nil {
 		return nil, err
 	}
-	task.timer = time.AfterFunc(delay, func() {
+	task.timer = s.ctx.system.timers.AfterFunc(delay, func() {
 		if loop {
 			s.fireLoop(task, receiver, message, delay)
 		} else {

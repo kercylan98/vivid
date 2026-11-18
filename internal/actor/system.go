@@ -13,6 +13,7 @@ import (
 	"github.com/kercylan98/vivid/internal/gossip"
 	"github.com/kercylan98/vivid/internal/guard"
 	"github.com/kercylan98/vivid/internal/remoting"
+	"github.com/kercylan98/vivid/internal/scheduler"
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/sugar"
 	"github.com/kercylan98/vivid/internal/utils"
@@ -53,6 +54,7 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 		guardClosedSignal: make(chan struct{}),
 		stopCompleted:     make(chan struct{}),
 		startCompleted:    make(chan struct{}),
+		timers:            scheduler.NewTimers(),
 	}
 
 	system.options.Context, system.cancel = context.WithCancel(system.options.Context)
@@ -83,6 +85,7 @@ type System struct {
 	remotingEnvelopHandler remoting.NetworkEnvelopHandler                    // 远程信封处理器
 	eventStream            vivid.EventStream                                 // 事件流
 	metrics                metrics.Metrics                                   // 指标收集器
+	timers                 *scheduler.Timers                                 // 本系统共享的分片计时队列
 	status                 int32                                             // 系统状态
 	statusLock             sync.Mutex                                        // 系统状态锁
 	cancel                 context.CancelFunc                                // 上下文停止函数
@@ -383,12 +386,15 @@ func (s *System) finishStop() {
 
 	if s.Context != nil {
 		<-s.guardClosedSignal
+		// 根 Actor 在自身 OnKilled 中发出关闭信号，发布停止完成前复核调度登记已释放。
+		s.Context.scheduler.Load().close()
 	}
 	s.closeFutureRequests()
 	if s.remotingAdmission != nil {
 		s.remotingAdmission.Stop()
 	}
 	s.cancel()
+	s.timers.Close()
 
 	s.statusLock.Lock()
 	s.status = stop

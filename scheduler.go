@@ -15,6 +15,8 @@ import (
 // Actor 已终止时注册返回 ErrorActorDeaded，系统停止完成后返回 ErrorActorSystemStopped。
 // 同一 Scheduler 支持并发注册、查询、取消与清理。
 // 投递沿用普通 Tell 的路由与框架消息语义，同一消息对象可被重复投递，应按不可变对象使用。
+// 同一 ActorSystem 共享分片计时队列，到期投递并发有界；自定义引用、邮箱与日志应快速返回。
+// 大量任务集中到期或投递阻塞会延迟其他任务，调度器不保证实时性，也不限制任务总量或邮箱积压。
 type Scheduler interface {
 	// Cron 安排一个基于 Cron 表达式的周期性调度任务，定时向目标 Actor 投递消息。
 	//

@@ -10,6 +10,7 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/future"
+	"github.com/kercylan98/vivid/internal/scheduler"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/ves"
 	"github.com/stretchr/testify/require"
@@ -42,7 +43,7 @@ func TestContext_InitializationRollback(t *testing.T) {
 			system.EventStream().Subscribe(system, initializationEvent{})
 			require.NoError(t, schedulerResultError(system.Scheduler().Once(target, time.Hour, "unrelated", vivid.WithSchedulerReference("unrelated"))))
 			var failed *Context
-			var pending *time.Timer
+			var pending *scheduler.Timer
 			var ask, task vivid.Future[vivid.Message]
 			release, finished := make(chan struct{}), make(chan struct{})
 			var once sync.Once
