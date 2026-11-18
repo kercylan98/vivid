@@ -15,9 +15,9 @@ import (
 func requireSchedulerRejected(t *testing.T, scheduler vivid.Scheduler, target vivid.ActorRef, reason error) {
 	t.Helper()
 	option := vivid.WithSchedulerReference("rejected")
-	require.ErrorIs(t, scheduler.Once(target, time.Hour, 1, option), reason)
-	require.ErrorIs(t, scheduler.Loop(target, time.Hour, 1, option), reason)
-	require.ErrorIs(t, scheduler.Cron(target, "0 0 0 * * ?", 1, option), reason)
+	require.ErrorIs(t, schedulerResultError(scheduler.Once(target, time.Hour, 1, option)), reason)
+	require.ErrorIs(t, schedulerResultError(scheduler.Loop(target, time.Hour, 1, option)), reason)
+	require.ErrorIs(t, schedulerResultError(scheduler.Cron(target, "0 0 0 * * ?", 1, option)), reason)
 	scheduler.Clear()
 	require.False(t, scheduler.Exists("rejected"), "Clear 不能重新开放已关闭的调度器")
 }
@@ -39,7 +39,7 @@ func TestScheduler_LifetimeTermination(t *testing.T) {
 	}), vivid.WithActorLogger(ownerLogger))
 	require.NoError(t, err)
 	scheduler := receiveRetryResult(t, saved)
-	require.NoError(t, scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("pending")))
+	require.NoError(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("pending"))))
 	system.Kill(owner, false)
 	receiveRetryResult(t, ownerLogger.done)
 	require.False(t, scheduler.Exists("pending"))
@@ -66,17 +66,17 @@ func TestScheduler_LifetimeRestart(t *testing.T) {
 	defer resume()
 	registered := make(chan error, 1)
 	go func() {
-		registered <- old.Once(system.Ref(), time.Hour, 1, func(opts *vivid.ScheduleOptions) {
+		registered <- schedulerResultError(old.Once(system.Ref(), time.Hour, 1, func(opts *vivid.ScheduleOptions) {
 			opts.Reference = "same"
 			close(entered)
 			<-release
-		})
+		}))
 	}()
 	receiveRetryResult(t, entered)
 	system.AdvancedTell(true, owner, &RestartMessage{Reason: "scheduler lifetime"})
 	current := receiveRetryResult(t, saved)
 	require.NotSame(t, old, current, "重启使用独立的调度器，旧句柄不重新开放")
-	require.NoError(t, current.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("same")))
+	require.NoError(t, schedulerResultError(current.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("same"))))
 	resume()
 	require.ErrorIs(t, receiveRetryResult(t, registered), vivid.ErrorActorDeaded, "重启前开始的注册不能落入新实例")
 	requireSchedulerRejected(t, old, system.Ref(), vivid.ErrorActorDeaded)
@@ -126,13 +126,13 @@ func TestScheduler_LifetimeCloseDuringRegistration(t *testing.T) {
 			go func() {
 				if committing {
 					trigger := &schedulerRegistrationTrigger{Trigger: quartz.NewRunOnceTrigger(time.Hour), entered: entered, release: release}
-					result <- scheduler.scheduleJob(system.Ref(), 1, vivid.NewScheduleOptions(vivid.WithSchedulerReference("pending")), trigger, "once")
+					result <- schedulerResultError(scheduler.scheduleJob(system.Ref(), 1, vivid.NewScheduleOptions(vivid.WithSchedulerReference("pending")), trigger, "once"))
 				} else {
-					result <- scheduler.Once(system.Ref(), time.Hour, 1, func(opts *vivid.ScheduleOptions) {
+					result <- schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, func(opts *vivid.ScheduleOptions) {
 						opts.Reference = "pending"
 						close(entered)
 						<-release
-					})
+					}))
 				}
 			}()
 			receiveRetryResult(t, entered)
@@ -174,11 +174,11 @@ func TestScheduler_LifetimeStopTimeout(t *testing.T) {
 		case *vivid.OnLaunch:
 			saved <- ctx.Scheduler()
 		case *vivid.OnKill:
-			closing <- ctx.Scheduler().Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("cleanup"))
+			closing <- schedulerResultError(ctx.Scheduler().Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("cleanup")))
 			<-release
 		case *vivid.OnKilled:
 			if message.Ref.Equals(ctx.Ref()) {
-				final <- ctx.Scheduler().Once(system.Ref(), time.Hour, 3, vivid.WithSchedulerReference("final"))
+				final <- schedulerResultError(ctx.Scheduler().Once(system.Ref(), time.Hour, 3, vivid.WithSchedulerReference("final")))
 			}
 		}
 	}), vivid.WithActorLogger(ownerLogger))
@@ -188,7 +188,7 @@ func TestScheduler_LifetimeStopTimeout(t *testing.T) {
 	go func() { result <- system.Stop(time.Millisecond) }()
 	require.NoError(t, receiveRetryResult(t, closing), "OnKill 中仍可安排收尾任务")
 	require.Error(t, receiveRetryResult(t, result))
-	require.NoError(t, scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("waiting")), "Stop 等待超时不提前关闭仍在收尾的 Actor")
+	require.NoError(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("waiting"))), "Stop 等待超时不提前关闭仍在收尾的 Actor")
 	resume()
 	require.NoError(t, receiveRetryResult(t, final), "自身 OnKilled 中仍可安排收尾任务")
 	receiveRetryResult(t, ownerLogger.done)
@@ -220,7 +220,7 @@ func TestScheduler_LifetimeRestartInitialization(t *testing.T) {
 			}), vivid.WithActorProvider(vivid.ActorProviderFN(func() vivid.Actor {
 				return vivid.NewPrelaunchActor(func(ctx vivid.PrelaunchContext) error {
 					scheduler := ctx.(*Context).Scheduler()
-					if err := scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("initializing")); err != nil {
+					if err := schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("initializing"))); err != nil {
 						return err
 					}
 					pending <- scheduler

@@ -25,10 +25,10 @@ type retryTestScheduler struct {
 	cancelErr error
 }
 
-func (s *retryTestScheduler) Once(_ vivid.ActorRef, delay time.Duration, message vivid.Message, _ ...vivid.ScheduleOption) error {
+func (s *retryTestScheduler) Once(_ vivid.ActorRef, delay time.Duration, message vivid.Message, _ ...vivid.ScheduleOption) (vivid.ScheduledTask, error) {
 	s.messages = append(s.messages, message)
 	s.delays = append(s.delays, delay)
-	return s.onceErr
+	return nil, s.onceErr
 }
 
 func (s *retryTestScheduler) Cancel(string) error { return s.cancelErr }

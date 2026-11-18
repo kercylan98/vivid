@@ -73,7 +73,8 @@ type ActorContext interface {
 	//   - 一次性延时投递：c.Scheduler().Once(c.Ref(), time.Second, MyMessage{})
 	//   - 周期性发送：c.Scheduler().Loop(c.Ref(), 10*time.Second, HealthCheck{})
 	//   - Cron 调度：c.Scheduler().Cron(c.Ref(), "0 0 0 * * ?", DoSomething{})
-	//   - 取消定时任务：c.Scheduler().Cancel(reference)
+	//   - 注册成功返回 ScheduledTask，可通过 task.Cancel() 取消本次任务。
+	//   - 按名称取消当前任务：c.Scheduler().Cancel(reference)
 	//   - 全部取消：c.Scheduler().Clear()
 	//
 	// 返回值：

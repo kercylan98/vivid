@@ -22,17 +22,17 @@ type joinScheduler struct {
 	once func(vivid.ActorRef, time.Duration, vivid.Message, ...vivid.ScheduleOption)
 }
 
-func (*joinScheduler) Loop(vivid.ActorRef, time.Duration, vivid.Message, ...vivid.ScheduleOption) error {
-	return nil
+func (*joinScheduler) Loop(vivid.ActorRef, time.Duration, vivid.Message, ...vivid.ScheduleOption) (vivid.ScheduledTask, error) {
+	return nil, nil
 }
 
 func (*joinScheduler) Exists(string) bool { return false }
 
-func (s *joinScheduler) Once(receiver vivid.ActorRef, delay time.Duration, message vivid.Message, options ...vivid.ScheduleOption) error {
+func (s *joinScheduler) Once(receiver vivid.ActorRef, delay time.Duration, message vivid.Message, options ...vivid.ScheduleOption) (vivid.ScheduledTask, error) {
 	if s.once != nil {
 		s.once(receiver, delay, message, options...)
 	}
-	return nil
+	return nil, nil
 }
 
 type joinContext struct{ tombstoneContext }

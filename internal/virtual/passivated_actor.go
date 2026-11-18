@@ -52,7 +52,7 @@ func (p *passivatedActor) OnReceive(ctx vivid.ActorContext) {
 func (p *passivatedActor) refreshTTL(ctx vivid.ActorContext) {
 	scheduler := ctx.Scheduler()
 	_ = scheduler.Cancel(passivatedTTLExpiredReference)
-	if err := scheduler.Once(ctx.Ref(), p.ttl, passivatedTTLExpired, vivid.WithSchedulerReference(passivatedTTLExpiredReference)); err != nil {
+	if _, err := scheduler.Once(ctx.Ref(), p.ttl, passivatedTTLExpired, vivid.WithSchedulerReference(passivatedTTLExpiredReference)); err != nil {
 		ctx.Logger().Error("failed to schedule passivated TTL expired", log.Any("error", err))
 	}
 }

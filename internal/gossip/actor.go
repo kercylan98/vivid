@@ -159,7 +159,7 @@ func (a *Actor) onStatusChanged(ctx vivid.ActorContext, status endpoint.Status) 
 
 func (a *Actor) onUp(ctx vivid.ActorContext) {
 	// 注册周期任务，按 [GossipInterval] 向视图中节点发起 gossip。
-	if err := ctx.Scheduler().Loop(ctx.Ref(), a.opts.GossipInterval, gossipTick{instanceID: a.info.ID()}, vivid.WithSchedulerReference(singleSchedulerReference)); err != nil {
+	if _, err := ctx.Scheduler().Loop(ctx.Ref(), a.opts.GossipInterval, gossipTick{instanceID: a.info.ID()}, vivid.WithSchedulerReference(singleSchedulerReference)); err != nil {
 		a.joinError = vivid.ErrorGossipScheduleFailed.With(err)
 		a.readiness.complete(vivid.ClusterJoinResult{}, a.joinError)
 		// 报告故障以可以支持监管者重启

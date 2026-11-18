@@ -62,7 +62,7 @@ func TestScheduler_OldCleanupPreservesReplacement(t *testing.T) {
 					if generation.Add(1) == 1 && expired {
 						delay = time.Millisecond
 					}
-					started <- ctx.Scheduler().Once(target, delay, 1, vivid.WithSchedulerReference("same"))
+					started <- schedulerResultError(ctx.Scheduler().Once(target, delay, 1, vivid.WithSchedulerReference("same")))
 				case string:
 					ctx.Reply(ctx.Scheduler().Cancel("same"))
 				}
@@ -103,7 +103,7 @@ func TestScheduler_ReferencesBelongToOwner(t *testing.T) {
 			if ctx.Ref().GetPath() == "/owner:part" {
 				reference = "timer"
 			}
-			started <- ctx.Scheduler().Once(ctx.Ref(), time.Hour, 1, vivid.WithSchedulerReference(reference))
+			started <- schedulerResultError(ctx.Scheduler().Once(ctx.Ref(), time.Hour, 1, vivid.WithSchedulerReference(reference)))
 		case request:
 			if message.clear {
 				ctx.Scheduler().Clear()
@@ -133,7 +133,7 @@ func TestScheduler_RestartRegistersSameReference(t *testing.T) {
 		switch message := ctx.Message().(type) {
 		case *vivid.OnLaunch:
 			generation++
-			if err := ctx.Scheduler().Once(ctx.Ref(), time.Millisecond, generation, vivid.WithSchedulerReference("tick")); err != nil {
+			if err := schedulerResultError(ctx.Scheduler().Once(ctx.Ref(), time.Millisecond, generation, vivid.WithSchedulerReference("tick"))); err != nil {
 				panic(err)
 			}
 			started <- ctx.(*Context)

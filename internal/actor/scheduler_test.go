@@ -18,7 +18,7 @@ func TestScheduler_Clear(t *testing.T) {
 
 	system.Scheduler().Clear()
 
-	err := system.Scheduler().Loop(system.Ref(), 1*time.Second, 1)
+	err := schedulerResultError(system.Scheduler().Loop(system.Ref(), 1*time.Second, 1))
 	assert.NoError(t, err)
 	system.Scheduler().Clear()
 }
@@ -33,7 +33,7 @@ func TestScheduler_Once(t *testing.T) {
 	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
-			ctx.Scheduler().Once(ctx.Ref(), 100*time.Millisecond, 1)
+			schedulerResultError(ctx.Scheduler().Once(ctx.Ref(), 100*time.Millisecond, 1))
 		case int:
 			close(wait)
 		}
@@ -62,7 +62,7 @@ func TestScheduler_Loop(t *testing.T) {
 	ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
-			assert.NoError(t, actor.NewTestSystem(t).Scheduler().Loop(ctx.Ref(), interval, 1))
+			assert.NoError(t, schedulerResultError(actor.NewTestSystem(t).Scheduler().Loop(ctx.Ref(), interval, 1)))
 		case int:
 			count++
 			ctx.Logger().Debug("scheduler received", log.String("reference", "test"), log.Time("time", time.Now()), log.String("messageType", "int"))
@@ -93,7 +93,7 @@ func TestScheduler_Cron(t *testing.T) {
 		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 			switch ctx.Message().(type) {
 			case *vivid.OnLaunch:
-				ctx.Scheduler().Cron(ctx.Ref(), "* * * * * *", 1)
+				schedulerResultError(ctx.Scheduler().Cron(ctx.Ref(), "* * * * * *", 1))
 			case int:
 				close(wait)
 			}
@@ -114,7 +114,7 @@ func TestScheduler_Cron(t *testing.T) {
 			assert.NoError(t, system.Stop())
 		}()
 
-		assert.ErrorIs(t, system.Scheduler().Cron(system.Ref(), "invalid", 1), vivid.ErrorCronParse)
+		assert.ErrorIs(t, schedulerResultError(system.Scheduler().Cron(system.Ref(), "invalid", 1)), vivid.ErrorCronParse)
 	})
 }
 
@@ -129,9 +129,9 @@ func TestScheduler_Cancel(t *testing.T) {
 		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 			switch ctx.Message().(type) {
 			case *vivid.OnLaunch:
-				assert.NoError(t, ctx.Scheduler().Once(ctx.Ref(), 100*time.Millisecond, 1, vivid.WithSchedulerReference("test")))
+				assert.NoError(t, schedulerResultError(ctx.Scheduler().Once(ctx.Ref(), 100*time.Millisecond, 1, vivid.WithSchedulerReference("test"))))
 				assert.NoError(t, ctx.Scheduler().Cancel("test"))
-				assert.NoError(t, ctx.Scheduler().Once(ctx.Ref(), 300*time.Millisecond, true))
+				assert.NoError(t, schedulerResultError(ctx.Scheduler().Once(ctx.Ref(), 300*time.Millisecond, true)))
 			case bool:
 				close(wait)
 			case int:
@@ -166,9 +166,14 @@ func TestScheduler_Exists(t *testing.T) {
 		}()
 
 		assert.False(t, system.Scheduler().Exists("none"))
-		system.Scheduler().Once(system.Ref(), 1000*time.Millisecond, 1, vivid.WithSchedulerReference("test"))
+		schedulerResultError(system.Scheduler().Once(system.Ref(), 1000*time.Millisecond, 1, vivid.WithSchedulerReference("test")))
 		assert.True(t, system.Scheduler().Exists("test"))
 		system.Scheduler().Cancel("test")
 		assert.False(t, system.Scheduler().Exists("test"))
 	})
+}
+
+// schedulerResultError 用于仅验证注册错误契约的回归用例。
+func schedulerResultError(_ vivid.ScheduledTask, err error) error {
+	return err
 }

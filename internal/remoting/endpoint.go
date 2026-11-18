@@ -762,7 +762,7 @@ func (e *endpoint) scheduleRetry(ctx vivid.ActorContext, cause error) {
 	e.retryCount++
 	e.retryAttempt++
 	e.retryScheduled = true
-	if err := ctx.Scheduler().Once(ctx.Ref(), delay, endpointRetryConnect{attempt: e.retryAttempt}, vivid.WithSchedulerReference(e.retryScheduleReference())); err != nil {
+	if _, err := ctx.Scheduler().Once(ctx.Ref(), delay, endpointRetryConnect{attempt: e.retryAttempt}, vivid.WithSchedulerReference(e.retryScheduleReference())); err != nil {
 		e.retryScheduled = false
 		ctx.Logger().Warn("endpoint schedule retry failed", log.String("address", e.address), log.Any("error", err))
 		e.stop(ctx, "endpoint retry scheduling failed")

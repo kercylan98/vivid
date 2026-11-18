@@ -74,7 +74,7 @@ func (a *Actor) onLaunch(ctx vivid.ActorContext) {
 		changeStatus(ctx, a, EventJoining)
 		return
 	}
-	if err := ctx.Scheduler().Once(ctx.Ref(), a.opts.LaunchDelay, launchJoin{instanceID: a.info.ID()}, vivid.WithSchedulerReference(launchSchedulerReference)); err != nil {
+	if _, err := ctx.Scheduler().Once(ctx.Ref(), a.opts.LaunchDelay, launchJoin{instanceID: a.info.ID()}, vivid.WithSchedulerReference(launchSchedulerReference)); err != nil {
 		a.readiness.complete(vivid.ClusterJoinResult{}, vivid.ErrorGossipScheduleFailed.With(err))
 	}
 }
@@ -170,7 +170,7 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 		if a.joinAttempt < joinAttemptsPerSeed && remaining > 0 {
 			delay := remaining / time.Duration(joinAttemptsPerSeed-a.joinAttempt+1)
 			message := joinRetry{instanceID: a.info.ID(), index: a.joinIndex, attempt: a.joinAttempt}
-			if scheduleErr := ctx.Scheduler().Once(ctx.Ref(), delay, message, vivid.WithSchedulerReference(joinRetrySchedulerRef)); scheduleErr != nil {
+			if _, scheduleErr := ctx.Scheduler().Once(ctx.Ref(), delay, message, vivid.WithSchedulerReference(joinRetrySchedulerRef)); scheduleErr != nil {
 				a.failJoinSeed(ctx, vivid.ErrorGossipScheduleFailed.With(scheduleErr))
 			}
 			return

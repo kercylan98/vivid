@@ -32,7 +32,7 @@ func TestScheduler_OnceReleasesRegistration(t *testing.T) {
 				if explicit {
 					options = append(options, vivid.WithSchedulerReference(strconv.Itoa(i)))
 				}
-				require.NoError(t, system.Scheduler().Once(target, time.Millisecond, i, options...))
+				require.NoError(t, schedulerResultError(system.Scheduler().Once(target, time.Millisecond, i, options...)))
 			}
 			seen := make(map[int]bool, count)
 			for range count {
@@ -77,7 +77,7 @@ func TestScheduler_OnceReusesReferenceInReceiver(t *testing.T) {
 				default:
 					return
 				}
-				if err := ctx.Scheduler().Once(ctx.Ref(), delay, next, vivid.WithSchedulerReference("next")); err != nil {
+				if err := schedulerResultError(ctx.Scheduler().Once(ctx.Ref(), delay, next, vivid.WithSchedulerReference("next"))); err != nil {
 					result <- err
 				}
 			}))
@@ -108,10 +108,10 @@ func TestScheduler_OnceLateCallback(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
 			scheduler := system.Context.scheduler.Load()
 			receiver := &onceObservedRef{ActorRef: system.Ref()}
-			opts := vivid.NewScheduleOptions(vivid.WithSchedulerReference("same"))
-			require.NoError(t, scheduler.Once(receiver, time.Hour, 1, vivid.WithSchedulerReference("same")))
+			require.NoError(t, schedulerResultError(scheduler.Once(receiver, time.Hour, 1, vivid.WithSchedulerReference("same"))))
 			scheduler.mu.Lock()
 			old := scheduler.tasks["same"]
+			timer := old.timer
 			scheduler.mu.Unlock()
 			switch action {
 			case "cancel":
@@ -121,15 +121,15 @@ func TestScheduler_OnceLateCallback(t *testing.T) {
 			case "close":
 				scheduler.close()
 			}
-			require.False(t, old.once.timer.Stop(), "取消、清理与关闭都应停止原计时器")
+			require.False(t, timer.Stop(), "取消、清理与关闭都应停止原计时器")
 			current := scheduler
 			if action == "close" {
 				current = newScheduler(system.Context)
 				defer current.close()
 			}
-			require.NoError(t, current.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("same")))
+			require.NoError(t, schedulerResultError(current.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("same"))))
 			// 固定重放已启动但尚未取得登记的旧回调，不能投递或删除同名新任务。
-			scheduler.fireOnce(old.once, receiver, 1, opts)
+			scheduler.fireOnce(old, receiver, 1)
 			require.Zero(t, receiver.called.Load())
 			require.True(t, current.Exists("same"))
 			require.NoError(t, current.Cancel("same"))
@@ -148,11 +148,11 @@ func TestScheduler_OnceSharesReferenceScope(t *testing.T) {
 					option := vivid.WithSchedulerReference("shared")
 					switch kind {
 					case "once":
-						return scheduler.Once(system.Ref(), time.Hour, 1, option)
+						return schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, option))
 					case "loop":
-						return scheduler.Loop(system.Ref(), time.Hour, 1, option)
+						return schedulerResultError(scheduler.Loop(system.Ref(), time.Hour, 1, option))
 					default:
-						return scheduler.Cron(system.Ref(), "0 0 0 1 1 ? 2099", 1, option)
+						return schedulerResultError(scheduler.Cron(system.Ref(), "0 0 0 1 1 ? 2099", 1, option))
 					}
 				}
 				require.NoError(t, register(first))
@@ -181,13 +181,13 @@ func TestScheduler_OnceDeliveryPanic(t *testing.T) {
 	system := NewTestSystem(t, vivid.WithActorSystemLogger(logger))
 	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
 	scheduler := system.Scheduler()
-	require.NoError(t, scheduler.Once(&onceObservedRef{ActorRef: system.Ref(), panic: true}, 0, 1, vivid.WithSchedulerReference("failed")))
+	require.NoError(t, schedulerResultError(scheduler.Once(&onceObservedRef{ActorRef: system.Ref(), panic: true}, 0, 1, vivid.WithSchedulerReference("failed"))))
 	receiveRetryResult(t, logger.failed)
 	require.False(t, scheduler.Exists("failed"), "投递 panic 也不能保留登记")
-	require.NoError(t, scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("failed")))
+	require.NoError(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("failed"))))
 	require.NoError(t, scheduler.Cancel("failed"))
-	require.ErrorIs(t, scheduler.Once(nil, time.Hour, 1), vivid.ErrorIllegalArgument)
-	require.ErrorIs(t, scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithScheduleOptions(vivid.ScheduleOptions{})), vivid.ErrorIllegalArgument)
+	require.ErrorIs(t, schedulerResultError(scheduler.Once(nil, time.Hour, 1)), vivid.ErrorIllegalArgument)
+	require.ErrorIs(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithScheduleOptions(vivid.ScheduleOptions{}))), vivid.ErrorIllegalArgument)
 }
 
 type onceClaimedRef struct {
@@ -222,14 +222,17 @@ func TestScheduler_OnceClaimPrecedesDelivery(t *testing.T) {
 	resume := func() { once.Do(func() { close(receiver.release) }) }
 	defer resume()
 	scheduler := ctx.Scheduler()
-	require.NoError(t, scheduler.Once(receiver, 0, 1, vivid.WithSchedulerReference("same")))
+	task, err := scheduler.Once(receiver, 0, 1, vivid.WithSchedulerReference("same"))
+	require.NoError(t, err)
 	receiveRetryResult(t, receiver.entered)
+	requireScheduledTaskReleased(t, task)
 	require.False(t, scheduler.Exists("same"), "投递尚未完成时登记已释放")
 	require.ErrorIs(t, scheduler.Cancel("same"), vivid.ErrorNotFound)
-	require.NoError(t, scheduler.Once(ctx.Ref(), time.Hour, 2, vivid.WithSchedulerReference("same")))
+	require.NoError(t, schedulerResultError(scheduler.Once(ctx.Ref(), time.Hour, 2, vivid.WithSchedulerReference("same"))))
 	resume()
 	require.Equal(t, 1, receiveRetryResult(t, delivered), "先取出的一次任务仍可完成投递")
 	require.True(t, scheduler.Exists("same"), "旧任务投递完成不能删除新登记")
+	requireScheduledTaskReleased(t, task)
 	require.NoError(t, scheduler.Cancel("same"))
 }
 
@@ -266,11 +269,11 @@ func testSchedulerRemoteDelivery(t *testing.T, kind string) {
 			option := vivid.WithSchedulerReference("remote")
 			switch kind {
 			case "once":
-				err = ctx.Scheduler().Once(target, 0, tick, option)
+				err = schedulerResultError(ctx.Scheduler().Once(target, 0, tick, option))
 			case "loop":
-				err = ctx.Scheduler().Loop(target, time.Millisecond, tick, option)
+				err = schedulerResultError(ctx.Scheduler().Loop(target, time.Millisecond, tick, option))
 			case "cron":
-				err = ctx.Scheduler().Cron(target, "* * * * * *", tick, option)
+				err = schedulerResultError(ctx.Scheduler().Cron(target, "* * * * * *", tick, option))
 			}
 			if err != nil {
 				result <- err

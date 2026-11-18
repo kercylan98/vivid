@@ -40,9 +40,9 @@ func TestContext_InitializationRollback(t *testing.T) {
 			require.NoError(t, err)
 			// 其他 Actor 的订阅与调度任务不得被失败创建的回滚清理。
 			system.EventStream().Subscribe(system, initializationEvent{})
-			require.NoError(t, system.Scheduler().Once(target, time.Hour, "unrelated", vivid.WithSchedulerReference("unrelated")))
+			require.NoError(t, schedulerResultError(system.Scheduler().Once(target, time.Hour, "unrelated", vivid.WithSchedulerReference("unrelated"))))
 			var failed *Context
-			var pending *onceTask
+			var pending *time.Timer
 			var ask, task vivid.Future[vivid.Message]
 			release, finished := make(chan struct{}), make(chan struct{})
 			var once sync.Once
@@ -52,10 +52,10 @@ func TestContext_InitializationRollback(t *testing.T) {
 				failed = ctx.(*Context)
 				ctx.EventStream().Subscribe(ctx, initializationEvent{})
 				// 内部资源同样随初始化回滚；公开 PrelaunchContext 不提供调度及请求接口。
-				if err := failed.scheduler.Load().Once(target, time.Hour, "pending", vivid.WithSchedulerReference("pending")); err != nil {
+				if err := schedulerResultError(failed.scheduler.Load().Once(target, time.Hour, "pending", vivid.WithSchedulerReference("pending"))); err != nil {
 					return err
 				}
-				pending = failed.scheduler.Load().tasks["pending"].once
+				pending = failed.scheduler.Load().tasks["pending"].timer
 				ask = failed.Ask(target, "pending", 0)
 				task = failed.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
 					<-release
@@ -93,7 +93,7 @@ func TestContext_InitializationRollback(t *testing.T) {
 			require.True(t, rootSubscribed)
 			require.NoError(t, system.Scheduler().Cancel("unrelated"))
 			require.Empty(t, failed.scheduler.Load().tasks)
-			require.False(t, pending.timer.Stop(), "初始化回滚应已停止一次计时器")
+			require.False(t, pending.Stop(), "初始化回滚应已停止一次计时器")
 			require.ErrorIs(t, ask.Wait(), vivid.ErrorActorDeaded)
 			require.ErrorIs(t, task.Wait(), vivid.ErrorActorDeaded)
 			require.ErrorIs(t, failed.Ask(target, "late", 0).Wait(), vivid.ErrorActorDeaded)
@@ -177,7 +177,7 @@ func TestContext_InitializationDuplicatePreservesResources(t *testing.T) {
 	}, vivid.ActorFN(func(ctx vivid.ActorContext) {
 		switch ctx.Message().(type) {
 		case *vivid.OnLaunch:
-			if err := ctx.Scheduler().Once(ctx.Ref(), time.Hour, "pending", vivid.WithSchedulerReference("pending")); err != nil {
+			if err := schedulerResultError(ctx.Scheduler().Once(ctx.Ref(), time.Hour, "pending", vivid.WithSchedulerReference("pending"))); err != nil {
 				panic(err)
 			}
 			launched <- ctx.(*Context)

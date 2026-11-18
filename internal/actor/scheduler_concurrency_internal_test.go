@@ -26,7 +26,7 @@ func TestScheduler_ConcurrentRegistration(t *testing.T) {
 			<-start
 			for round := range rounds {
 				reference := strconv.Itoa(worker) + "/" + strconv.Itoa(round)
-				if err := scheduler.Loop(system.Ref(), time.Hour, round, vivid.WithSchedulerReference(reference)); err != nil {
+				if err := schedulerResultError(scheduler.Loop(system.Ref(), time.Hour, round, vivid.WithSchedulerReference(reference))); err != nil {
 					t.Error(err)
 					return
 				}
@@ -65,7 +65,7 @@ func TestScheduler_ConcurrentSameReference(t *testing.T) {
 		for range workers {
 			wg.Go(func() {
 				<-start
-				if err := scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("same")); err == nil {
+				if err := schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("same"))); err == nil {
 					registered.Add(1)
 				} else if !errors.Is(err, quartz.ErrJobAlreadyExists) {
 					t.Error(err)
@@ -111,7 +111,7 @@ func TestScheduler_ConcurrentClear(t *testing.T) {
 			<-start
 			for round := range rounds {
 				reference := strconv.Itoa(worker) + "/" + strconv.Itoa(round)
-				if err := scheduler.Loop(system.Ref(), time.Hour, round, vivid.WithSchedulerReference(reference)); err != nil {
+				if err := schedulerResultError(scheduler.Loop(system.Ref(), time.Hour, round, vivid.WithSchedulerReference(reference))); err != nil {
 					t.Error(err)
 					return
 				}
@@ -166,7 +166,7 @@ func TestScheduler_RegistrationAndCleanup(t *testing.T) {
 			defer release()
 			registered, cleaned := make(chan error, 1), make(chan error, 1)
 			go func() {
-				registered <- scheduler.scheduleJob(system.Ref(), 1, vivid.NewScheduleOptions(vivid.WithSchedulerReference("pending")), trigger, "once")
+				registered <- schedulerResultError(scheduler.scheduleJob(system.Ref(), 1, vivid.NewScheduleOptions(vivid.WithSchedulerReference("pending")), trigger, "once"))
 			}()
 			receiveRetryResult(t, trigger.entered)
 			// 底层尚未注册，取消与清理不能越过正在提交的登记。
@@ -189,7 +189,7 @@ func TestScheduler_RegistrationAndCleanup(t *testing.T) {
 			require.False(t, scheduler.Exists("pending"))
 			require.Error(t, system.scheduler.DeleteJob(scheduler.jobKey("pending")))
 			// Clear 只清理任务，不关闭后续注册。
-			require.NoError(t, scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("pending")))
+			require.NoError(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("pending"))))
 			require.NoError(t, scheduler.Cancel("pending"))
 		})
 	}
@@ -204,11 +204,13 @@ func TestScheduler_FailedRegistration(t *testing.T) {
 	close(release)
 	trigger := &schedulerRegistrationTrigger{entered: make(chan struct{}), release: release, err: rejected}
 	opts := vivid.NewScheduleOptions(vivid.WithSchedulerReference("failed"))
-	require.ErrorIs(t, scheduler.scheduleJob(system.Ref(), 1, opts, trigger, "once"), rejected)
+	task, err := scheduler.scheduleJob(system.Ref(), 1, opts, trigger, "once")
+	require.ErrorIs(t, err, rejected)
+	require.Nil(t, task)
 	require.False(t, scheduler.Exists("failed"), "底层注册失败不能留下本地登记")
 	require.ErrorIs(t, scheduler.Cancel("failed"), vivid.ErrorNotFound)
-	require.NoError(t, scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("failed")))
-	require.ErrorIs(t, scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("failed")), quartz.ErrJobAlreadyExists)
+	require.NoError(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, vivid.WithSchedulerReference("failed"))))
+	require.ErrorIs(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("failed"))), quartz.ErrJobAlreadyExists)
 	require.True(t, scheduler.Exists("failed"), "重复注册失败不能删除已有任务的登记")
 	require.NoError(t, scheduler.Cancel("failed"))
 }
@@ -236,17 +238,22 @@ func TestScheduler_CallbackReentry(t *testing.T) {
 			callbackResult <- errors.New("取消完成后不能保留原登记")
 			return
 		}
-		callbackResult <- scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("same"))
+		callbackResult <- schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 2, vivid.WithSchedulerReference("same")))
 	}
 	// 配置回调也允许查询同一 Scheduler，不应在登记锁内执行。
-	require.NoError(t, scheduler.Once(system.Ref(), time.Hour, 1, func(opts *vivid.ScheduleOptions) {
+	require.NoError(t, schedulerResultError(scheduler.Once(system.Ref(), time.Hour, 1, func(opts *vivid.ScheduleOptions) {
 		require.False(t, scheduler.Exists("same"))
 		opts.Reference = "same"
-	}))
+	})))
 	result := make(chan error, 1)
 	go func() { result <- scheduler.Cancel("same") }()
 	require.NoError(t, receiveRetryResult(t, result))
 	require.NoError(t, receiveRetryResult(t, callbackResult), "日志回调可用相同 reference 重新注册")
 	require.True(t, scheduler.Exists("same"))
 	scheduler.Clear()
+}
+
+// schedulerResultError 用于仅验证注册错误契约的回归用例。
+func schedulerResultError(_ vivid.ScheduledTask, err error) error {
+	return err
 }
