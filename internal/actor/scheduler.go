@@ -65,6 +65,38 @@ type scheduledTask struct {
 	timer     *time.Timer
 }
 
+type schedulerCronTrigger struct {
+	quartz.Trigger
+	task    *scheduledTask
+	started bool // 首次计算属于注册，发布后由 Quartz 在队列锁内串行计算
+}
+
+func (t *schedulerCronTrigger) NextFireTime(prev int64) (int64, error) {
+	next, err := t.Trigger.NextFireTime(prev)
+	if !t.started {
+		t.started = true
+		return next, err
+	}
+	if err != nil {
+		if s := t.task.owner.Load(); s != nil {
+			// Quartz 持有队列锁，不能同步取得登记锁；错过末次投递也需回收。
+			go s.expireTask(t.task)
+		}
+	}
+	return next, err
+}
+
+func (s *Scheduler) expireTask(task *scheduledTask) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tasks[task.reference] != task {
+		return
+	}
+	// 底层已取出且不再入队，只回收本次登记，不能按名称删除新任务。
+	delete(s.tasks, task.reference)
+	task.release()
+}
+
 func (t *scheduledTask) Reference() string {
 	return t.reference
 }
@@ -98,7 +130,12 @@ func (s *Scheduler) cancelTask(task *scheduledTask) error {
 		task.timer.Stop()
 		return nil
 	}
-	return s.scheduler.DeleteJob(task.jobKey)
+	err := s.scheduler.DeleteJob(task.jobKey)
+	// Cron 可能已从底层队列取出，但自然结束的回收尚未取得登记锁。
+	if errors.Is(err, quartz.ErrJobNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (s *Scheduler) jobKey(reference string) *quartz.JobKey {
@@ -186,11 +223,15 @@ func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, 
 	if _, exists := s.tasks[reference]; exists {
 		return nil, quartz.ErrJobAlreadyExists
 	}
-	if err := s.scheduler.Schedule(quartz.NewJobDetail(fn, jobKey), trigger); err != nil {
-		return nil, schedulerErrorConvert(err)
-	}
 	task := &scheduledTask{reference: reference, jobKey: jobKey}
 	task.owner.Store(s)
+	if cron, ok := trigger.(*schedulerCronTrigger); ok {
+		cron.task = task
+	}
+	if err := s.scheduler.Schedule(quartz.NewJobDetail(fn, jobKey), trigger); err != nil {
+		task.release()
+		return nil, schedulerErrorConvert(err)
+	}
 	s.tasks[reference] = task
 
 	// base := []any{log.String("ref", s.ctx.Ref().GetPath()), log.String("receiver", receiver.GetPath()), log.String("messageType", fmt.Sprintf("%T", message))}
@@ -212,7 +253,7 @@ func (s *Scheduler) Cron(receiver vivid.ActorRef, cron string, message vivid.Mes
 	if err = schedulerErrorConvert(err); err != nil {
 		return nil, err
 	}
-	return s.scheduleJob(receiver, message, opts, trigger, "cron", log.String("cron", cron))
+	return s.scheduleJob(receiver, message, opts, &schedulerCronTrigger{Trigger: trigger}, "cron", log.String("cron", cron))
 }
 
 func (s *Scheduler) Once(receiver vivid.ActorRef, delay time.Duration, message vivid.Message, options ...vivid.ScheduleOption) (vivid.ScheduledTask, error) {

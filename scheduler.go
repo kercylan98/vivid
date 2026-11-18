@@ -23,6 +23,7 @@ type Scheduler interface {
 	// options: 调度器可选配置（如 WithScheduleLocation、WithSchedulerReference）。
 	//
 	// 注册失败返回 nil 和具体错误，成功返回任务句柄和 nil。
+	// 无后续触发时间时异步释放登记；释放不表示末次消息已处理。
 	Cron(receiver ActorRef, cron string, message Message, options ...ScheduleOption) (ScheduledTask, error)
 
 	// Once 安排一个延时任务。在指定延时后仅执行一次，向目标 Actor 投递消息。
@@ -49,7 +50,7 @@ type Scheduler interface {
 
 	// Exists 检查当前 Scheduler 是否保留指定引用标识(reference)的登记。
 	// 一次任务取出投递时移除登记；false 不表示消息已处理，也不撤回在途投递。
-	// Cron 等底层任务到期后仍可能保留登记。
+	// Cron 无后续触发时间时异步移除登记。
 	//
 	// reference: 调度任务的唯一引用标识符（string）。
 	//
@@ -76,7 +77,7 @@ type ScheduledTask interface {
 	// Reference 返回注册时的引用标识，未显式指定时由框架生成。
 	Reference() string
 	// Exists 检查本次任务是否仍保留登记，不查询同名的其他任务。
-	// Once 取出投递、取消或清理后返回 false；Cron 到期仍可能保留登记。
+	// Once 取出投递、取消或清理后返回 false；Cron 无后续触发时间时异步释放登记。
 	Exists() bool
 	// Cancel 只取消本次任务；登记已释放时返回 ErrorNotFound。
 	// 不能撤回已取出投递或已进入邮箱的消息。

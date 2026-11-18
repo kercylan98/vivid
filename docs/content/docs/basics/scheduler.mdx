@@ -96,6 +96,7 @@ task, err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 0 * * ?", &DailyJob{})
 ```
 
 - 若 Cron 表达式非法，返回 **ErrorCronParse**。
+- 无后续触发时间时自动异步释放登记，随后可复用 reference；末次消息可能仍在投递或处理。
 
 ---
 
@@ -123,7 +124,7 @@ err = task.Cancel()         // 只取消本次注册
 
 **方法**：`Exists(reference string) bool`
 
-- 返回 **true** 表示仍有登记，**false** 表示没有登记。一次任务在取出投递时移除登记；`Cron` 等底层任务到期后仍可能保留登记。不能据此判断消息是否已处理。
+- 返回 **true** 表示仍有登记，**false** 表示没有登记。`Once` 在取出投递时移除登记；`Cron` 无后续触发时间时异步移除登记。不能据此判断消息是否已处理。
 
 ### 取消任务（Cancel）
 
