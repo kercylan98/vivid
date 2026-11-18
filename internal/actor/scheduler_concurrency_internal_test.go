@@ -26,7 +26,7 @@ func TestScheduler_ConcurrentRegistration(t *testing.T) {
 			<-start
 			for round := range rounds {
 				reference := strconv.Itoa(worker) + "/" + strconv.Itoa(round)
-				if err := scheduler.Once(system.Ref(), time.Hour, round, vivid.WithSchedulerReference(reference)); err != nil {
+				if err := scheduler.Loop(system.Ref(), time.Hour, round, vivid.WithSchedulerReference(reference)); err != nil {
 					t.Error(err)
 					return
 				}
@@ -111,7 +111,7 @@ func TestScheduler_ConcurrentClear(t *testing.T) {
 			<-start
 			for round := range rounds {
 				reference := strconv.Itoa(worker) + "/" + strconv.Itoa(round)
-				if err := scheduler.Once(system.Ref(), time.Hour, round, vivid.WithSchedulerReference(reference)); err != nil {
+				if err := scheduler.Loop(system.Ref(), time.Hour, round, vivid.WithSchedulerReference(reference)); err != nil {
 					t.Error(err)
 					return
 				}

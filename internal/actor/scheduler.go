@@ -44,17 +44,34 @@ func newScheduler(ctx *Context) *Scheduler {
 		ctx:       ctx,
 		scheduler: ctx.system.scheduler,
 		namespace: strconv.FormatUint(schedulerNamespace.Add(1), 10),
-		jobKeys:   make(map[string]*quartz.JobKey),
+		tasks:     make(map[string]scheduledTask),
 	}
 }
 
 type Scheduler struct {
 	ctx       *Context
 	scheduler *scheduler.Scheduler
-	mu        sync.Mutex                // 协调本地登记与底层任务的注册和清理
-	closed    bool                      // 当前生命周期结束后永久关闭登记
-	namespace string                    // 实例独立的任务分组，不依赖可复用的 Actor 路径
-	jobKeys   map[string]*quartz.JobKey // reference -> job key
+	mu        sync.Mutex               // 协调本地登记与底层任务的注册和清理
+	closed    bool                     // 当前生命周期结束后永久关闭登记
+	namespace string                   // 实例独立的任务分组，不依赖可复用的 Actor 路径
+	tasks     map[string]scheduledTask // reference -> task
+}
+
+type scheduledTask struct {
+	jobKey *quartz.JobKey
+	once   *onceTask
+}
+
+type onceTask struct {
+	timer *time.Timer
+}
+
+func (s *Scheduler) cancelTask(task scheduledTask) error {
+	if task.once != nil {
+		task.once.timer.Stop()
+		return nil
+	}
+	return s.scheduler.DeleteJob(task.jobKey)
 }
 
 func (s *Scheduler) jobKey(reference string) *quartz.JobKey {
@@ -77,9 +94,9 @@ func (s *Scheduler) close() {
 
 // clear 在持有登记锁时清理任务，不改变生命周期准入。
 func (s *Scheduler) clear() {
-	for reference, jobKey := range s.jobKeys {
-		_ = s.scheduler.DeleteJob(jobKey)
-		delete(s.jobKeys, reference)
+	for reference, task := range s.tasks {
+		_ = s.cancelTask(task)
+		delete(s.tasks, reference)
 	}
 }
 
@@ -97,6 +114,11 @@ func schedulerErrorConvert(err error) error {
 }
 
 func (s *Scheduler) tell(receiver vivid.ActorRef, message vivid.Message, options *vivid.ScheduleOptions) {
+	// 远程只传业务消息，任务登记归本地所有，不传递无法独立解码的接口包装。
+	if receiver.GetAddress() != s.ctx.Ref().GetAddress() {
+		s.ctx.Tell(receiver, message)
+		return
+	}
 	schedulerMessage := &SchedulerMessage{
 		Reference: options.Reference,
 		Message:   message,
@@ -109,7 +131,7 @@ func (s *Scheduler) tell(receiver vivid.ActorRef, message vivid.Message, options
 	s.ctx.Tell(receiver, schedulerMessage)
 }
 
-// scheduleJob 注册任务并调度，将 reference 与 jobKey 记入 jobKeys 供 Exists/Cancel 使用
+// scheduleJob 注册 Quartz 任务并保存登记，供 Exists/Cancel 使用。
 func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, opts *vivid.ScheduleOptions, trigger quartz.Trigger, logKind string, logFields ...any) error {
 	jobKey := s.jobKey(opts.Reference)
 	fn := job.NewFunctionJob(func(ctx context.Context) (any, error) {
@@ -125,10 +147,13 @@ func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, 
 	if s.closed {
 		return vivid.ErrorActorDeaded
 	}
+	if _, exists := s.tasks[opts.Reference]; exists {
+		return quartz.ErrJobAlreadyExists
+	}
 	if err := s.scheduler.Schedule(quartz.NewJobDetail(fn, jobKey), trigger); err != nil {
 		return schedulerErrorConvert(err)
 	}
-	s.jobKeys[opts.Reference] = jobKey
+	s.tasks[opts.Reference] = scheduledTask{jobKey: jobKey}
 
 	// base := []any{log.String("ref", s.ctx.Ref().GetPath()), log.String("receiver", receiver.GetPath()), log.String("messageType", fmt.Sprintf("%T", message))}
 	// logKindStr := fmt.Sprintf("scheduler %s scheduled", logKind)
@@ -139,7 +164,7 @@ func (s *Scheduler) scheduleJob(receiver vivid.ActorRef, message vivid.Message, 
 func (s *Scheduler) Exists(reference string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.jobKeys[reference]
+	_, ok := s.tasks[reference]
 	return ok
 }
 
@@ -154,7 +179,43 @@ func (s *Scheduler) Cron(receiver vivid.ActorRef, cron string, message vivid.Mes
 
 func (s *Scheduler) Once(receiver vivid.ActorRef, delay time.Duration, message vivid.Message, options ...vivid.ScheduleOption) error {
 	opts := vivid.NewScheduleOptions(options...)
-	return s.scheduleJob(receiver, message, opts, quartz.NewRunOnceTrigger(delay), "once", log.Duration("delay", delay))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ctx.system.requestsStopped() {
+		return vivid.ErrorActorSystemStopped
+	}
+	if s.closed {
+		return vivid.ErrorActorDeaded
+	}
+	if receiver == nil || opts.Reference == "" {
+		return vivid.ErrorIllegalArgument.WithMessage("receiver and reference are required")
+	}
+	if _, exists := s.tasks[opts.Reference]; exists {
+		return quartz.ErrJobAlreadyExists
+	}
+	// 回调与注册共用锁，即使立即到期也要等到 timer 与登记一同发布。
+	task := new(onceTask)
+	task.timer = time.AfterFunc(delay, func() { s.fireOnce(task, receiver, message, opts) })
+	s.tasks[opts.Reference] = scheduledTask{once: task}
+	return nil
+}
+
+func (s *Scheduler) fireOnce(once *onceTask, receiver vivid.ActorRef, message vivid.Message, opts *vivid.ScheduleOptions) {
+	s.mu.Lock()
+	if task, exists := s.tasks[opts.Reference]; !exists || task.once != once {
+		s.mu.Unlock()
+		return
+	}
+	// 先移除本次登记再投递，接收方可以立即复用 reference。
+	delete(s.tasks, opts.Reference)
+	s.mu.Unlock()
+	// 投递可能经过用户提供的引用或邮箱，保留原 Quartz 路径的 panic 隔离。
+	defer func() {
+		if fault := recover(); fault != nil {
+			s.ctx.Logger().Error("scheduler once delivery failed", log.String("reference", opts.Reference), log.Any("fault", fault))
+		}
+	}()
+	s.tell(receiver, message, opts)
 }
 
 func (s *Scheduler) Loop(receiver vivid.ActorRef, interval time.Duration, message vivid.Message, options ...vivid.ScheduleOption) error {
@@ -164,13 +225,13 @@ func (s *Scheduler) Loop(receiver vivid.ActorRef, interval time.Duration, messag
 
 func (s *Scheduler) Cancel(reference string) error {
 	s.mu.Lock()
-	jobKey, ok := s.jobKeys[reference]
+	task, ok := s.tasks[reference]
 	if !ok {
 		s.mu.Unlock()
 		return vivid.ErrorNotFound.WithMessage(reference)
 	}
-	err := s.scheduler.DeleteJob(jobKey)
-	delete(s.jobKeys, reference)
+	err := s.cancelTask(task)
+	delete(s.tasks, reference)
 	s.mu.Unlock()
 	// 用户日志可重入调度器，应在底层清理完成并释放登记锁后调用。
 	s.ctx.Logger().Debug("scheduler cancel scheduled", log.String("ref", s.ctx.Ref().GetPath()), log.String("reference", reference))

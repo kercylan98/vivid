@@ -9,10 +9,12 @@ description: 定时与周期消息投递（Once、Loop、Cron）及任务管理
 
 - **生命周期**：任务与创建它的 Actor 绑定，终止或重启收尾后自动清理，旧 Scheduler 永久拒绝新任务；重启初始化时需重新调用 `ctx.Scheduler()` 并注册任务。`OnKill`、自身 `OnKilled` 收尾期间仍可注册，随后一并清理；`Stop` 等待超时不提前关闭仍在收尾的调度器。
 - **作用域**：reference 在所属 Scheduler 内唯一；不同 Actor、同路径重建的 Actor 可使用相同 reference，清理任务互不影响。`system.Scheduler()` 属于根 Actor。
-- **投递边界**：取消或清理任务不会撤回已经投递的消息。
+- **投递边界**：取消或清理任务不会撤回已取出、正在投递或已进入邮箱的消息。
 - **并发操作**：同一 Scheduler 支持并发注册、查询、取消与清理；相同 reference 的重复注册失败，不替换原任务。注册失败不会新增登记，`Exists` 只反映查询当时的状态。
 
 调度在本进程运行；向远程 Actor 投递沿用普通消息传输，不提供任务持久化或故障后补执行。Actor 已收尾时注册返回 `ErrorActorDeaded`，系统停止完成后返回 `ErrorActorSystemStopped`；初始化失败也会关闭并清理本次调度器。
+
+远程调度直接传输业务消息，须按普通远程消息配置编解码器或注册消息类型。
 
 <Mermaid diagram={`flowchart LR
   subgraph Scheduler
@@ -49,7 +51,8 @@ err := ctx.Scheduler().Once(ctx.Ref(), 5*time.Second, &MyMessage{Data: "delayed"
 ```
 
 - 返回 **error** 表示调度是否成功（如参数不合法）。
-- **delay 为 0** 时会在极短延时后投递一次；任务到期后只投递一次。
+- **delay 非正**时尽快异步投递一次；到期可能因运行时调度而延迟，不因超过延时自动丢弃。
+- 任务取出投递时自动移除登记，可以重新使用相同 reference；此时消息可能仍在投递途中。
 
 ---
 
@@ -104,7 +107,7 @@ err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 0 * * ?", &DailyJob{})
 
 **方法**：`Exists(reference string) bool`
 
-- 返回 **true** 表示仍有登记，**false** 表示没有登记。一次任务触发后仍可能返回 **true**，不能据此判断消息是否已投递或处理。
+- 返回 **true** 表示仍有登记，**false** 表示没有登记。一次任务在取出投递时移除登记；`Cron` 等底层任务到期后仍可能保留登记。不能据此判断消息是否已处理。
 
 ### 取消任务（Cancel）
 
@@ -114,7 +117,7 @@ err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 0 * * ?", &DailyJob{})
 
 - 取消成功返回 **nil**。
 - 若 reference 不存在，返回 **ErrorNotFound**。
-- 一次任务已触发时，取消可能返回底层任务不存在的错误，并移除本地登记。
+- 一次任务已取出投递时返回 **ErrorNotFound**；后续投递仍可能完成。
 
 ```go
 refID := "my-timer-1"

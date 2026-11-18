@@ -42,6 +42,7 @@ func TestContext_InitializationRollback(t *testing.T) {
 			system.EventStream().Subscribe(system, initializationEvent{})
 			require.NoError(t, system.Scheduler().Once(target, time.Hour, "unrelated", vivid.WithSchedulerReference("unrelated")))
 			var failed *Context
+			var pending *onceTask
 			var ask, task vivid.Future[vivid.Message]
 			release, finished := make(chan struct{}), make(chan struct{})
 			var once sync.Once
@@ -54,6 +55,7 @@ func TestContext_InitializationRollback(t *testing.T) {
 				if err := failed.scheduler.Load().Once(target, time.Hour, "pending", vivid.WithSchedulerReference("pending")); err != nil {
 					return err
 				}
+				pending = failed.scheduler.Load().tasks["pending"].once
 				ask = failed.Ask(target, "pending", 0)
 				task = failed.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
 					<-release
@@ -90,8 +92,8 @@ func TestContext_InitializationRollback(t *testing.T) {
 			es.mu.RUnlock()
 			require.True(t, rootSubscribed)
 			require.NoError(t, system.Scheduler().Cancel("unrelated"))
-			require.Empty(t, failed.scheduler.Load().jobKeys)
-			require.Error(t, system.scheduler.DeleteJob(failed.scheduler.Load().jobKey("pending")), "底层调度任务应已删除")
+			require.Empty(t, failed.scheduler.Load().tasks)
+			require.False(t, pending.timer.Stop(), "初始化回滚应已停止一次计时器")
 			require.ErrorIs(t, ask.Wait(), vivid.ErrorActorDeaded)
 			require.ErrorIs(t, task.Wait(), vivid.ErrorActorDeaded)
 			require.ErrorIs(t, failed.Ask(target, "late", 0).Wait(), vivid.ErrorActorDeaded)

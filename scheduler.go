@@ -29,6 +29,7 @@ type Scheduler interface {
 	//
 	// receiver: 目标 Actor 的引用。
 	// delay: 触发消息投递的延时时间（time.Duration），从当前时刻起算。
+	// 非正延时尽快异步投递；取出投递前释放登记，接收方可复用 reference。
 	// message: 投递的消息对象。
 	// options: 调度任务可选参数配置。
 	//
@@ -46,7 +47,8 @@ type Scheduler interface {
 	Loop(receiver ActorRef, interval time.Duration, message Message, options ...ScheduleOption) error
 
 	// Exists 检查当前 Scheduler 是否保留指定引用标识(reference)的登记。
-	// 一次任务触发后仍可能保留登记，不能用此方法判断消息是否已投递或处理。
+	// 一次任务取出投递时移除登记；false 不表示消息已处理，也不撤回在途投递。
+	// Cron 等底层任务到期后仍可能保留登记。
 	//
 	// reference: 调度任务的唯一引用标识符（string）。
 	//
@@ -54,6 +56,7 @@ type Scheduler interface {
 	Exists(reference string) bool
 
 	// Cancel 通过引用标识取消指定的调度任务（无论其当前状态）。如果不存在对应引用，则返回错误。
+	// 一次任务已取出投递时返回 ErrorNotFound，不能阻止其继续投递。
 	//
 	// reference: 待取消的调度任务引用标识。
 	//
