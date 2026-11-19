@@ -59,7 +59,8 @@ type ActorSystem interface {
 	// CreateRef 根据地址与路径构造 ActorRef，不要求目标存在；用于本地或远程 Actor 引用。
 	CreateRef(address string, path string) (ActorRef, error)
 
-	// ActorOf 该方法的效果与 ActorContext.ActorOf 相同，但是它是并发安全的。
+	// ActorOf 创建系统直属 Actor，可由多个 goroutine 调用，并可与已有 Actor 的终止同时进行。
+	// 创建子 Actor 时应在所属 Actor 的消息处理流程内调用 ActorContext.ActorOf。
 	ActorOf(actor Actor, options ...ActorOption) (ActorRef, error)
 
 	// VirtualRef 创建一个虚拟 Actor 的引用。

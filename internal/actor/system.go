@@ -68,6 +68,7 @@ type System struct {
 	*Context                                                                 // ActorSystem 本身就表示了根 Actor
 	codec                  *serialization.VividCodec                         // 内部消息编解码器
 	actorOfLock            sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
+	rootChildrenLock       sync.Mutex                                        // 根子节点表由外部创建与根邮箱共享，不在回调或投递期间持有
 	actorInitLock          sync.Mutex                                        // 保护创建中的名称，不在用户初始化回调期间持有
 	initializingActors     map[vivid.ActorPath]*Context                      // 仅保留正在初始化的 Actor
 	options                *vivid.ActorSystemOptions                         // 系统选项

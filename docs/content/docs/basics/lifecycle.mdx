@@ -41,7 +41,7 @@ childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
 - 创建成功后，子 Actor 会经历**预启动（Prelaunch）**（若实现），再收到 **`*vivid.OnLaunch`**，然后开始接收业务消息。**`ctx.Children()`** 返回当前已创建的子 Actor 引用列表（快照），可用于批量 Tell、监控或监督逻辑。
 
 <Callout type="warn" title="并发限制">
-**`ctx.ActorOf` 非并发安全**。不要在多个 goroutine 中并发创建同一父级下的子 Actor，应在单次消息处理内或串行逻辑中创建。
+**`ctx.ActorOf` 非并发安全**，应在所属 Actor 的消息处理流程内创建子 Actor。外部 goroutine 创建系统直属 Actor 时使用 **`system.ActorOf`**；不要保存上下文交给外部 goroutine 操作。
 </Callout>
 
 ### 命名与配置

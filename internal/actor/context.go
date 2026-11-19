@@ -213,10 +213,7 @@ func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivi
 		return nil, vivid.ErrorActorAlreadyExists.WithMessage(childCtx.Ref().GetPath())
 	}
 
-	if c.children == nil {
-		c.children = make(map[vivid.ActorPath]vivid.ActorRef)
-	}
-	c.children[childCtx.Ref().GetPath()] = childCtx.Ref()
+	c.addChild(childCtx.Ref())
 
 	c.tell(true, childCtx.Ref(), new(vivid.OnLaunch))
 	c.Logger().Debug("actor spawned", log.String("path", childCtx.Ref().GetPath()))
@@ -725,8 +722,15 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 	// 等待所有子 Actor 结束，假设是重启，子 Actor 不应该跟随重启，应该由父节点决定是否重启
 	// 多阶段终止由 OnKill 收尾逻辑负责通知子节点，此处不再重复发送 OnKill，避免死信。
 	if c.phaseKill == nil || !c.phaseKill.completed {
-		for _, child := range c.children {
-			c.Kill(child, message.Poison, message.Reason)
+		if c.parent == nil {
+			// 根节点与外部创建共享名单，投递必须在快照锁外执行。
+			for _, child := range c.Children() {
+				c.Kill(child, message.Poison, message.Reason)
+			}
+		} else {
+			for _, child := range c.children {
+				c.Kill(child, message.Poison, message.Reason)
+			}
 		}
 	}
 
@@ -821,11 +825,34 @@ func (c *Context) Kill(ref vivid.ActorRef, poison bool, reason ...string) {
 }
 
 func (c *Context) Children() vivid.ActorRefs {
+	if c.parent == nil {
+		c.system.rootChildrenLock.Lock()
+		defer c.system.rootChildrenLock.Unlock()
+	}
 	children := make(vivid.ActorRefs, 0, len(c.children))
 	for _, child := range c.children {
 		children = append(children, child)
 	}
 	return children
+}
+
+func (c *Context) addChild(ref vivid.ActorRef) {
+	if c.parent == nil {
+		c.system.rootChildrenLock.Lock()
+		defer c.system.rootChildrenLock.Unlock()
+	}
+	if c.children == nil {
+		c.children = make(map[vivid.ActorPath]vivid.ActorRef)
+	}
+	c.children[ref.GetPath()] = ref
+}
+
+func (c *Context) hasChildren() bool {
+	if c.parent == nil {
+		c.system.rootChildrenLock.Lock()
+		defer c.system.rootChildrenLock.Unlock()
+	}
+	return len(c.children) != 0
 }
 
 func (c *Context) failed(fault vivid.Message) {

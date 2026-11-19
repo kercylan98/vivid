@@ -32,7 +32,19 @@ type killedHandler struct {
 // handleChildDeath 处理子 Actor 死亡
 func (h *killedHandler) handleChildDeath() {
 	if !h.message.Ref.Equals(h.ctx.ref) {
-		delete(h.ctx.children, h.message.Ref.GetPath())
+		if h.ctx.parent == nil {
+			h.ctx.system.rootChildrenLock.Lock()
+			// 旧实例释放系统索引后，同路径可能已创建新实例。
+			// 本地子级通知持有原始引用，不能用地址与路径相等代替实例身份。
+			if h.ctx.children[h.message.Ref.GetPath()] != h.message.Ref {
+				h.ctx.system.rootChildrenLock.Unlock()
+				return
+			}
+			delete(h.ctx.children, h.message.Ref.GetPath())
+			h.ctx.system.rootChildrenLock.Unlock()
+		} else {
+			delete(h.ctx.children, h.message.Ref.GetPath())
+		}
 		h.ctx.executeBehaviorWithRecovery(h.behavior)
 		// h.ctx.Logger().Debug("child death", log.Int("children_count", len(h.ctx.children)), log.String("ref", h.ctx.ref.GetPath()), log.String("child", h.message.Ref.GetPath()))
 	}
@@ -46,7 +58,7 @@ func (h *killedHandler) checkAndMarkKilled() {
 		return
 	}
 	// 如果还有子 Actor，则不处理自身死亡
-	if len(h.ctx.children) != 0 || !atomic.CompareAndSwapInt32(&h.ctx.state, killing, killed) {
+	if h.ctx.hasChildren() || !atomic.CompareAndSwapInt32(&h.ctx.state, killing, killed) {
 		h.shouldContinue = false
 		return
 	}
