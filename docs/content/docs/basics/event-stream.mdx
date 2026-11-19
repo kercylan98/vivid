@@ -25,13 +25,15 @@ description: 系统级发布/订阅（Subscribe、Publish）与事件投递
 
 ## 订阅与取消订阅
 
-- **Subscribe(ctx, event)**：当前 Actor 订阅 **event** 所代表的事件类型。参数 **event** 仅用于**类型识别**（按类型相等），可为零值实例，例如 `ctx.EventStream().Subscribe(ctx, MyEvent{})`。之后所有 **Publish** 的该类型事件都会作为一条消息投递到该 Actor 的邮箱。订阅与发布需使用**同一具体类型**（同一结构体），否则收不到。
+- **Subscribe(ctx, event)**：当前 Actor 订阅 **event** 所代表的事件类型。参数 **event** 仅用于**类型识别**（按类型相等），可为零值实例，例如 `ctx.EventStream().Subscribe(ctx, MyEvent{})`。之后所有 **Publish** 的该类型事件都会作为一条消息投递到该 Actor 的邮箱。订阅与发布需使用**同一具体类型**；`MyEvent` 与 `*MyEvent` 是不同类型。
 - **Unsubscribe(ctx, event)**：取消当前 Actor 对该事件类型的订阅。多数场景不必主动调用：**Actor 被销毁时，其所有订阅会自动释放**。
 - **UnsubscribeAll(ctx)**：取消当前 Actor 对全部事件类型的订阅。
 
 订阅应在 Actor 生命周期内通过 ActorContext 完成，不要在 Actor 外持有 EventStream 或订阅状态。
 
 取消订阅不会撤回发布时已选中的事件或已进入邮箱的消息，取消后仍可能收到这些在途事件。
+
+`Subscribe`、`Unsubscribe`、`Publish` 不接受无类型 `nil`，会在操作前以 `vivid.ErrorIllegalArgument` 触发 panic。订阅指针事件可使用 `ctx.EventStream().Subscribe(ctx, (*MyEvent)(nil))`；带类型的 `nil` 保留事件类型，发布时也会作为该类型的空值投递。
 
 ## 发布事件
 

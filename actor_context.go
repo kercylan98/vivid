@@ -50,8 +50,8 @@ type ActorContext interface {
 	//   - 构建基于事件的扩展点、监控与告警等功能模块。
 	//
 	// 推荐用法：
-	//   - Publish：c.EventStream().Publish(sender, event)
-	//   - Subscribe：c.EventStream().Subscribe(eventType, handlerFunc)
+	//   - Publish：c.EventStream().Publish(c, event)
+	//   - Subscribe：c.EventStream().Subscribe(c, MyEvent{})
 	//
 	// 返回值：
 	//   - EventStream：系统唯一的事件流对象，可用于事件发布与订阅管理。

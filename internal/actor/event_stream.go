@@ -30,6 +30,9 @@ type eventStream struct {
 
 func (es *eventStream) Subscribe(ctx vivid.EventStreamContext, event any) {
 	eventType := reflect.TypeOf(event)
+	if eventType == nil {
+		panic(vivid.ErrorIllegalArgument.WithMessage("event type is required"))
+	}
 	subscriber := ctx.Ref()
 	subscriberPath := subscriber.GetPath()
 
@@ -61,6 +64,9 @@ func (es *eventStream) Subscribe(ctx vivid.EventStreamContext, event any) {
 
 func (es *eventStream) Publish(ctx vivid.EventStreamContext, event vivid.Message) {
 	eventType := reflect.TypeOf(event)
+	if eventType == nil {
+		panic(vivid.ErrorIllegalArgument.WithMessage("event type is required"))
+	}
 
 	es.mu.RLock()
 	subscribers := maps.Clone(es.subscribers[eventType])
@@ -75,6 +81,9 @@ func (es *eventStream) Publish(ctx vivid.EventStreamContext, event vivid.Message
 
 func (es *eventStream) Unsubscribe(ctx vivid.EventStreamContext, event any) {
 	eventType := reflect.TypeOf(event)
+	if eventType == nil {
+		panic(vivid.ErrorIllegalArgument.WithMessage("event type is required"))
+	}
 	subscriberPath := ctx.Ref().GetPath()
 
 	es.mu.Lock()
