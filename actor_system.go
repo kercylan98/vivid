@@ -44,7 +44,8 @@ type ActorSystem interface {
 	// 注意事项：
 	//   - 停止中重复调用会再次等待同一次关闭；关闭已完成后调用返回 [ErrorActorSystemAlreadyStopped]。
 	//   - 关闭开始后不可重新启动，也不可通过 ActorSystem.ActorOf 创建新 Actor；此前已开始的创建会纳入关闭。
-	//   - 应在本系统的 Actor 消息线程之外调用；停止无法强行中断阻塞的用户回调，等待超时也不代表资源已经全部释放。
+	//   - 应在本系统的 Actor 消息线程和创建回调之外调用，避免等待自身完成；停止无法强行中断阻塞的用户回调。
+	//     等待超时也不代表资源已经全部释放。
 	Stop(timeout ...time.Duration) error
 
 	// FindActor 根据引用字符串查找本节点上已存在的 Actor 并返回其引用。
@@ -60,6 +61,7 @@ type ActorSystem interface {
 	CreateRef(address string, path string) (ActorRef, error)
 
 	// ActorOf 创建系统直属 Actor，可由多个 goroutine 调用，并可与已有 Actor 的终止同时进行。
+	// 不同创建的初始化可并行执行，初始化回调可重入创建其他系统直属 Actor；同名创建立即拒绝。
 	// 创建子 Actor 时应在所属 Actor 的消息处理流程内调用 ActorContext.ActorOf。
 	ActorOf(actor Actor, options ...ActorOption) (ActorRef, error)
 

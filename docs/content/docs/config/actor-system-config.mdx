@@ -44,9 +44,11 @@ system := bootstrap.NewActorSystem(
 
 **`system.ActorOf`** 可由多个 goroutine 调用，创建可与已有 Actor 的终止同时进行。创建子 Actor 则在所属 Actor 的消息处理流程内调用 **`ctx.ActorOf`**，详见[创建与生命周期](/docs/basics/lifecycle)。
 
+不同创建的初始化可并行执行，共享状态需自行同步。初始化回调可通过 **`ctx.System().ActorOf`** 创建其他系统直属 Actor；同名已存在或正在初始化时返回 **`ErrorActorAlreadyExists`**。
+
 ## 系统停止
 
-**`system.Stop(timeout...)`** 通过系统消息发起关闭，普通邮箱暂停不会阻断停止。框架执行 **OnKill** 和多阶段收尾，先停止业务 Actor，再依次停止集群、远程通信和指标组件。停止不保证排空普通消息；需要保存状态或完成业务请求时，应先取得业务完成确认。请在该系统的 Actor 消息线程之外调用。
+**`system.Stop(timeout...)`** 通过系统消息发起关闭，普通邮箱暂停不会阻断停止。框架执行 **OnKill** 和多阶段收尾，先停止业务 Actor，再依次停止集群、远程通信和指标组件。停止不保证排空普通消息；需要保存状态或完成业务请求时，应先取得业务完成确认。请在该系统的 Actor 消息线程和创建回调之外调用，避免等待自身完成。
 
 业务 Actor 之间不保证停止顺序，父 Actor 会等待其子 Actor 结束；上述组件逐个停止，前一个组件结束后才停止下一个。
 

@@ -67,7 +67,7 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 type System struct {
 	*Context                                                                 // ActorSystem 本身就表示了根 Actor
 	codec                  *serialization.VividCodec                         // 内部消息编解码器
-	actorOfLock            sync.Mutex                                        // ActorOf 方法的锁，保证 ActorOf 方法的并发安全
+	actorCreations         sync.WaitGroup                                    // 状态锁内接纳创建，关闭准入后等待全部创建及回调返回
 	rootChildrenLock       sync.Mutex                                        // 根子节点表由外部创建与根邮箱共享，不在回调或投递期间持有
 	actorInitLock          sync.Mutex                                        // 保护创建中的名称，不在用户初始化回调期间持有
 	initializingActors     map[vivid.ActorPath]*Context                      // 仅保留正在初始化的 Actor
@@ -204,19 +204,21 @@ func (s *System) ResolveMailbox(receiver vivid.ActorRef) vivid.Mailbox {
 }
 
 func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {
-	s.actorOfLock.Lock()
-	defer s.actorOfLock.Unlock()
-
 	s.statusLock.Lock()
-	unavailable := s.status == stopping || s.status == stop
-	s.statusLock.Unlock()
-	if unavailable {
+	if s.status == stopping || s.status == stop {
+		s.statusLock.Unlock()
 		return nil, vivid.ErrorActorSystemStopped
 	}
-	if s.Context == nil {
+	ctx := s.Context
+	if ctx == nil {
+		s.statusLock.Unlock()
 		return nil, vivid.ErrorActorSystemNotStarted
 	}
-	return s.Context.ActorOf(actor, options...)
+	// 与停止状态转换共用准入边界，关闭等待开始后不会再增加在途创建。
+	s.actorCreations.Add(1)
+	s.statusLock.Unlock()
+	defer s.actorCreations.Done()
+	return ctx.ActorOf(actor, options...)
 }
 
 func (s *System) Start() error {
@@ -379,11 +381,10 @@ func (s *System) finishStop() {
 
 	// 等待已开始的外部创建完成后再通知根 Actor，避免遗漏刚创建的子节点。
 	// 协调发生在独立的关闭任务中，调用方仍按自身预算超时返回。
-	s.actorOfLock.Lock()
+	s.actorCreations.Wait()
 	if s.Context != nil {
 		s.tell(true, s.ref, &guard.Stop{})
 	}
-	s.actorOfLock.Unlock()
 
 	if s.Context != nil {
 		<-s.guardClosedSignal

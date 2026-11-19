@@ -105,6 +105,8 @@ childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
 | **典型场景** | 配置校验、环境检查、依赖注入、预加载只读数据；任一失败可令启动中止（返回 error） | 向注册中心注册、订阅 EventStream、创建子 Actor、发起首次 Tell/调度；需要与系统其它部分交互的“上线”逻辑 |
 | **失败后果** | 返回 error → Actor 不启动，**ActorOf** 返回错误 | 若在此 panic 或 **Failed**，由父级监督策略处理（如重启） |
 
+**OnPrelaunch** 可通过 **`ctx.System().ActorOf`** 创建其他系统直属 Actor；它们不属于当前 Actor 的子级，当前初始化失败不会自动终止它们。不同创建的初始化可以并行执行；不要在创建回调中同步等待本系统 **Stop**，关闭会等待该创建返回。
+
 简单划分：**仅做校验与准备、且不需发消息或创建子 Actor 时用 Prelaunch**；**需要与系统其它 Actor 或组件交互的“上线”逻辑放在 OnLaunch**。
 
 ---

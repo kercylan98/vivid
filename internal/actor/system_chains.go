@@ -92,9 +92,9 @@ func (c *systemChains) spawnGuardActor(system *System) chain.Chain {
 		if err != nil {
 			return err
 		}
-		system.actorOfLock.Lock()
+		system.statusLock.Lock()
 		system.Context = ctx
-		system.actorOfLock.Unlock()
+		system.statusLock.Unlock()
 		return nil
 	})
 }
