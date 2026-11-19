@@ -30,21 +30,22 @@ type eventStream struct {
 
 func (es *eventStream) Subscribe(ctx vivid.EventStreamContext, event any) {
 	eventType := reflect.TypeOf(event)
+	subscriber := ctx.Ref()
+	subscriberPath := subscriber.GetPath()
 
 	es.mu.Lock()
-	defer es.mu.Unlock()
 
 	subscribers, ok := es.subscribers[eventType]
 	if !ok {
 		subscribers = make(map[string]vivid.ActorRef)
 		es.subscribers[eventType] = subscribers
 	}
-	subscriberPath := ctx.Ref().GetPath()
 	if _, ok = subscribers[subscriberPath]; ok {
+		es.mu.Unlock()
 		ctx.Logger().Warn("event already subscribed", log.String("event_type", eventType.String()), log.String("subscriber_path", subscriberPath))
 		return
 	}
-	subscribers[subscriberPath] = ctx.Ref()
+	subscribers[subscriberPath] = subscriber
 
 	types, ok := es.subscriberTypes[subscriberPath]
 	if !ok {
@@ -52,7 +53,9 @@ func (es *eventStream) Subscribe(ctx vivid.EventStreamContext, event any) {
 		es.subscriberTypes[subscriberPath] = types
 	}
 	types[eventType] = struct{}{}
+	es.mu.Unlock()
 
+	// 日志器可重入事件流，订阅表更新完成后再调用。
 	ctx.Logger().Debug("event subscribed", log.String("event_type", eventType.String()), log.String("subscriber_path", subscriberPath))
 }
 
@@ -72,13 +75,13 @@ func (es *eventStream) Publish(ctx vivid.EventStreamContext, event vivid.Message
 
 func (es *eventStream) Unsubscribe(ctx vivid.EventStreamContext, event any) {
 	eventType := reflect.TypeOf(event)
+	subscriberPath := ctx.Ref().GetPath()
 
 	es.mu.Lock()
-	defer es.mu.Unlock()
 
-	subscriberPath := ctx.Ref().GetPath()
 	subscribers, ok := es.subscribers[eventType]
 	if !ok {
+		es.mu.Unlock()
 		ctx.Logger().Debug("event not subscribed", log.String("subscriber_path", subscriberPath), log.String("event_type", eventType.String()))
 		return
 	}
@@ -88,17 +91,18 @@ func (es *eventStream) Unsubscribe(ctx vivid.EventStreamContext, event any) {
 	if len(es.subscriberTypes[subscriberPath]) == 0 {
 		delete(es.subscriberTypes, subscriberPath)
 	}
+	es.mu.Unlock()
 
 	ctx.Logger().Debug("event unsubscribed", log.String("subscriber_path", subscriberPath), log.String("event_type", eventType.String()))
 }
 
 func (es *eventStream) UnsubscribeAll(ctx vivid.EventStreamContext) {
-	es.mu.Lock()
-	defer es.mu.Unlock()
-
 	subscriberPath := ctx.Ref().GetPath()
+	es.mu.Lock()
+
 	count := len(es.subscriberTypes[subscriberPath])
 	if count == 0 {
+		es.mu.Unlock()
 		return
 	}
 
@@ -109,6 +113,7 @@ func (es *eventStream) UnsubscribeAll(ctx vivid.EventStreamContext) {
 		}
 	}
 	delete(es.subscriberTypes, subscriberPath)
+	es.mu.Unlock()
 
 	ctx.Logger().Debug("unsubscribed all events", log.String("subscriber_path", subscriberPath), log.Int("count", count))
 }

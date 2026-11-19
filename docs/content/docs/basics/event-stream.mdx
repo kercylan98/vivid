@@ -31,6 +31,8 @@ description: 系统级发布/订阅（Subscribe、Publish）与事件投递
 
 订阅应在 Actor 生命周期内通过 ActorContext 完成，不要在 Actor 外持有 EventStream 或订阅状态。
 
+取消订阅不会撤回发布时已选中的事件或已进入邮箱的消息，取消后仍可能收到这些在途事件。
+
 ## 发布事件
 
 **Publish(ctx, event)** 向系统内所有**已订阅该事件类型**的 Actor 发布 **event**。事件会被投递到各订阅者的邮箱，由各自的 OnReceive 按类型处理。
@@ -39,12 +41,14 @@ description: 系统级发布/订阅（Subscribe、Publish）与事件投递
 ctx.EventStream().Publish(ctx, MyEvent{Source: ctx.Ref().GetPath(), Data: payload})
 ```
 
-发布方传入的 **ctx** 用于标识来源（如 Logger）；订阅方收到的是 **event** 本身作为 **ctx.Message()**。
+发布时可传入当前 ActorContext；订阅方收到的是 **event** 本身作为 **ctx.Message()**。
 
 ## 典型用法
 
 - **跨模块解耦**：模块 A 发布领域事件，模块 B/C 只订阅感兴趣的类型，无需直接引用 A。
-- **监控与审计**：订阅系统事件（如生命周期、死信），在 OnReceive 中记录或告警。死信事件类型为 **`ves.DeathLetterEvent`**，参见 [消息投递 - 死信](/docs/basics/message-delivery#死信)。启用集群后，可订阅 **`ves.ClusterMembersChangedEvent`** 和 **`ves.ClusterReachabilityChangedEvent`** 观察本地成员及可达性变化，参见 [成员事件](/docs/cluster/events/events)。
+- **监控与审计**：订阅系统事件（如生命周期、死信），在 OnReceive 中记录或告警。死信事件类型为 **`ves.DeathLetterEvent`**，参见 [死信](/docs/basics/death-letter)。启用集群后，可订阅 **`ves.ClusterMembersChangedEvent`** 和 **`ves.ClusterReachabilityChangedEvent`** 观察本地成员及可达性变化，参见 [成员事件](/docs/cluster/events/events)。
 - **与 Stash 配合**：在条件未满足时 Stash 当前消息，订阅“条件就绪”事件，在 OnReceive 中收到该事件时 Unstash 并继续处理。
 
-事件与普通消息使用同一邮箱与行为，保证顺序与一致性。
+事件与普通消息使用同一邮箱，由订阅 Actor 串行处理；多个发布者并发发布时不保证全局顺序。
+
+自定义日志器可以将日志转发为事件。日志调用仍同步执行，应避免重复处理自身产生的日志而形成递归。

@@ -20,7 +20,7 @@ description: 无法投递的消息与 DeathLetterEvent 订阅
 ctx.EventStream().Subscribe(ctx, ves.DeathLetterEvent{})
 ```
 
-在 OnReceive 中收到 **`*ves.DeathLetterEvent`** 时，可读取 **Envelope**（发送者、接收者、消息内容等）与 **Time** 进行诊断或告警。事件类型来自 **`github.com/kercylan98/vivid/pkg/ves`**。
+在 OnReceive 中收到 **`ves.DeathLetterEvent`** 时，可读取 **Envelope**（发送者、接收者、消息内容等）与 **Time** 进行诊断或告警。事件类型来自 **`github.com/kercylan98/vivid/pkg/ves`**。
 
 ## 说明
 

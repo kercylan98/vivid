@@ -26,6 +26,7 @@ type EventStream interface {
 
 	// Unsubscribe 取消当前 Actor 对指定事件类型的订阅。大多数场景下无需主动调用，Actor 销毁时会自动释放全部订阅。
 	// 仅用于提前释放部分不再关注的事件类型。
+	// 取消不会撤回发布时已选中的事件或已进入邮箱的消息。
 	// ctx: Actor 的上下文。
 	// event: 标识事件类型的示例实例，仅作为类型识别，内容可为零值。
 	Unsubscribe(ctx EventStreamContext, event Message)
@@ -36,6 +37,7 @@ type EventStream interface {
 	Publish(ctx EventStreamContext, event Message)
 
 	// UnsubscribeAll 取消当前 Actor 对所有事件的订阅。通常场景不必直接调用，系统会在 Actor 销毁时自动执行。
+	// 取消不会撤回发布时已选中的事件或已进入邮箱的消息。
 	// ctx: 当前 Actor 的上下文。
 	UnsubscribeAll(ctx EventStreamContext)
 }
