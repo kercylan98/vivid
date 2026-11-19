@@ -46,6 +46,8 @@ system := bootstrap.NewActorSystem(
 
 **`system.Stop(timeout...)`** 通过系统消息发起关闭，普通邮箱暂停不会阻断停止。框架执行 **OnKill** 和多阶段收尾，先停止业务 Actor，再依次停止集群、远程通信和指标组件。停止不保证排空普通消息；需要保存状态或完成业务请求时，应先取得业务完成确认。请在该系统的 Actor 消息线程之外调用。
 
+业务 Actor 之间不保证停止顺序，父 Actor 会等待其子 Actor 结束；上述组件逐个停止，前一个组件结束后才停止下一个。
+
 启动初始化期间调用 **Stop** 会等待当前 **Start** 初始化链结束，再清理已经创建的组件；此时 **Start** 返回 **ErrorActorSystemStopped**。启动期间的第二次 **Start** 返回 **ErrorActorSystemAlreadyStarted**。关闭开始后，新的 **ActorSystem.ActorOf** 返回 **ErrorActorSystemStopped**；停止开始前已进入创建流程的 Actor 会纳入关闭。
 
 `timeout` 限制本次调用的等待时间，不传时使用 **WithActorSystemStopTimeout**，默认 1 分钟；显式传入 `<= 0` 表示一直等待。超时返回 **ErrorActorSystemStopFailed**，可用 `errors.Is(err, context.DeadlineExceeded)` 判断原因；后台继续关闭，可再次调用 **Stop** 等待。关闭完成后重复调用返回 **ErrorActorSystemAlreadyStopped**，系统不能重新启动。

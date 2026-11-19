@@ -33,8 +33,17 @@ func NewActor(guardClosedSignal chan struct{}) *Actor {
 
 type Actor struct {
 	guardClosedSignal      chan struct{}
-	registerStopPriorities []*RegisterStopPriority
+	registerStopPriorities map[vivid.ActorPath]RegisterStopPriority
+	pendingStops           map[vivid.ActorPath]pendingStop
+	stopPriorities         []RegisterStopPriority
+	remainingUnregistered  int
+	stoppingRegistered     vivid.ActorRef
 	stopping               bool
+}
+
+type pendingStop struct {
+	ref        vivid.ActorRef
+	registered bool
 }
 
 func (a *Actor) OnPrelaunch(ctx vivid.PrelaunchContext) error {
@@ -60,32 +69,33 @@ func (a *Actor) onStop(ctx vivid.ActorContext) {
 	}
 	a.stopping = true
 
-	// 系统关闭使用系统终止消息，普通邮箱暂停不应阻塞生命周期收尾。
-	// 先关闭未注册的 Actor
-	// 已注册的在 [Actor.onKilled] 中关闭
-	var onlyRegistered = true
-	for _, child := range ctx.Children() {
-		var registered = false
-		for _, v := range a.registerStopPriorities {
-			if registered = v.ActorRef.Equals(child); registered {
-				break
-			}
-		}
+	// 停止前已开始的根级创建已完成，只保存一次名单，避免逐个终止时反复复制子节点。
+	children := ctx.Children()
+	if len(children) > 0 {
+		a.pendingStops = make(map[vivid.ActorPath]pendingStop, len(children))
+	}
+	for _, child := range children {
+		priority, registered := a.registerStopPriorities[child.GetPath()]
+		registered = registered && priority.ActorRef.Equals(child)
+		a.pendingStops[child.GetPath()] = pendingStop{ref: child, registered: registered}
 		if registered {
-			continue
+			a.stopPriorities = append(a.stopPriorities, priority)
+		} else {
+			a.remainingUnregistered++
 		}
-		onlyRegistered = false
-		ctx.Kill(child, false, stopReason)
 	}
+	a.registerStopPriorities = nil
+	sort.Slice(a.stopPriorities, func(i, j int) bool {
+		return a.stopPriorities[i].Priority > a.stopPriorities[j].Priority
+	})
 
-	// 如果没有子 Actor，则关闭自己；如果仅剩余已注册的 Actor，则按优先级逐个关闭
-	if ctx.Children().Len() == 0 {
-		ctx.Kill(ctx.Ref(), false, stopReason)
-		return
+	// 使用系统终止消息，普通邮箱暂停不应阻塞生命周期收尾。
+	for _, child := range children {
+		if !a.pendingStops[child.GetPath()].registered {
+			ctx.Kill(child, false, stopReason)
+		}
 	}
-	if onlyRegistered {
-		a.killNextRegistered(ctx)
-	}
+	a.killNextRegistered(ctx)
 }
 
 func (a *Actor) onKilled(ctx vivid.ActorContext, msg *vivid.OnKilled) {
@@ -93,65 +103,55 @@ func (a *Actor) onKilled(ctx vivid.ActorContext, msg *vivid.OnKilled) {
 		close(a.guardClosedSignal)
 		return
 	}
-	a.removeRegisteredStopPriority(msg.Ref)
-
-	if a.stopping {
-		// 如果剩余 Actor 仅包含已注册的，那么关闭已注册的
-		for _, child := range ctx.Children() {
-			var registered = false
-			for _, v := range a.registerStopPriorities {
-				if v.ActorRef.Equals(child) {
-					registered = true
-					break
-				}
-			}
-			// 还存在未注册的 Actor，则不关闭
-			if !registered {
-				return
-			}
+	if !a.stopping {
+		if priority, ok := a.registerStopPriorities[msg.Ref.GetPath()]; ok && priority.ActorRef.Equals(msg.Ref) {
+			delete(a.registerStopPriorities, msg.Ref.GetPath())
 		}
-
-		a.killNextRegistered(ctx)
+		return
 	}
+
+	// 仅接纳名单内且身份匹配的通知，重复或未知通知不能提前推进关闭。
+	pending, ok := a.pendingStops[msg.Ref.GetPath()]
+	if !ok || !pending.ref.Equals(msg.Ref) {
+		return
+	}
+	delete(a.pendingStops, msg.Ref.GetPath())
+	if !pending.registered {
+		a.remainingUnregistered--
+	} else if a.stoppingRegistered != nil && a.stoppingRegistered.Equals(msg.Ref) {
+		a.stoppingRegistered = nil
+	}
+	a.killNextRegistered(ctx)
 }
 
 func (a *Actor) killNextRegistered(ctx vivid.ActorContext) {
-	for len(a.registerStopPriorities) > 0 {
-		next := a.registerStopPriorities[0]
-		a.registerStopPriorities = a.registerStopPriorities[1:]
-		if ctx.Children().Contains(next.ActorRef) {
-			ctx.Kill(next.ActorRef, false, stopReason)
+	if a.remainingUnregistered > 0 || a.stoppingRegistered != nil {
+		return
+	}
+	for len(a.stopPriorities) > 0 {
+		next := a.stopPriorities[0]
+		a.stopPriorities[0] = RegisterStopPriority{}
+		a.stopPriorities = a.stopPriorities[1:]
+		if pending, ok := a.pendingStops[next.ActorRef.GetPath()]; ok && pending.ref.Equals(next.ActorRef) {
+			a.stoppingRegistered = pending.ref
+			ctx.Kill(pending.ref, false, stopReason)
 			return
 		}
 	}
+	a.pendingStops = nil
+	a.stopPriorities = nil
 	ctx.Kill(ctx.Ref(), false, stopReason)
 }
 
-func (a *Actor) removeRegisteredStopPriority(ref vivid.ActorRef) {
-	if ref == nil || len(a.registerStopPriorities) == 0 {
-		return
-	}
-	filtered := a.registerStopPriorities[:0]
-	for _, item := range a.registerStopPriorities {
-		if item == nil || item.ActorRef == nil || item.ActorRef.Equals(ref) {
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	if len(filtered) == 0 {
-		a.registerStopPriorities = nil
-		return
-	}
-	a.registerStopPriorities = filtered
-}
-
 func (a *Actor) onRegisterStopPriority(_ vivid.ActorContext, msg *RegisterStopPriority) {
-	a.registerStopPriorities = append(a.registerStopPriorities, msg)
-
-	// 按照优先级降序，大的在前
-	sort.Slice(a.registerStopPriorities, func(i, j int) bool {
-		return a.registerStopPriorities[i].Priority > a.registerStopPriorities[j].Priority
-	})
+	if a.stopping || msg.ActorRef == nil {
+		return
+	}
+	if a.registerStopPriorities == nil {
+		a.registerStopPriorities = make(map[vivid.ActorPath]RegisterStopPriority)
+	}
+	// 复制登记值，同一路径重复登记更新优先级；停止开始后不再修改关闭顺序。
+	a.registerStopPriorities[msg.ActorRef.GetPath()] = *msg
 }
 
 func (a *Actor) onDeathLetter(ctx vivid.ActorContext, msg ves.DeathLetterEvent) {
