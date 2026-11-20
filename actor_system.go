@@ -344,6 +344,7 @@ func WithActorSystemMetrics(metrics metrics.Metrics) ActorSystemOption {
 }
 
 // WithActorSystemLogger 返回一个 ActorSystemOption，用于指定 ActorSystem 的日志记录器。
+// 框架隔离日志 panic，输出仍同步执行，日志器应及时返回。
 //
 // 用法场景：
 //   - 在构建 ActorSystem 时，通过该 Option 明确设置 ActorSystem 的日志记录器。

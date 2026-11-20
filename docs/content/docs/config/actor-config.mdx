@@ -12,7 +12,7 @@ description: ActorOptions 与 WithActorXxx 选项一览
 | **WithActorName** | 在当前父级下唯一标识该 Actor；未指定时由系统自动生成。同父下重复会返回 [ErrorActorAlreadyExists](/docs/config/errors) |
 | **WithActorMailbox** | 自定义邮箱实现（Enqueue、Pause、Resume、IsPaused）；未指定则使用系统默认无界队列 |
 | **WithActorDefaultAskTimeout** | 该 Actor 作为 Ask 接收方时的默认超时；仅 >0 时生效，优先级高于系统默认 |
-| **WithActorLogger** | 该 Actor 专用 Logger；未指定则继承系统 Logger |
+| **WithActorLogger** | 该 Actor 专用 Logger；未指定则继承系统 Logger。[日志异常与阻塞边界](/docs/config/actor-system-config#日志) |
 | **WithActorSupervisionStrategy** | 对该 Actor 的**子 Actor** 使用的监督策略；详见 [监督策略](/docs/config/supervision) |
 | **WithActorProvider** | 监督触发**重启**时用于提供新实例；未设置则重启不替换实例。与 [监督策略](/docs/config/supervision#与-actor-提供者provider配合) 配合使用 |
 | **WithActorOptions** | 一次性应用整份 ActorOptions（多用于复用配置） |

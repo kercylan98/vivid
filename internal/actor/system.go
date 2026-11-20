@@ -46,6 +46,7 @@ var (
 
 func NewSystem(options ...vivid.ActorSystemOption) *System {
 	opts := vivid.NewActorSystemOptions(options...)
+	opts.Logger = log.Protect(opts.Logger)
 
 	system := &System{
 		options:           opts,

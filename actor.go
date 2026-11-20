@@ -266,6 +266,7 @@ func WithActorDefaultAskTimeout(timeout time.Duration) ActorOption {
 }
 
 // WithActorLogger 设置专用 Logger，未设置时使用系统默认。
+// 框架隔离日志 panic，输出仍同步执行，日志器应及时返回。
 func WithActorLogger(logger log.Logger) ActorOption {
 	return func(opts *ActorOptions) {
 		opts.Logger = logger

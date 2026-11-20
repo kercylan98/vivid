@@ -106,9 +106,7 @@ func (h *VividHandler) Handle(_ context.Context, record slog.Record) error {
 			return err
 		}
 
-		output.mu.Lock()
-		_, _ = output.writer.Write(formatted)
-		output.mu.Unlock()
+		output.write(formatted)
 	}
 
 	return nil
@@ -183,9 +181,7 @@ func (h *VividHandler) emitRateLimitWarning(now time.Time, dropped int64) {
 			continue
 		}
 
-		output.mu.Lock()
-		_, _ = output.writer.Write(formatted)
-		output.mu.Unlock()
+		output.write(formatted)
 	}
 }
 
@@ -198,6 +194,12 @@ type outputWriter struct {
 	color            bool
 	enableSource     bool
 	enableErrorStack bool
+}
+
+func (o *outputWriter) write(data []byte) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	_, _ = o.writer.Write(data)
 }
 
 type rateLimiter struct {

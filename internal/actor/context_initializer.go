@@ -7,6 +7,7 @@ import (
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/mailbox"
+	"github.com/kercylan98/vivid/pkg/log"
 )
 
 func newContextInitializer(ctx *Context, actor vivid.Actor, options ...vivid.ActorOption) *contextInitializer {
@@ -27,6 +28,7 @@ func (i *contextInitializer) applyOptions() error {
 	for _, option := range i.options {
 		option(i.ctx.options)
 	}
+	i.ctx.options.Logger = log.Protect(i.ctx.options.Logger)
 	return nil
 }
 

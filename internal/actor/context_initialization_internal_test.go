@@ -2,6 +2,7 @@ package actor
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -19,9 +20,18 @@ import (
 type initializationEvent struct{}
 
 func TestContext_InitializationRollback(t *testing.T) {
-	for _, panicCallback := range []bool{false, true} {
-		t.Run(map[bool]string{false: "error", true: "panic"}[panicCallback], func(t *testing.T) {
-			system := NewSystem(vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
+	for scenario := range 4 {
+		panicCallback, panicLogger := scenario&1 != 0, scenario&2 != 0
+		t.Run(fmt.Sprintf("callback_panic=%t/logger_panic=%t", panicCallback, panicLogger), func(t *testing.T) {
+			logger := log.NewTextLogger(log.WithLevel(log.LevelError))
+			if panicLogger {
+				logger = &eventStreamLogger{Logger: logger, observe: func(message string) {
+					if message == "unsubscribed all events" {
+						panic("cleanup logger panic")
+					}
+				}}
+			}
+			system := NewSystem(vivid.WithActorSystemLogger(logger))
 			var lifecycle atomic.Int32
 			system.eventStream = &startupEventStream{EventStream: system.eventStream, observe: func(event vivid.Message) {
 				var ref vivid.ActorRef
