@@ -225,25 +225,24 @@ func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid
 }
 
 func (s *System) Start() error {
-	var stateError = func(s *System) error {
+	stateError, stateMessage := func(s *System) (error, string) {
 		s.statusLock.Lock()
 		defer s.statusLock.Unlock()
 		switch s.status {
 		case starting:
-			s.Logger().Warn("actor system is starting")
-			return vivid.ErrorActorSystemAlreadyStarted
+			return vivid.ErrorActorSystemAlreadyStarted, "actor system is starting"
 		case start:
-			s.Logger().Warn("actor system already started")
-			return vivid.ErrorActorSystemAlreadyStarted
+			return vivid.ErrorActorSystemAlreadyStarted, "actor system already started"
 		case stopping, stop:
-			s.Logger().Warn("actor system already stopped")
-			return vivid.ErrorActorSystemAlreadyStopped
+			return vivid.ErrorActorSystemAlreadyStopped, "actor system already stopped"
 		default:
 			s.status = starting
-			return nil
+			return nil, ""
 		}
 	}(s)
 	if stateError != nil {
+		// 日志器可重入系统，解锁后记录本次判定，不再读取后续状态。
+		s.Logger().Warn(stateMessage)
 		return stateError
 	}
 	defer s.completeStart()
@@ -322,29 +321,26 @@ func (s *System) Stop(timeout ...time.Duration) error {
 
 func (s *System) stop(checkLog bool, timeout ...time.Duration) error {
 	// 只有首个调用启动关闭，其余调用共享完成信号并使用各自的等待预算。
-	var stateError = func(s *System) error {
+	stateError, stateMessage := func(s *System) (error, string) {
 		s.statusLock.Lock()
 		defer s.statusLock.Unlock()
 		switch s.status {
 		case ready:
-			if checkLog {
-				s.Logger().Warn("actor system not started")
-			}
-			return vivid.ErrorActorSystemNotStarted
+			return vivid.ErrorActorSystemNotStarted, "actor system not started"
 		case stop:
-			if checkLog {
-				s.Logger().Warn("actor system already stopped")
-			}
-			return vivid.ErrorActorSystemAlreadyStopped
+			return vivid.ErrorActorSystemAlreadyStopped, "actor system already stopped"
 		case stopping:
-			return nil
+			return nil, ""
 		default:
 			s.status = stopping
 			go s.finishStop()
-			return nil
+			return nil, ""
 		}
 	}(s)
 	if stateError != nil {
+		if checkLog {
+			s.Logger().Warn(stateMessage)
+		}
 		return stateError
 	}
 

@@ -42,6 +42,8 @@ system := bootstrap.NewActorSystem(
 
 日志调用仍同步执行。系统和 Actor 返回的 Logger 会隔离日志器的 panic：输出失败时丢弃该条日志，`With` / `WithGroup` 失败时保留原上下文，不影响框架继续清理；原始日志器不被修改。自定义日志器应及时返回，阻塞输出无法由框架强制中断。
 
+Start、Stop 的状态提示在状态判定后记录，日志回调或并发操作可能已改变系统状态，日志顺序不代表当前状态。日志回调不要同步等待其所在的启动或关闭流程完成，以免等待自身。
+
 ## Actor 创建
 
 系统根 Actor 创建前调用 **`ActorSystem.ActorOf`** 会返回 **`ErrorActorSystemNotStarted`**。
