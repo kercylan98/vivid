@@ -4,6 +4,7 @@ import "github.com/kercylan98/vivid/pkg/log"
 
 type EventStreamContext interface {
 	Logger() log.Logger
+	// Ref 返回本系统创建的本地 Actor 引用或其 Clone，解析或跨网络传递的引用不能用于订阅。
 	Ref() ActorRef
 }
 
@@ -22,6 +23,8 @@ type EventStreamContext interface {
 //	ctx.EventStream().Publish(ctx, MyEvent{ ... })
 type EventStream interface {
 	// Subscribe 订阅指定类型事件。事件到达时将自动推送到 Actor 的邮箱中。
+	// Actor 收尾结束、创建回滚或重启失败后拒绝新订阅，以 ErrorActorDeaded 触发 panic。
+	// 非本系统创建的引用同样拒绝；成功重启和手动取消订阅不会关闭准入。
 	// ctx: Actor 的上下文，建议为当前 ActorContext。
 	// event: 标识事件类型的示例实例，仅作为类型识别，内容可为零值。
 	Subscribe(ctx EventStreamContext, event Message)

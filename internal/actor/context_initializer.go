@@ -57,6 +57,7 @@ func (i *contextInitializer) initRef() error {
 		return vivid.ErrorRefInvalidPath.With(joinPathErr).With(newRefErr)
 	}
 	i.ctx.ref = ref
+	ref.events = &eventStreamLifetime{scope: i.ctx.system.eventStreamScope}
 	if i.ctx.parent != nil {
 		return i.ctx.system.reserveActorContext(i.ctx)
 	}
@@ -78,7 +79,7 @@ func (c *Context) rollbackInitialization() {
 	// 名称保留到清理结束，失败回调持有的上下文也不能再次登记请求。
 	atomic.StoreInt32(&c.state, killed)
 	system.closeContextRequests(c)
-	c.EventStream().UnsubscribeAll(c)
+	c.closeEventStream()
 	c.scheduler.Load().close()
 	c.phaseKill = nil
 	system.actorInitLock.Lock()

@@ -58,6 +58,7 @@ type Ref struct {
 	path        string
 	cache       atomic.Pointer[refMailbox]
 	stringCache atomic.Pointer[string]
+	events      *eventStreamLifetime // 本地实例的事件订阅准入，引用克隆共享
 }
 
 type refMailbox struct {
@@ -87,6 +88,7 @@ func (r *Ref) Clone() vivid.ActorRef {
 	return &Ref{
 		address: r.address,
 		path:    r.path,
+		events:  r.events,
 	}
 }
 

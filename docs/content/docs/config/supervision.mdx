@@ -110,7 +110,7 @@ ref, _ := ctx.ActorOf(&MyActor{}, vivid.WithActorSupervisionStrategy(strategy))
 - **影响**：
   - 发往该 ref 的 Tell/Ask 仍可投递，但无业务处理；Ask 可能超时或得不到预期回复。
   - 该 ref 仍存在；本地和远程 **ActorSystem.Probe(ref)** 均返回 **Available == false**。重启初始化中也不可用，成功重启后恢复；Probe 不执行用户行为，不能代替业务健康检查。
-  - 框架清理该 Actor 的全部事件订阅，包括失败初始化期间新增的订阅；已选中或已进入邮箱的事件不会撤回。事件订阅规则见 [事件流](/docs/basics/event-stream)。
+  - 框架清理该 Actor 的全部事件订阅，包括失败初始化期间新增的订阅，并拒绝后续订阅；已选中或已进入邮箱的事件不会撤回。事件订阅规则见 [事件流](/docs/basics/event-stream)。
   - 父级**不会**收到该子 Actor 的 **OnKilled**（因未从系统移除），若父级依赖“子死亡”做清理或重建，需通过日志、监控或健康检查发现僵尸并主动 **Kill**。
 - **解除**：僵尸状态**不会自动恢复**。只有以下情况该 Actor 才会被释放、引用失效：
   - **显式终止**：对 ref 调用 **Kill(ref, ...)**，僵尸会走正常终止流程并从系统移除。

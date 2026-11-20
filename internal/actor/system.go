@@ -55,6 +55,7 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 		stopCompleted:     make(chan struct{}),
 		startCompleted:    make(chan struct{}),
 		timers:            scheduler.NewTimers(),
+		eventStreamScope:  new(eventStreamScope),
 	}
 
 	system.options.Context, system.cancel = context.WithCancel(system.options.Context)
@@ -85,6 +86,7 @@ type System struct {
 	remotingAdmission      *remoting.OutboundAdmission                       // 远程信封在进入邮箱前共享的准入名额
 	remotingEnvelopHandler remoting.NetworkEnvelopHandler                    // 远程信封处理器
 	eventStream            vivid.EventStream                                 // 事件流
+	eventStreamScope       *eventStreamScope                                 // 本地订阅身份，不保留系统引用
 	metrics                metrics.Metrics                                   // 指标收集器
 	timers                 *scheduler.Timers                                 // 本系统共享的分片计时队列
 	status                 int32                                             // 系统状态

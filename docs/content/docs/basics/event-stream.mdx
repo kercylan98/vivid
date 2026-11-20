@@ -33,6 +33,10 @@ description: 系统级发布/订阅（Subscribe、Publish）与事件投递
 
 成功重启会保留已有订阅；重启失败时，框架会清理该 Actor 的全部订阅，包括失败初始化期间新增的订阅。
 
+Actor 收尾结束、创建回滚或重启失败后，再次订阅会以 `vivid.ErrorActorDeaded` 触发 panic。`OnKill` 与自身 `OnKilled` 回调期间仍可订阅，回调结束后统一清理；手动 `UnsubscribeAll` 不关闭后续订阅。
+
+自定义 `EventStreamContext` 的 `Ref()` 须返回本系统创建的本地 Actor 引用或其 `Clone()`；解析或跨网络传递的引用不携带本地实例身份，不能用于订阅。旧实例的取消操作不会影响同路径的新实例。
+
 取消订阅不会撤回发布时已选中的事件或已进入邮箱的消息，取消后仍可能收到这些在途事件。
 
 `Subscribe`、`Unsubscribe`、`Publish` 不接受无类型 `nil`，会在操作前以 `vivid.ErrorIllegalArgument` 触发 panic。订阅指针事件可使用 `ctx.EventStream().Subscribe(ctx, (*MyEvent)(nil))`；带类型的 `nil` 保留事件类型，发布时也会作为该类型的空值投递。
