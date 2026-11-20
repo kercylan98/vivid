@@ -201,6 +201,8 @@ func (h *killedHandler) handleRestart() {
 	if !success {
 		h.ctx.system.closeContextRequests(h.ctx)
 		h.ctx.scheduler.Load().close()
+		// 释放不可用实例的事件订阅，包含失败钩子中新建的登记。
+		h.ctx.EventStream().UnsubscribeAll(h.ctx)
 		// 记录错误并释放资源
 		h.ctx.Logger().Error("restart failed; actor is now in zombie state", log.String("path", h.ctx.ref.GetPath()))
 		h.ctx.zombie = true

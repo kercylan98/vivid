@@ -12,6 +12,7 @@ type EventStreamContext interface {
 //   - 订阅（Subscribe）指定事件类型后，Actor 将收到所有相应事件的推送。
 //   - 事件消息（event）会被投递到 Actor 的邮箱（Mailbox），保证事件和普通消息具备同样的处理模型。
 //   - 通常情况下，无需手动调用 Unsubscribe 或 UnsubscribeAll；当 Actor 被销毁时，其全部事件订阅会由 Vivid 自动释放，防止内存泄漏。
+//   - 成功重启保留已有订阅；重启失败时释放全部订阅，包括失败初始化期间新增的订阅。
 //   - 建议所有操作均通过 ActorContext 完成，不要在 Actor 生命周期之外持有 EventStream 或订阅状态引用。
 //   - Subscribe、Unsubscribe、Publish 要求 event 具有具体类型；无类型 nil 会在操作前以 ErrorIllegalArgument 触发 panic，带类型的 nil 合法。
 //

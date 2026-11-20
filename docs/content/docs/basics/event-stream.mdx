@@ -31,6 +31,8 @@ description: 系统级发布/订阅（Subscribe、Publish）与事件投递
 
 订阅应在 Actor 生命周期内通过 ActorContext 完成，不要在 Actor 外持有 EventStream 或订阅状态。
 
+成功重启会保留已有订阅；重启失败时，框架会清理该 Actor 的全部订阅，包括失败初始化期间新增的订阅。
+
 取消订阅不会撤回发布时已选中的事件或已进入邮箱的消息，取消后仍可能收到这些在途事件。
 
 `Subscribe`、`Unsubscribe`、`Publish` 不接受无类型 `nil`，会在操作前以 `vivid.ErrorIllegalArgument` 触发 panic。订阅指针事件可使用 `ctx.EventStream().Subscribe(ctx, (*MyEvent)(nil))`；带类型的 `nil` 保留事件类型，发布时也会作为该类型的空值投递。
