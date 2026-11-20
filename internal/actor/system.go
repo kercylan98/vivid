@@ -97,21 +97,38 @@ type System struct {
 	gossipRef              vivid.ActorRef                                    // 集群 gossip 引用
 	clusterReadiness       *gossip.Readiness                                 // 本次启动的初始加入结果
 	virtualCoordinator     bridge.VirtualCoordinator                         // 虚拟协调器
-	closingActors          sync.Map                                          // 即将被关闭的 Actor
+	closingActors          sync.Map                                          // 即将关闭的本地实例引用，不按可复用路径索引
 }
 
 func (s *System) markActorAsClosing(ref vivid.ActorRef) {
 	if ref.GetAddress() != s.Ref().GetAddress() {
 		return
 	}
-	s.closingActors.Store(ref.GetPath(), struct{}{})
+	local := ref.(*Ref)
+	value, exists := s.actorContexts.Load(local.path)
+	ctx, ok := value.(*Context)
+	if !exists || !ok {
+		return
+	}
+	// 原实例引用及已缓存的邮箱不能为同路径新实例登记关闭。
+	if local.events != nil && local.events != ctx.ref.(*Ref).events {
+		return
+	}
+	if cached := local.cache.Load(); cached != nil && cached.mailbox != ctx.mailbox {
+		return
+	}
+	s.closingActors.Store(ctx.ref, struct{}{})
+	// 移除路由后可能已有同名新实例，撤销旧实例的迟到登记。
+	if current, exists := s.actorContexts.Load(local.path); !exists || current != ctx {
+		s.closingActors.Delete(ctx.ref)
+	}
 }
 
 func (s *System) unmarkActorAsClosing(ref vivid.ActorRef) {
 	if ref.GetAddress() != s.Ref().GetAddress() {
 		return
 	}
-	s.closingActors.Delete(ref.GetPath())
+	s.closingActors.Delete(ref.(*Ref))
 }
 
 func (s *System) HeartbeatProbe(ref vivid.ActorRef) *vivid.Heartbeat {
@@ -130,7 +147,10 @@ func (s *System) HeartbeatProbe(ref vivid.ActorRef) *vivid.Heartbeat {
 	}
 
 	// 是否即将被关闭
-	_, closing := s.closingActors.Load(ref.GetPath())
+	var closing bool
+	if ctx, ok := value.(*Context); ok {
+		_, closing = s.closingActors.Load(ctx.ref)
+	}
 	if closing {
 		// 如果是上下文，还需检查是否处于多阶段停止中
 		ctx, ok := value.(*Context)
@@ -442,9 +462,12 @@ func (s *System) appendFuture(agentRef *AgentRef, future *future.Future[vivid.Me
 
 func (s *System) closeContextRequests(ctx *Context) {
 	s.futureLock.Lock()
-	if ctx.requestEpoch.Load()&1 == 0 {
-		ctx.requestEpoch.Add(1)
+	if ctx.requestEpoch.Load()&1 != 0 {
+		// 已关闭的生命周期不能再次按路径清理同名新实例的请求。
+		s.futureLock.Unlock()
+		return
 	}
+	ctx.requestEpoch.Add(1)
 	s.futureLock.Unlock()
 	// 关闭登记后再清理，后续请求无法越过最终快照。
 	s.removeFuturesByAgentPath(ctx.ref.GetPath(), vivid.ErrorActorDeaded)
@@ -536,9 +559,9 @@ func (s *System) reserveActorContext(ctx *Context) error {
 	return nil
 }
 
-// removeActorContext 用于移除指定路径的 ActorContext。
+// removeActorContext 只移除本实例的路由和关闭标记。
 func (s *System) removeActorContext(ctx *Context) {
-	s.actorContexts.Delete(ctx.Ref().GetPath())
+	s.actorContexts.CompareAndDelete(ctx.Ref().GetPath(), ctx)
 	s.unmarkActorAsClosing(ctx.Ref())
 }
 

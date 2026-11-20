@@ -43,6 +43,9 @@ func (h *killedHandler) handleChildDeath() {
 			delete(h.ctx.children, h.message.Ref.GetPath())
 			h.ctx.system.rootChildrenLock.Unlock()
 		} else {
+			if child, exists := h.ctx.children[h.message.Ref.GetPath()]; exists && child != h.message.Ref {
+				return
+			}
 			delete(h.ctx.children, h.message.Ref.GetPath())
 		}
 		h.ctx.executeBehaviorWithRecovery(h.behavior)
@@ -134,7 +137,7 @@ func (h *killedHandler) cleanupIfNotRestarting() {
 	})
 	if h.ctx.parent == nil {
 		// 根行为结束不等于框架清理完成，系统须等待登记释放及事件发布返回。
-		// 根邮箱串行执行，僵尸实例的重复清理也只通知一次。
+		// 根邮箱串行执行，完成信号只通知一次。
 		select {
 		case <-h.ctx.system.rootCleanupCompleted:
 		default:

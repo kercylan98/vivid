@@ -694,7 +694,12 @@ func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
 }
 
 func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
-	if !c.zombie && !atomic.CompareAndSwapInt32(&c.state, running, killing) {
+	previous := running
+	if c.zombie {
+		// 重启失败保留 killed 状态，显式终止后同样只进入一次收尾。
+		previous = killed
+	}
+	if !atomic.CompareAndSwapInt32(&c.state, previous, killing) {
 		return
 	}
 	c.doKill(message, behavior)
@@ -758,7 +763,14 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 
 	v := chain.NewVoid()
 	if c.zombie {
-		handler.shouldContinue = true
+		handler.handleChildDeath()
+		handler.checkAndMarkKilled()
+		if !handler.shouldContinue {
+			return
+		}
+		// 最终终止后按 killed 丢弃迟到消息，不再进入僵尸清理。
+		c.zombie = false
+		c.restarting = nil
 		handler.prepareSelfKilledMessage()
 		handler.restarting = false
 		handler.cleanupRequests()

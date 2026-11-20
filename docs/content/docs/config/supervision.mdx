@@ -116,4 +116,6 @@ ref, _ := ctx.ActorOf(&MyActor{}, vivid.WithActorSupervisionStrategy(strategy))
   - **显式终止**：对 ref 调用 **Kill(ref, ...)**，僵尸会走正常终止流程并从系统移除。
   - **随系统或父级退出**：**ActorSystem.Stop()** 或父 Actor 被终止时，整棵子树（含僵尸子 Actor）会被一并清理。
 
+同一僵尸实例的最终终止只清理和通知一次；终止后的迟到系统消息不会再次清理同路径新实例的资源。重建后请使用创建时返回的新引用。
+
 建议保证 **OnRestarted** / **OnPreRestart** 等钩子尽量可成功，或通过“重启失败；actor is now in zombie state”日志做监控与告警，必要时对对应 ref 执行 **Kill**。发起终止见 [创建与生命周期 - 发起终止](/docs/basics/lifecycle#发起终止kill)。
