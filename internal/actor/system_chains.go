@@ -88,7 +88,7 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 
 func (c *systemChains) spawnGuardActor(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
-		ctx, err := NewContext(system, nil, guard.NewActor(system.guardClosedSignal))
+		ctx, err := NewContext(system, nil, guard.NewActor())
 		if err != nil {
 			return err
 		}

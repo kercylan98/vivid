@@ -49,14 +49,14 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 	opts.Logger = log.Protect(opts.Logger)
 
 	system := &System{
-		options:           opts,
-		actorContexts:     sync.Map{},
-		futureAgents:      make(map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef),
-		guardClosedSignal: make(chan struct{}),
-		stopCompleted:     make(chan struct{}),
-		startCompleted:    make(chan struct{}),
-		timers:            scheduler.NewTimers(),
-		eventStreamScope:  new(eventStreamScope),
+		options:              opts,
+		actorContexts:        sync.Map{},
+		futureAgents:         make(map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef),
+		rootCleanupCompleted: make(chan struct{}),
+		stopCompleted:        make(chan struct{}),
+		startCompleted:       make(chan struct{}),
+		timers:               scheduler.NewTimers(),
+		eventStreamScope:     new(eventStreamScope),
 	}
 
 	system.options.Context, system.cancel = context.WithCancel(system.options.Context)
@@ -78,7 +78,7 @@ type System struct {
 	futureAgents           map[vivid.ActorPath]map[vivid.ActorPath]*AgentRef // 记录本地 Actor 其正在被代理的 Future
 	futureLock             sync.RWMutex                                      // Future 的锁，保证 Future 的并发安全
 	requestsClosed         bool                                              // 根 Actor 收尾后关闭请求登记，由 futureLock 保护
-	guardClosedSignal      chan struct{}                                     // 用于通知系统关闭的信号
+	rootCleanupCompleted   chan struct{}                                     // 根 Actor 的框架清理已完成
 	stopCompleted          chan struct{}                                     // 有序关闭及系统资源清理均已完成
 	startCompleted         chan struct{}                                     // 首次启动初始化链已结束
 	startOnce              sync.Once                                         // 确保初始化链结束信号只关闭一次
@@ -386,9 +386,7 @@ func (s *System) finishStop() {
 	}
 
 	if s.Context != nil {
-		<-s.guardClosedSignal
-		// 根 Actor 在自身 OnKilled 中发出关闭信号，发布停止完成前复核调度登记已释放。
-		s.Context.scheduler.Load().close()
+		<-s.rootCleanupCompleted
 	}
 	s.closeFutureRequests()
 	if s.remotingAdmission != nil {

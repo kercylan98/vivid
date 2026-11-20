@@ -132,6 +132,15 @@ func (h *killedHandler) cleanupIfNotRestarting() {
 		Type:     reflect.TypeOf(h.ctx.actor),
 		Duration: time.Since(h.ctx.launchTime),
 	})
+	if h.ctx.parent == nil {
+		// 根行为结束不等于框架清理完成，系统须等待登记释放及事件发布返回。
+		// 根邮箱串行执行，僵尸实例的重复清理也只通知一次。
+		select {
+		case <-h.ctx.system.rootCleanupCompleted:
+		default:
+			close(h.ctx.system.rootCleanupCompleted)
+		}
+	}
 }
 
 // cleanupScheduler 清理调度器

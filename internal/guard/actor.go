@@ -25,14 +25,11 @@ type RegisterStopPriority struct {
 
 type Stop struct{}
 
-func NewActor(guardClosedSignal chan struct{}) *Actor {
-	return &Actor{
-		guardClosedSignal: guardClosedSignal,
-	}
+func NewActor() *Actor {
+	return &Actor{}
 }
 
 type Actor struct {
-	guardClosedSignal      chan struct{}
 	registerStopPriorities map[vivid.ActorPath]RegisterStopPriority
 	pendingStops           map[vivid.ActorPath]pendingStop
 	stopPriorities         []RegisterStopPriority
@@ -100,7 +97,6 @@ func (a *Actor) onStop(ctx vivid.ActorContext) {
 
 func (a *Actor) onKilled(ctx vivid.ActorContext, msg *vivid.OnKilled) {
 	if msg.Ref.Equals(ctx.Ref()) {
-		close(a.guardClosedSignal)
 		return
 	}
 	if !a.stopping {

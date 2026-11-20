@@ -33,6 +33,7 @@ type ActorSystem interface {
 	Start() error
 
 	// Stop 有序停止当前 ActorSystem 实例，并同步等待关闭完成。
+	// 成功返回前，根 Actor 的请求、调度、订阅及路由登记已释放，死亡事件发布已返回；不等待订阅者处理事件。
 	//
 	// 主要功能与行为说明：
 	//   - 通过系统消息发起关闭，不受普通邮箱暂停影响；保留 [OnKill] 和多阶段收尾，子 Actor 先于父 Actor 结束。

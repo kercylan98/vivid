@@ -73,7 +73,7 @@ func TestSystem_RemotingStartRollbackWithInbound(t *testing.T) {
 	require.ErrorIs(t, err, vivid.ErrorIllegalArgument)
 	require.NotErrorIs(t, err, vivid.ErrorActorSystemStopFailed, "回滚不得与 Reader 的启动等待互相阻塞")
 	select {
-	case <-system.guardClosedSignal:
+	case <-system.rootCleanupCompleted:
 	default:
 		t.Fatal("启动失败返回前尚未完成清理")
 	}
@@ -128,7 +128,7 @@ func TestSystem_StopDuringStartup(t *testing.T) {
 			require.ErrorIs(t, receiveRetryResult(t, started), vivid.ErrorActorSystemStopped, "Stop 已在初始化期间获胜时，Start 不应报告成功")
 			require.NoError(t, receiveRetryResult(t, stopped), "Stop 应等待启动链结束后清理全部已创建组件")
 			require.ErrorIs(t, receiveRetryResult(t, created), vivid.ErrorActorSystemStopped)
-			receiveRetryResult(t, system.guardClosedSignal)
+			receiveRetryResult(t, system.rootCleanupCompleted)
 			require.Error(t, system.options.Context.Err())
 			listener, err = net.Listen("tcp", address)
 			require.NoError(t, err, "Stop 返回时启动期间创建的监听必须释放")

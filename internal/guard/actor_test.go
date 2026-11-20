@@ -61,7 +61,7 @@ func TestActor_StopPriorityOrder(t *testing.T) {
 	business1, business2 := &stopTestRef{path: "/business-1"}, &stopTestRef{path: "/business-2"}
 	gossip, remoting, metrics := &stopTestRef{path: "/gossip"}, &stopTestRef{path: "/remoting"}, &stopTestRef{path: "/metrics"}
 	ctx := newStopTestContext(t, business1, business2, gossip, remoting, metrics)
-	actor := NewActor(make(chan struct{}))
+	actor := NewActor()
 	actor.onRegisterStopPriority(ctx, &RegisterStopPriority{ActorRef: remoting, Priority: 1})
 	actor.onRegisterStopPriority(ctx, &RegisterStopPriority{ActorRef: metrics, Priority: 0})
 	actor.onRegisterStopPriority(ctx, &RegisterStopPriority{ActorRef: gossip, Priority: 2})
@@ -100,11 +100,8 @@ func TestActor_StopPriorityOrder(t *testing.T) {
 	require.Nil(t, actor.registerStopPriorities)
 	require.Nil(t, actor.stoppingRegistered)
 	actor.onKilled(ctx, &vivid.OnKilled{Ref: ctx.Ref()})
-	select {
-	case <-actor.guardClosedSignal:
-	default:
-		t.Fatal("根 Actor 收尾后必须通知系统")
-	}
+	actor.onKilled(ctx, &vivid.OnKilled{Ref: ctx.Ref()})
+	require.Len(t, ctx.kills, 6, "自身通知不再推进子级停止")
 }
 
 func TestActor_StopWithEarlyComponentDeath(t *testing.T) {
@@ -113,7 +110,7 @@ func TestActor_StopWithEarlyComponentDeath(t *testing.T) {
 			business := &stopTestRef{path: "/business"}
 			first, second := &stopTestRef{path: "/first"}, &stopTestRef{path: "/second"}
 			ctx := newStopTestContext(t, business, first, second)
-			actor := NewActor(make(chan struct{}))
+			actor := NewActor()
 			actor.onRegisterStopPriority(ctx, &RegisterStopPriority{ActorRef: first, Priority: 2})
 			actor.onRegisterStopPriority(ctx, &RegisterStopPriority{ActorRef: second, Priority: 1})
 			actor.onStop(ctx)
@@ -142,7 +139,7 @@ func TestActor_StopWithEarlyComponentDeath(t *testing.T) {
 func TestActor_StopRegistrationSnapshot(t *testing.T) {
 	first, second := &stopTestRef{path: "/first"}, &stopTestRef{path: "/second"}
 	ctx := newStopTestContext(t, first, second)
-	actor := NewActor(make(chan struct{}))
+	actor := NewActor()
 	registration := &RegisterStopPriority{ActorRef: first, Priority: 0}
 	actor.onRegisterStopPriority(ctx, registration)
 	registration.Priority = 3
@@ -164,7 +161,7 @@ func TestActor_StopRegistrationSnapshot(t *testing.T) {
 func TestActor_StopWithStaleRegistration(t *testing.T) {
 	child := &stopTestRef{path: "/child"}
 	ctx := newStopTestContext(t, child)
-	actor := NewActor(make(chan struct{}))
+	actor := NewActor()
 	actor.onRegisterStopPriority(ctx, &RegisterStopPriority{ActorRef: child})
 	actor.onKilled(ctx, &vivid.OnKilled{Ref: &stopTestRef{path: child.path, address: "other"}})
 	require.Len(t, actor.registerStopPriorities, 1)
@@ -184,7 +181,7 @@ func TestActor_StopManyChildren(t *testing.T) {
 		children[index] = &stopTestRef{path: "/" + strconv.Itoa(index)}
 	}
 	ctx := newStopTestContext(t, children...)
-	actor := NewActor(make(chan struct{}))
+	actor := NewActor()
 	actor.onStop(ctx)
 	require.Len(t, ctx.kills, count)
 	for _, child := range children {
