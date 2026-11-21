@@ -23,6 +23,7 @@ type contextInitializer struct {
 	options        []vivid.ActorOption
 	actor          vivid.Actor
 	mailboxFactory func(*Context) vivid.Mailbox // 仅内部虚拟激活使用，不包装业务 Actor
+	beforeMailbox  func() error                 // 虚拟归属在用户预启动返回后、业务消息准入前复核
 }
 
 func (i *contextInitializer) applyOptions() error {
@@ -100,6 +101,11 @@ func (i *contextInitializer) prelaunch() error {
 }
 
 func (i *contextInitializer) initMailbox() error {
+	if i.beforeMailbox != nil {
+		if err := i.beforeMailbox(); err != nil {
+			return err
+		}
+	}
 	if i.mailboxFactory != nil {
 		i.ctx.mailbox = i.mailboxFactory(i.ctx)
 	} else {

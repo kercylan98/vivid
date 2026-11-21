@@ -421,6 +421,9 @@ func (s *System) finishStop() {
 	if s.Context != nil {
 		<-s.rootCleanupCompleted
 	}
+	if s.virtualCoordinator != nil && s.virtualCoordinator.gate != nil {
+		<-s.virtualCoordinator.gate.done
+	}
 	s.closeFutureRequests()
 	if s.remotingAdmission != nil {
 		s.remotingAdmission.Stop()

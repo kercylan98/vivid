@@ -30,24 +30,27 @@ type virtualDelivery struct {
 }
 
 type virtualActivation struct {
-	key      virtualKey
-	provider vivid.ActorProvider
-	mailbox  *virtualMailbox
-	queue    []virtualDelivery
-	creating bool
+	key       virtualKey
+	provider  vivid.ActorProvider
+	mailbox   *virtualMailbox
+	queue     []virtualDelivery
+	creating  bool
+	ownership *virtualOwnershipState
 }
 
 // virtualCoordinator 只协调本系统的逻辑身份与物理实例，不保存业务 ActorContext 供外部调用。
 // 锁内只更新登记和默认邮箱，Provider、生命周期及失败回调均在锁外执行。
 type virtualCoordinator struct {
-	system  *System
-	options vivid.VirtualActorOptions
-	mu      sync.Mutex
-	entries map[virtualKey]*virtualActivation
-	waiting []*virtualActivation
-	running int
-	pending int
-	closed  bool
+	system   *System
+	options  vivid.VirtualActorOptions
+	mu       sync.Mutex
+	entries  map[virtualKey]*virtualActivation
+	waiting  []*virtualActivation
+	running  int
+	pending  int
+	closed   bool
+	gate     *virtualOwnershipGate
+	retiring []*virtualActivation
 }
 
 func newVirtualCoordinator(system *System) *virtualCoordinator {
@@ -114,7 +117,18 @@ func (v *virtualCoordinator) dispatch(delivery virtualDelivery) error {
 }
 
 func (v *virtualCoordinator) startLocked() {
-	for !v.closed && v.running < v.options.ActivationConcurrency && len(v.waiting) > 0 {
+	for v.running < v.options.ActivationConcurrency {
+		if len(v.retiring) > 0 {
+			entry := v.retiring[0]
+			v.retiring[0] = nil
+			v.retiring = v.retiring[1:]
+			v.running++
+			go v.releaseOwnership(entry)
+			continue
+		}
+		if v.closed || len(v.waiting) == 0 {
+			return
+		}
 		parent, err := v.system.beginActorCreation()
 		if err != nil {
 			// Stop 关闭创建准入后会清空尚未开始的等待，不在锁内结束 Future。
@@ -138,6 +152,11 @@ func (v *virtualCoordinator) create(parent *Context, entry *virtualActivation) {
 		}
 		v.complete(entry, err)
 	}()
+	if v.gate != nil {
+		if err = v.claimOwnership(entry); err != nil {
+			return
+		}
+	}
 	actor := entry.provider.Provide()
 	if actor == nil {
 		err = vivid.ErrorActorSpawnFailed.WithMessage("virtual actor provider returned nil")
@@ -152,6 +171,9 @@ func (v *virtualCoordinator) create(parent *Context, entry *virtualActivation) {
 		}
 	}
 	_, err = parent.actorOf(actor, func(initializer *contextInitializer) {
+		if v.gate != nil {
+			initializer.beforeMailbox = func() error { return v.validateOwnership(entry) }
+		}
 		// 业务固定选项仍生效；物理名称与重启 Provider 由虚拟激活统一管理。
 		initializer.options = append(initializer.options,
 			vivid.WithActorName(fmt.Sprintf("@virtual-%d", actorIncrementId.Add(1))),
@@ -169,6 +191,7 @@ func (v *virtualCoordinator) create(parent *Context, entry *virtualActivation) {
 }
 
 func (v *virtualCoordinator) complete(entry *virtualActivation, err error) {
+	var stopping *virtualMailbox
 	v.mu.Lock()
 	v.running--
 	entry.creating = false
@@ -188,10 +211,23 @@ func (v *virtualCoordinator) complete(entry *virtualActivation, err error) {
 			}
 		}
 	} else {
-		delete(v.entries, entry.key)
+		if entry.ownership != nil {
+			if entry.mailbox != nil && !entry.mailbox.released {
+				entry.mailbox.closing = true
+				stopping = entry.mailbox
+			} else {
+				v.retireLocked(entry)
+			}
+		} else {
+			delete(v.entries, entry.key)
+		}
 	}
 	v.startLocked()
+	v.finishOwnershipLocked()
 	v.mu.Unlock()
+	if stopping != nil {
+		v.system.Kill(stopping.ctx.ref, false, "virtual activation did not complete")
+	}
 	if err != nil {
 		for _, delivery := range queued {
 			v.fail(delivery, err)
@@ -211,17 +247,24 @@ func (v *virtualCoordinator) fail(delivery virtualDelivery, err error) {
 func (v *virtualCoordinator) close() {
 	v.mu.Lock()
 	v.closed = true
+	if v.gate != nil {
+		v.gate.deadline = time.Now().Add(v.gate.timeout)
+	}
 	var queued []virtualDelivery
 	for key, entry := range v.entries {
 		queued = append(queued, entry.queue...)
 		v.pending -= len(entry.queue)
 		entry.queue = nil
-		if !entry.creating && entry.mailbox == nil {
+		if !entry.creating && entry.mailbox == nil && entry.ownership == nil {
 			delete(v.entries, key)
 		}
 	}
 	v.waiting = nil
+	v.finishOwnershipLocked()
 	v.mu.Unlock()
+	if v.gate != nil {
+		v.gate.cancel()
+	}
 	for _, delivery := range queued {
 		v.fail(delivery, vivid.ErrorActorSystemStopped)
 	}
@@ -334,10 +377,14 @@ func (m *virtualMailbox) onIdle(check *virtualIdleCheck) {
 }
 
 func (m *virtualMailbox) release() {
+	m.releaseThen(nil)
+}
+
+func (m *virtualMailbox) releaseThen(after func()) {
 	v := m.coordinator
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	if m.released {
+		v.mu.Unlock()
 		return
 	}
 	m.closing, m.released = true, true
@@ -346,7 +393,27 @@ func (m *virtualMailbox) release() {
 		m.timer = nil
 	}
 	m.check = nil
-	if v.entries[m.entry.key] != m.entry || m.entry.mailbox != m || m.entry.creating {
+	if v.entries[m.entry.key] != m.entry || m.entry.mailbox != m {
+		v.mu.Unlock()
+		if after != nil {
+			after()
+		}
+		return
+	}
+	if m.entry.ownership != nil {
+		m.entry.ownership.after = after
+		if !m.entry.creating {
+			v.retireLocked(m.entry)
+			v.startLocked()
+		}
+		v.mu.Unlock()
+		return
+	}
+	if m.entry.creating {
+		v.mu.Unlock()
+		if after != nil {
+			after()
+		}
 		return
 	}
 	m.entry.mailbox = nil
@@ -355,5 +422,9 @@ func (m *virtualMailbox) release() {
 		v.startLocked()
 	} else {
 		delete(v.entries, m.entry.key)
+	}
+	v.mu.Unlock()
+	if after != nil {
+		after()
 	}
 }

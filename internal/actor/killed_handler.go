@@ -137,10 +137,12 @@ func (h *killedHandler) cleanupIfNotRestarting() {
 		Duration: time.Since(h.ctx.launchTime),
 	})
 	if virtualActor {
-		virtual.release()
-		if h.ctx.parent != nil {
-			h.ctx.tell(true, h.ctx.parent, h.selfKilledMessage)
-		}
+		system, parent, ref, message := h.ctx.system, h.ctx.parent, h.ctx.ref, h.selfKilledMessage
+		virtual.releaseThen(func() {
+			if parent != nil {
+				system.ResolveMailbox(parent).Enqueue(mailbox.NewEnvelop(true, ref, parent, message))
+			}
+		})
 	}
 	if h.ctx.parent == nil {
 		// 根行为结束不等于框架清理完成，系统须等待登记释放及事件发布返回。
@@ -176,7 +178,12 @@ func (h *killedHandler) handleRestart() {
 
 	// 如果提供了提供者，则使用提供者提供新的 Actor 实例
 	var success = true
-	if h.ctx.options.Provider != nil {
+	if virtual, ok := h.ctx.mailbox.(*virtualMailbox); ok && virtual.entry.ownership != nil {
+		success = h.ctx.restarting.recoverExec(h.ctx.Logger(), "validate virtual ownership", true, func() error {
+			return virtual.coordinator.validateOwnership(virtual.entry)
+		})
+	}
+	if h.ctx.options.Provider != nil && success {
 		success = h.ctx.restarting.recoverExec(h.ctx.Logger(), "provide actor", true, func() error {
 			actor := h.ctx.options.Provider.Provide()
 			if actor == nil {
@@ -213,6 +220,11 @@ func (h *killedHandler) handleRestart() {
 	if preLaunchActor, ok := h.ctx.actor.(vivid.PrelaunchActor); ok && success {
 		success = h.ctx.restarting.recoverExec(h.ctx.Logger(), "on pre launch", true, func() error {
 			return preLaunchActor.OnPrelaunch(h.ctx)
+		})
+	}
+	if virtual, ok := h.ctx.mailbox.(*virtualMailbox); ok && virtual.entry.ownership != nil && success {
+		success = h.ctx.restarting.recoverExec(h.ctx.Logger(), "validate restarted virtual ownership", true, func() error {
+			return virtual.coordinator.validateOwnership(virtual.entry)
 		})
 	}
 
