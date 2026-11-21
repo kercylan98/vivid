@@ -198,6 +198,7 @@ func (n *RaftNode) Heartbeat() ([]RaftMessage, error) {
 
 // Propose 保存一个非空负载并开始复制，返回分配的位置；空负载保留给选举空操作。
 // 返回成功只保证本地保存，调用方应以 Commit 和已应用结果确认业务完成。
+// 本地保存后推进提交或广播失败时仍返回该位置，错误不能证明命令未生效。
 func (n *RaftNode) Propose(data []byte) (uint64, []RaftMessage, error) {
 	if err := n.available(); err != nil {
 		return 0, nil, err
@@ -220,7 +221,7 @@ func (n *RaftNode) Propose(data []byte) (uint64, []RaftMessage, error) {
 		return 0, nil, err
 	}
 	if err := n.advanceCommit(); err != nil {
-		return 0, nil, err
+		return index, nil, err
 	}
 	messages, err := n.broadcast()
 	return index, messages, err

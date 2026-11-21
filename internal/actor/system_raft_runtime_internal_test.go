@@ -222,11 +222,10 @@ func (n *raftRuntimeNetwork) propose(t *testing.T, id uint64, value string) uint
 
 func (n *raftRuntimeNetwork) command(t *testing.T, id uint64, command clusterstore.Command) uint64 {
 	t.Helper()
-	result, err := n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimePropose{Command: command}, time.Second).Result()
-	require.NoError(t, err)
-	accepted := result.(clusterstore.RaftRuntimeResult)
-	require.NoError(t, accepted.Err)
-	return accepted.Index
+	executed := n.execute(t, id, command)
+	require.NoError(t, executed.Err)
+	require.NoError(t, executed.Result.Err)
+	return executed.Index
 }
 
 func (n *raftRuntimeNetwork) get(t *testing.T, id uint64, key string) clusterstore.RaftRuntimeRecord {
@@ -264,8 +263,13 @@ func TestSystem_RaftRuntimePartitionRecovery(t *testing.T) {
 		}
 	}
 	next := n.leader(t, majority...)
-	minority := n.propose(t, old, "minority-uncommitted")
-	require.Less(t, n.status(t, old).Commit, minority, "旧 Leader 的本地接纳不能冒充多数派提交")
+	result, err := n.systems[old].Ask(n.refs[old], clusterstore.RaftRuntimeExecute{
+		Command: clusterstore.Command{Operation: clusterstore.Put, Key: "minority-uncommitted", Value: []byte("minority-uncommitted")}, Timeout: 40 * time.Millisecond,
+	}, time.Second).Result()
+	require.NoError(t, err)
+	minority := result.(clusterstore.RaftRuntimeExecution)
+	require.ErrorIs(t, minority.Err, clusterstore.ErrRaftOutcomeUnknown)
+	require.Less(t, n.status(t, old).Commit, minority.Index, "旧 Leader 的本地接纳不能冒充多数派提交")
 	require.False(t, n.get(t, old, "minority-uncommitted").Exists, "未提交后缀不能进入本地状态机")
 	index = n.propose(t, next, "majority")
 	n.committed(t, index, majority...)
@@ -378,10 +382,10 @@ func TestSystem_RaftRuntimeCoordinationState(t *testing.T) {
 	leader := n.leader(t, 1, 2, 3)
 	before := n.status(t, leader)
 	for _, command := range []clusterstore.Command{{}, {Operation: clusterstore.Put}} {
-		result, err := n.systems[leader].Ask(n.refs[leader], clusterstore.RaftRuntimePropose{Command: command}, time.Second).Result()
+		result, err := n.systems[leader].Ask(n.refs[leader], clusterstore.RaftRuntimeExecute{Command: command}, time.Second).Result()
 		require.NoError(t, err)
-		require.ErrorIs(t, result.(clusterstore.RaftRuntimeResult).Err, clusterstore.ErrInvalidCommand)
-		require.Zero(t, result.(clusterstore.RaftRuntimeResult).Index)
+		require.ErrorIs(t, result.(clusterstore.RaftRuntimeExecution).Err, clusterstore.ErrInvalidCommand)
+		require.Zero(t, result.(clusterstore.RaftRuntimeExecution).Index)
 	}
 	require.Equal(t, before.LastIndex, n.status(t, leader).LastIndex, "非法命令不能进入 WAL")
 	first := n.command(t, leader, clusterstore.Command{Operation: clusterstore.Put, Key: "owner", Value: []byte("node-a")})

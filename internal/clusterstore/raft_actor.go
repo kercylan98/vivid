@@ -16,19 +16,19 @@ var ErrRaftRuntimeClosed = errors.New("raft runtime is closed")
 // RaftActorOptions 的 Routes 绑定固定 NodeID 与通信引用，每个投票节点使用独立 ActorSystem。
 // Create 只用于首次显式创建；同一实例重启时恢复已有 WAL，不自动重建缺失文件。
 type RaftActorOptions struct {
-	Path              string
-	Config            RaftConfig
-	Create            bool
-	Routes            map[uint64]vivid.ActorRef
-	HeartbeatInterval time.Duration
-	ElectionMin       time.Duration
-	ElectionMax       time.Duration
-	MaxPendingBytes   uint64 // 本驱动持有的协议字节，不含 Codec、网络队列和恢复状态机分配
-	SnapshotBudget    *SnapshotTransferBudget
+	Path                 string
+	Config               RaftConfig
+	Create               bool
+	Routes               map[uint64]vivid.ActorRef
+	HeartbeatInterval    time.Duration
+	ElectionMin          time.Duration
+	ElectionMax          time.Duration
+	MaxPendingBytes      uint64 // 本驱动持有的协议字节，不含 Codec、网络队列和恢复状态机分配
+	MaxPendingExecutions int    // 本地等待提交及执行回执的请求数
+	SnapshotBudget       *SnapshotTransferBudget
 }
 
 type RaftRuntimeStatusRequest struct{}
-type RaftRuntimePropose struct{ Command Command }
 type RaftRuntimeCompact struct{}
 type RaftRuntimeRead struct{ After uint64 }
 type RaftRuntimeGet struct{ Key string }
@@ -37,17 +37,17 @@ type RaftRuntimeRoute struct {
 	Ref vivid.ActorRef
 }
 
-// RaftRuntimeResult 的成功只表示本地接纳；业务完成须另行等待提交并应用。
+// RaftRuntimeResult 返回内部压缩及路由维护结果；协调写入使用 RaftRuntimeExecution。
 type RaftRuntimeResult struct {
-	Index uint64
-	Err   error
+	Err error
 }
 
 type RaftRuntimeStatus struct {
 	RaftStatus
-	Applied      uint64
-	PendingBytes uint64
-	Err          error
+	Applied           uint64
+	PendingBytes      uint64
+	PendingExecutions int
+	Err               error
 }
 
 // RaftRuntimeRecord 只查询本地已应用状态，Index 是应用位置，不保证线性一致或多数派仍可用。
@@ -97,6 +97,8 @@ type RaftActor struct {
 	timer             vivid.ScheduledTask
 	pending           map[uint64]*raftWrite
 	pendingBytes      uint64
+	executions        map[uint64]raftExecutionWait
+	executionTerm     uint64
 	electionDeadline  time.Time
 	heartbeatDeadline time.Time
 	status            RaftStatus
@@ -120,7 +122,10 @@ func NewRaftActor(options RaftActorOptions) (*RaftActor, error) {
 	if options.MaxPendingBytes == 0 {
 		options.MaxPendingBytes = 16 << 20
 	}
-	if options.Path == "" || options.HeartbeatInterval <= 0 || options.ElectionMin <= 0 || options.HeartbeatInterval > options.ElectionMin/3 || options.ElectionMax <= options.ElectionMin || options.MaxPendingBytes < maxRaftPacketBytes || len(options.Routes) != len(config.Voters) {
+	if options.MaxPendingExecutions == 0 {
+		options.MaxPendingExecutions = 1024
+	}
+	if options.Path == "" || options.HeartbeatInterval <= 0 || options.ElectionMin <= 0 || options.HeartbeatInterval > options.ElectionMin/3 || options.ElectionMax <= options.ElectionMin || options.MaxPendingBytes < maxRaftPacketBytes || options.MaxPendingExecutions < 1 || len(options.Routes) != len(config.Voters) {
 		return nil, ErrInvalidRaftConfig
 	}
 	routes := make(map[uint64]vivid.ActorRef, len(options.Routes))
@@ -144,7 +149,10 @@ func NewRaftActor(options RaftActorOptions) (*RaftActor, error) {
 }
 
 func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
-	defer a.apply()
+	defer func() {
+		a.apply(ctx)
+		a.checkExecutions(ctx)
+	}()
 	switch message := ctx.Message().(type) {
 	case *vivid.OnLaunch:
 		a.start(ctx)
@@ -163,23 +171,9 @@ func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
 				a.status = status
 			}
 		}
-		ctx.Reply(RaftRuntimeStatus{RaftStatus: a.status, Applied: a.applied, PendingBytes: a.pendingBytes, Err: a.err})
-	case RaftRuntimePropose:
-		result := RaftRuntimeResult{Err: a.available()}
-		if result.Err == nil {
-			data, err := EncodeCommand(message.Command)
-			result.Err = err
-			if err == nil && len(data) == 0 {
-				result.Err = ErrInvalidCommand // 空操作只由共识选举产生
-			}
-			if result.Err == nil {
-				var out []RaftMessage
-				result.Index, out, result.Err = a.node.Propose(data)
-				a.messages(ctx, out)
-				a.checkFailure()
-			}
-		}
-		ctx.Reply(result)
+		ctx.Reply(RaftRuntimeStatus{RaftStatus: a.status, Applied: a.applied, PendingBytes: a.pendingBytes, PendingExecutions: len(a.executions), Err: a.err})
+	case RaftRuntimeExecute:
+		a.execute(ctx, message, time.Now())
 	case RaftRuntimeCompact:
 		err := a.available()
 		if err == nil {
@@ -206,7 +200,9 @@ func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
 		ctx.Reply(RaftRuntimeResult{Err: a.route(message)})
 	case raftActorTick:
 		if message.lifetime == a.lifetime && a.available() == nil {
-			a.tick(ctx, time.Now())
+			now := time.Now()
+			a.expireExecutions(ctx, now)
+			a.tick(ctx, now)
 			a.schedule(ctx)
 		}
 	case raftWriteDone:
@@ -252,7 +248,7 @@ func (a *RaftActor) start(ctx vivid.ActorContext) {
 		return
 	}
 	a.store, a.applied = &Store{}, 0
-	a.apply()
+	a.apply(ctx)
 	if a.available() != nil {
 		return
 	}
@@ -501,11 +497,17 @@ func (a *RaftActor) checkFailure() {
 	}
 }
 
-func (a *RaftActor) apply() {
+func (a *RaftActor) apply(ctx vivid.ActorContext) {
 	if a.available() != nil || a.applied == a.node.hard.Commit {
 		return
 	}
-	store, err := replayRaftStore(a.node, a.store)
+	var applied func(RaftEntry, Result)
+	if len(a.executions) != 0 {
+		applied = func(entry RaftEntry, result Result) {
+			a.appliedExecution(ctx, entry, result, time.Now())
+		}
+	}
+	store, err := replayRaftStore(a.node, a.store, applied)
 	a.store, a.applied = store, store.Index()
 	if err != nil {
 		a.fail(err)
