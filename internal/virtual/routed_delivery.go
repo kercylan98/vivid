@@ -33,14 +33,19 @@ type RoutedDelivery struct {
 }
 
 func (m *RoutedDelivery) Valid() bool {
-	if m == nil || !m.validHeader() || m.Message == nil {
+	return m != nil && m.validHeader() && ValidDeliveryMessage(m.Message)
+}
+
+// ValidDeliveryMessage 统一本地与远程路由负载的检查，拒绝空指针和再次包装的投递。
+func ValidDeliveryMessage(message any) bool {
+	if message == nil {
 		return false
 	}
-	value := reflect.ValueOf(m.Message)
+	value := reflect.ValueOf(message)
 	if value.Kind() == reflect.Pointer && value.IsNil() {
 		return false
 	}
-	_, nested := m.Message.(*RoutedDelivery)
+	_, nested := message.(*RoutedDelivery)
 	return !nested
 }
 
