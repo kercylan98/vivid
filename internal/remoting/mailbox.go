@@ -28,19 +28,19 @@ type Mailbox struct {
 }
 
 func (m *Mailbox) Enqueue(envelop vivid.Envelop) {
-	if m == nil || envelop == nil {
+	if envelop == nil {
+		return
+	}
+	if m == nil {
+		failOutboundEnvelop(nil, envelop)
 		return
 	}
 	if m.ctx != nil && m.ctx.Err() != nil {
-		if m.failedHandler != nil {
-			m.failedHandler.HandleFailedRemotingEnvelop(envelop)
-		}
+		failOutboundEnvelop(m.failedHandler, envelop)
 		return
 	}
 	if m.remotingRef == nil || m.actorLiaison == nil {
-		if m.failedHandler != nil {
-			m.failedHandler.HandleFailedRemotingEnvelop(envelop)
-		}
+		failOutboundEnvelop(m.failedHandler, envelop)
 		return
 	}
 	pending, err := m.admission.reserve(envelop)

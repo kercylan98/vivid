@@ -50,9 +50,10 @@ func (e *endpointWriter) OnReceive(ctx vivid.ActorContext) {
 }
 
 func (e *endpointWriter) onSend(ctx vivid.ActorContext, message endpointWriterSend) {
-	if !outboundEnvelopActive(message.envelop) {
+	if !beginOutboundWrite(message.envelop) {
 		return
 	}
+	defer endOutboundWrite(message.envelop)
 	data, err := encodeEnvelop(e.codec, message.envelop)
 	if err != nil {
 		ctx.Tell(e.parentRef, endpointWriterFailed{

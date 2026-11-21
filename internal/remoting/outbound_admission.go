@@ -73,9 +73,7 @@ func (a *OutboundAdmission) reject(envelop vivid.Envelop, err error) {
 	if a.onRejected != nil {
 		a.onRejected(envelop, err)
 	}
-	if a.handler != nil {
-		a.handler.HandleFailedRemotingEnvelop(envelop)
-	}
+	failOutboundEnvelop(a.handler, envelop)
 }
 
 // Stop 处理尚未到达端点的信封；后续端点清理和迟到结果不会重复失败回调。
@@ -93,23 +91,31 @@ func (a *OutboundAdmission) Stop() {
 }
 
 func completeOutboundEnvelop(envelop vivid.Envelop) (vivid.Envelop, bool) {
+	return finishOutboundEnvelop(envelop, true)
+}
+
+func finishOutboundEnvelop(envelop vivid.Envelop, written bool) (vivid.Envelop, bool) {
 	pending, ok := envelop.(*outboundEnvelop)
-	if !ok {
-		return envelop, true
+	if ok {
+		a := pending.admission
+		a.mu.Lock()
+		if _, exists := a.pending[pending]; !exists {
+			a.mu.Unlock()
+			return pending.Envelop, false
+		}
+		delete(a.pending, pending)
+		pending.done.Store(true)
+		a.addresses[pending.address]--
+		if a.addresses[pending.address] == 0 {
+			delete(a.addresses, pending.address)
+		}
+		a.mu.Unlock()
+		envelop = pending.Envelop
 	}
-	a := pending.admission
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if _, exists := a.pending[pending]; !exists {
-		return pending.Envelop, false
+	if owned, ok := envelop.(*ownedEnvelop); ok {
+		return owned.Envelop, owned.finish(written)
 	}
-	delete(a.pending, pending)
-	pending.done.Store(true)
-	a.addresses[pending.address]--
-	if a.addresses[pending.address] == 0 {
-		delete(a.addresses, pending.address)
-	}
-	return pending.Envelop, true
+	return envelop, true
 }
 
 func outboundEnvelopActive(envelop vivid.Envelop) bool {
@@ -118,7 +124,11 @@ func outboundEnvelopActive(envelop vivid.Envelop) bool {
 }
 
 func failOutboundEnvelop(handler FailedEnvelopHandler, envelop vivid.Envelop) {
-	if original, completed := completeOutboundEnvelop(envelop); completed && handler != nil {
+	// 失败通知也可能读取原始负载，通知返回前不能交还其所有权。
+	if owned := ownedOutboundEnvelop(envelop); owned != nil && owned.retain() {
+		defer owned.release()
+	}
+	if original, completed := finishOutboundEnvelop(envelop, false); completed && handler != nil {
 		handler.HandleFailedRemotingEnvelop(original)
 	}
 }
