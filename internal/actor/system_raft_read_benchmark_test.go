@@ -11,10 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func benchmarkRaftReadSystem(b *testing.B) (*System, vivid.ActorRef) {
+func benchmarkRaftReadSystem(b *testing.B, options ...vivid.ActorSystemOption) (*System, vivid.ActorRef) {
 	b.Helper()
 	directory := b.TempDir()
-	system := NewSystem(vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
+	system := NewSystem(append([]vivid.ActorSystemOption{vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError)))}, options...)...)
 	require.NoError(b, system.Start())
 	b.Cleanup(func() { require.NoError(b, system.Stop(3*time.Second)) })
 	ref, err := NewRef(system.Ref().GetAddress(), "/raft")

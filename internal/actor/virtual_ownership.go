@@ -2,7 +2,6 @@ package actor
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/kercylan98/vivid"
@@ -16,46 +15,21 @@ type virtualOwnershipBackend interface {
 	release(context.Context, clusterstore.VirtualOwnership) error
 }
 
-// virtualOwnershipClient 暂用明确的本地 Raft 控制入口，不猜测 Leader、转发或重试写入。
-// 所有者与控制入口可以属于不同系统；此处只支持同进程调用，副本间仍由 Raft 负责传输。
+// virtualOwnershipClient 通过固定成员联络共识入口，不将 Leader 线索当作归属授权。
 type virtualOwnershipClient struct {
-	system *System
-	ref    vivid.ActorRef
-	owner  clusterstore.VirtualOwner
+	control *raftControlClient
+	owner   clusterstore.VirtualOwner
 }
 
-func newVirtualOwnershipClient(system *System, ref vivid.ActorRef, owner clusterstore.VirtualOwner) (*virtualOwnershipClient, error) {
-	if system == nil || ref == nil || ref.IsVirtual() {
-		return nil, vivid.ErrorIllegalArgument
-	}
-	system.statusLock.Lock()
-	available := system.status == start && system.Context != nil
-	var address string
-	if available {
-		address = system.Context.ref.GetAddress()
-	}
-	system.statusLock.Unlock()
-	if !available || ref.GetAddress() != address {
-		return nil, vivid.ErrorIllegalArgument
-	}
+func newVirtualOwnershipClient(system *System, config clusterstore.RaftConfig, routes map[uint64]vivid.ActorRef, owner clusterstore.VirtualOwner) (*virtualOwnershipClient, error) {
 	if _, err := clusterstore.ClaimVirtualOwnership("validate", "owner", owner, 0); err != nil {
 		return nil, err
 	}
-	return &virtualOwnershipClient{system: system, ref: ref.Clone(), owner: owner}, nil
-}
-
-func (c *virtualOwnershipClient) ask(ctx context.Context, message vivid.Message, write bool) (vivid.Message, error) {
-	if err := ctx.Err(); err != nil {
+	control, err := newRaftControlClient(system, config, routes)
+	if err != nil {
 		return nil, err
 	}
-	request := c.system.Ask(c.ref, message, 0)
-	stop := context.AfterFunc(ctx, func() { request.Close(ctx.Err()) })
-	defer stop()
-	result, err := request.Result()
-	if err != nil && write {
-		err = errors.Join(clusterstore.ErrRaftOutcomeUnknown, err)
-	}
-	return result, err
+	return &virtualOwnershipClient{control: control, owner: owner}, nil
 }
 
 func ownershipTimeout(ctx context.Context) time.Duration {
@@ -75,15 +49,11 @@ func (c *virtualOwnershipClient) claim(ctx context.Context, key virtualKey) (clu
 	if err != nil {
 		return clusterstore.VirtualOwnership{}, err
 	}
-	result, err := c.ask(ctx, change.Request(ownershipTimeout(ctx)), true)
+	result, err := c.control.call(ctx, clusterstore.RaftControlExecute, change.Request(0).Command, "")
 	if err != nil {
 		return clusterstore.VirtualOwnership{}, err
 	}
-	execution, ok := result.(clusterstore.RaftRuntimeExecution)
-	if !ok {
-		return clusterstore.VirtualOwnership{}, errors.Join(clusterstore.ErrRaftOutcomeUnknown, clusterstore.ErrInvalidVirtualOwnership)
-	}
-	return change.Result(execution)
+	return change.Result(result.Execution())
 }
 
 func (c *virtualOwnershipClient) validate(ctx context.Context, ownership clusterstore.VirtualOwnership) error {
@@ -91,15 +61,11 @@ func (c *virtualOwnershipClient) validate(ctx context.Context, ownership cluster
 	if err != nil {
 		return err
 	}
-	result, err := c.ask(ctx, clusterstore.RaftRuntimeGet{Key: key, Timeout: ownershipTimeout(ctx)}, false)
+	result, err := c.control.call(ctx, clusterstore.RaftControlGet, clusterstore.Command{}, key)
 	if err != nil {
 		return err
 	}
-	record, ok := result.(clusterstore.RaftRuntimeRecord)
-	if !ok {
-		return clusterstore.ErrInvalidVirtualOwnership
-	}
-	current, exists, err := clusterstore.ReadVirtualOwnership(ownership.Kind, ownership.Name, record)
+	current, exists, err := clusterstore.ReadVirtualOwnership(ownership.Kind, ownership.Name, result.Record())
 	if err == nil && (!exists || current != ownership) {
 		err = clusterstore.ErrVirtualOwnershipConflict
 	}
@@ -111,15 +77,11 @@ func (c *virtualOwnershipClient) release(ctx context.Context, ownership clusters
 	if err != nil {
 		return err
 	}
-	result, err := c.ask(ctx, change.Request(ownershipTimeout(ctx)), true)
+	result, err := c.control.call(ctx, clusterstore.RaftControlExecute, change.Request(0).Command, "")
 	if err != nil {
 		return err
 	}
-	execution, ok := result.(clusterstore.RaftRuntimeExecution)
-	if !ok {
-		return errors.Join(clusterstore.ErrRaftOutcomeUnknown, clusterstore.ErrInvalidVirtualOwnership)
-	}
-	_, err = change.Result(execution)
+	_, err = change.Result(result.Execution())
 	return err
 }
 

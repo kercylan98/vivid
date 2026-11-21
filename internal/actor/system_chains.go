@@ -59,6 +59,8 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 		registry.RegisterMessage("*actor.Ref", new(Ref))
 		registry.RegisterMessage("*actor.AgentRef", new(AgentRef))
 		registry.RegisterMessage("*clusterstore.RaftWire", new(clusterstore.RaftWire))
+		registry.RegisterMessage("*clusterstore.RaftControlRequest", new(clusterstore.RaftControlRequest))
+		registry.RegisterMessage("*clusterstore.RaftControlResponse", new(clusterstore.RaftControlResponse))
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnLaunch", new(vivid.OnLaunch), messagecodecs.OnLaunchEncoder(), messagecodecs.OnLaunchDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKill", new(vivid.OnKill), messagecodecs.OnKillEncoder(), messagecodecs.OnKillDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKilled", new(vivid.OnKilled), messagecodecs.OnKilledEncoder(), messagecodecs.OnKilledDecoder())

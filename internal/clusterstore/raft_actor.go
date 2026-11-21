@@ -188,6 +188,10 @@ func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
 		ctx.Reply(RaftRuntimeStatus{RaftStatus: a.status, Applied: a.applied, PendingBytes: a.pendingBytes, PendingExecutions: len(a.executions), PendingReads: len(a.reads), Err: a.err})
 	case RaftRuntimeExecute:
 		a.execute(ctx, message, time.Now())
+	case *RaftControlRequest:
+		if message != nil {
+			a.control(ctx, message, time.Now())
+		}
 	case RaftRuntimeCompact:
 		err := a.available()
 		if err == nil {

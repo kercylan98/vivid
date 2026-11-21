@@ -31,9 +31,14 @@ type raftReadWait struct {
 	term     uint64
 	round    uint64
 	deadline time.Time
+	control  bool
 }
 
 func (a *RaftActor) get(ctx vivid.ActorContext, message RaftRuntimeGet, now time.Time) {
+	a.getRequest(ctx, message, now, false)
+}
+
+func (a *RaftActor) getRequest(ctx vivid.ActorContext, message RaftRuntimeGet, now time.Time, control bool) {
 	err := a.available()
 	if err == nil && (!validKey(message.Key) || message.Timeout < 0 || ctx.Sender() == nil) {
 		err = ErrInvalidRaftRead
@@ -48,21 +53,21 @@ func (a *RaftActor) get(ctx vivid.ActorContext, message RaftRuntimeGet, now time
 		}
 	}
 	if err != nil {
-		ctx.Reply(RaftRuntimeRecord{Err: err})
+		a.replyRead(ctx, ctx.Sender(), RaftRuntimeRecord{Err: err}, control)
 		return
 	}
 	timeout := message.Timeout
 	if timeout == 0 {
 		timeout = 5 * time.Second
 	}
-	a.reads = append(a.reads, raftReadWait{sender: ctx.Sender(), key: message.Key, term: a.node.hard.Term, deadline: now.Add(timeout)})
+	a.reads = append(a.reads, raftReadWait{sender: ctx.Sender(), key: message.Key, term: a.node.hard.Term, deadline: now.Add(timeout), control: control})
 }
 
 func (a *RaftActor) expireReads(ctx vivid.ActorContext, now time.Time) {
 	kept := a.reads[:0]
 	for _, wait := range a.reads {
 		if !now.Before(wait.deadline) {
-			ctx.Tell(wait.sender, RaftRuntimeRecord{Err: ErrRaftReadTimeout})
+			a.replyRead(ctx, wait.sender, RaftRuntimeRecord{Err: ErrRaftReadTimeout}, wait.control)
 		} else {
 			kept = append(kept, wait)
 		}
@@ -87,7 +92,7 @@ func (a *RaftActor) checkReads(ctx vivid.ActorContext) {
 		}
 		if err != nil {
 			for _, wait := range a.reads {
-				ctx.Tell(wait.sender, RaftRuntimeRecord{Err: err})
+				a.replyRead(ctx, wait.sender, RaftRuntimeRecord{Err: err}, wait.control)
 			}
 			a.reads = nil
 			a.cancelRead()
@@ -112,7 +117,7 @@ func (a *RaftActor) checkReads(ctx vivid.ActorContext) {
 			if err != nil {
 				a.checkFailure()
 				for _, wait := range a.reads {
-					ctx.Tell(wait.sender, RaftRuntimeRecord{Err: err})
+					a.replyRead(ctx, wait.sender, RaftRuntimeRecord{Err: err}, wait.control)
 				}
 				a.reads = nil
 				return
@@ -138,7 +143,7 @@ func (a *RaftActor) checkReads(ctx vivid.ActorContext) {
 					result = RaftRuntimeRecord{Index: a.applied, Term: read.term}
 					result.Record, result.Exists = a.store.Get(wait.key)
 				}
-				ctx.Tell(wait.sender, result)
+				a.replyRead(ctx, wait.sender, result, wait.control)
 			} else {
 				kept = append(kept, wait)
 			}

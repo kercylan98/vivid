@@ -46,8 +46,9 @@ func newOwnershipClient(t *testing.T, n *raftRuntimeNetwork, leader uint64) *vir
 	t.Helper()
 	owner, err := clusterstore.NewVirtualOwner("owner.example:9000")
 	require.NoError(t, err)
-	client, err := newVirtualOwnershipClient(n.systems[leader], n.refs[leader], owner)
+	client, err := newVirtualOwnershipClient(n.systems[leader], clusterstore.RaftConfig{GroupID: "runtime", NodeID: 1, Voters: []uint64{1, 2, 3}}, n.refs, owner)
 	require.NoError(t, err)
+	client.control.leader.Store(leader)
 	return client
 }
 
@@ -487,8 +488,8 @@ func TestOwnedVirtual_ConfigurationIsFixedBeforeStart(t *testing.T) {
 	require.NoError(t, err)
 	owner, err := clusterstore.NewVirtualOwner("owner.example:9000")
 	require.NoError(t, err)
-	_, err = newVirtualOwnershipClient(system, ref, owner)
-	require.ErrorIs(t, err, vivid.ErrorIllegalArgument, "未启动控制系统不能作为入口")
+	_, err = newVirtualOwnershipClient(nil, clusterstore.RaftConfig{GroupID: "test", NodeID: 1, Voters: []uint64{1}}, map[uint64]vivid.ActorRef{1: ref}, owner)
+	require.ErrorIs(t, err, vivid.ErrorIllegalArgument, "控制客户端需要所属系统")
 	backend := &ownershipTestBackend{}
 	v := system.virtualCoordinator
 	require.ErrorIs(t, v.configureOwnership(nil, 0), vivid.ErrorIllegalArgument)

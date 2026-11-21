@@ -35,9 +35,14 @@ type raftExecutionWait struct {
 	sender   vivid.ActorRef
 	term     uint64
 	deadline time.Time
+	control  bool
 }
 
 func (a *RaftActor) execute(ctx vivid.ActorContext, message RaftRuntimeExecute, now time.Time) {
+	a.executeRequest(ctx, message, now, false)
+}
+
+func (a *RaftActor) executeRequest(ctx vivid.ActorContext, message RaftRuntimeExecute, now time.Time, control bool) {
 	result := RaftRuntimeExecution{Err: a.available()}
 	if result.Err == nil && (message.Timeout < 0 || ctx.Sender() == nil) {
 		result.Err = ErrInvalidRaftExecution
@@ -52,7 +57,7 @@ func (a *RaftActor) execute(ctx vivid.ActorContext, message RaftRuntimeExecute, 
 		}
 	}
 	if result.Err != nil {
-		ctx.Reply(result)
+		a.replyExecution(ctx, ctx.Sender(), result, control)
 		return
 	}
 	data, err := EncodeCommand(message.Command)
@@ -60,7 +65,7 @@ func (a *RaftActor) execute(ctx vivid.ActorContext, message RaftRuntimeExecute, 
 		err = ErrInvalidCommand
 	}
 	if err != nil {
-		ctx.Reply(RaftRuntimeExecution{Err: err})
+		a.replyExecution(ctx, ctx.Sender(), RaftRuntimeExecution{Err: err}, control)
 		return
 	}
 	result.Term = a.node.hard.Term
@@ -72,7 +77,7 @@ func (a *RaftActor) execute(ctx vivid.ActorContext, message RaftRuntimeExecute, 
 		if !rejected {
 			result.Err = errors.Join(ErrRaftOutcomeUnknown, result.Err)
 		}
-		ctx.Reply(result)
+		a.replyExecution(ctx, ctx.Sender(), result, control)
 		a.checkFailure()
 		return
 	}
@@ -82,7 +87,7 @@ func (a *RaftActor) execute(ctx vivid.ActorContext, message RaftRuntimeExecute, 
 	if a.executions == nil {
 		a.executions = make(map[uint64]raftExecutionWait)
 	}
-	a.executions[result.Index] = raftExecutionWait{sender: ctx.Sender(), term: result.Term, deadline: now.Add(message.Timeout)}
+	a.executions[result.Index] = raftExecutionWait{sender: ctx.Sender(), term: result.Term, deadline: now.Add(message.Timeout), control: control}
 	a.executionTerm = result.Term
 	a.messages(ctx, out)
 	a.checkFailure()
@@ -103,7 +108,7 @@ func (a *RaftActor) appliedExecution(ctx vivid.ActorContext, entry RaftEntry, re
 		response.Result = Result{}
 	}
 	delete(a.executions, entry.Index)
-	ctx.Tell(wait.sender, response)
+	a.replyExecution(ctx, wait.sender, response, wait.control)
 }
 
 func (a *RaftActor) expireExecutions(ctx vivid.ActorContext, now time.Time) {
@@ -132,5 +137,5 @@ func (a *RaftActor) checkExecutions(ctx vivid.ActorContext) {
 
 func (a *RaftActor) endExecution(ctx vivid.ActorContext, index uint64, wait raftExecutionWait, err error) {
 	delete(a.executions, index)
-	ctx.Tell(wait.sender, RaftRuntimeExecution{Index: index, Term: wait.term, Err: errors.Join(ErrRaftOutcomeUnknown, err)})
+	a.replyExecution(ctx, wait.sender, RaftRuntimeExecution{Index: index, Term: wait.term, Err: errors.Join(ErrRaftOutcomeUnknown, err)}, wait.control)
 }
