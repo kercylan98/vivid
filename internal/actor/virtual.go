@@ -1,6 +1,7 @@
 package actor
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
+	"github.com/kercylan98/vivid/internal/clusterstore"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/scheduler"
@@ -30,12 +32,19 @@ type virtualDelivery struct {
 }
 
 type virtualActivation struct {
-	key       virtualKey
-	provider  vivid.ActorProvider
-	mailbox   *virtualMailbox
-	queue     []virtualDelivery
-	creating  bool
-	ownership *virtualOwnershipState
+	key        virtualKey
+	provider   vivid.ActorProvider
+	mailbox    *virtualMailbox
+	queue      []virtualDelivery
+	creating   bool
+	ownership  *virtualOwnershipState
+	activating []virtualRouteDelivery // 只等待初始化与归属复核，不持有业务消息
+}
+
+func newVirtualActivation(key virtualKey, provider vivid.VirtualActorProvider) *virtualActivation {
+	return &virtualActivation{key: key, provider: vivid.ActorProviderFN(func() vivid.Actor {
+		return provider.Provide(key.kind, key.name)
+	})}
 }
 
 // virtualCoordinator 只协调本系统的逻辑身份与物理实例，不保存业务 ActorContext 供外部调用。
@@ -109,9 +118,7 @@ func (v *virtualCoordinator) dispatch(delivery virtualDelivery) error {
 		return vivid.ErrorVirtualPendingMessagesFull
 	}
 	if entry == nil {
-		entry = &virtualActivation{key: key, provider: vivid.ActorProviderFN(func() vivid.Actor {
-			return provider.Provide(key.kind, key.name)
-		})}
+		entry = newVirtualActivation(key, provider)
 		v.entries[key] = entry
 		v.waiting = append(v.waiting, entry)
 	}
@@ -161,7 +168,6 @@ func (v *virtualCoordinator) startLocked() {
 
 func (v *virtualCoordinator) create(parent *Context, entry *virtualActivation) {
 	var err error
-	defer v.system.actorCreations.Done()
 	defer func() {
 		if fault := recover(); fault != nil {
 			err = vivid.ErrorActorSpawnFailed.With(fmt.Errorf("virtual actor initialization panic: %v", fault))
@@ -208,11 +214,19 @@ func (v *virtualCoordinator) create(parent *Context, entry *virtualActivation) {
 
 func (v *virtualCoordinator) complete(entry *virtualActivation, err error) {
 	var stopping *virtualMailbox
+	releasing := false
+	defer func() {
+		if !releasing {
+			v.system.actorCreations.Done()
+		}
+	}()
 	v.mu.Lock()
 	v.running--
 	entry.creating = false
 	queued := entry.queue
 	entry.queue = nil
+	activating := entry.activating
+	entry.activating = nil
 	v.pending -= len(queued)
 	if v.closed {
 		err = vivid.ErrorActorSystemStopped
@@ -221,17 +235,30 @@ func (v *virtualCoordinator) complete(entry *virtualActivation, err error) {
 		err = vivid.ErrorActorDeaded
 	}
 	if err == nil {
+		if len(activating) > 0 {
+			v.queueRouteLocked(entry, activating...)
+		}
 		for _, delivery := range queued {
 			if delivery.request == nil || !delivery.request.IsCompleted() {
 				entry.mailbox.deliverLocked(delivery)
 			}
 		}
 	} else {
+		v.pending -= len(activating)
 		if entry.ownership != nil {
 			if entry.mailbox != nil && !entry.mailbox.released {
 				entry.mailbox.closing = true
 				stopping = entry.mailbox
 			} else {
+				// 无存活子 Actor 时，创建等待仍需覆盖归属释放，保留本系统的控制入口。
+				after := entry.ownership.after
+				entry.ownership.after = func() {
+					defer v.system.actorCreations.Done()
+					if after != nil {
+						after()
+					}
+				}
+				releasing = true
 				v.retireLocked(entry)
 			}
 		} else {
@@ -245,6 +272,17 @@ func (v *virtualCoordinator) complete(entry *virtualActivation, err error) {
 		v.system.Kill(stopping.ctx.ref, false, "virtual activation did not complete")
 	}
 	if err != nil {
+		status := virtual.ActivationFailed
+		if errors.Is(err, vivid.ErrorActorSystemStopped) {
+			status = virtual.ActivationStopped
+		} else if errors.Is(err, clusterstore.ErrRaftOutcomeUnknown) {
+			status = virtual.ActivationUnknown
+		} else if errors.Is(err, clusterstore.ErrVirtualOwnershipConflict) {
+			status = virtual.ActivationConflict
+		}
+		for _, delivery := range activating {
+			v.replyActivation(delivery, status, 0)
+		}
 		for _, delivery := range queued {
 			v.fail(delivery, err)
 		}
@@ -267,7 +305,11 @@ func (v *virtualCoordinator) close() {
 		v.gate.deadline = time.Now().Add(v.gate.timeout)
 	}
 	var queued []virtualDelivery
+	var activating []virtualRouteDelivery
 	for key, entry := range v.entries {
+		activating = append(activating, entry.activating...)
+		v.pending -= len(entry.activating)
+		entry.activating = nil
 		queued = append(queued, entry.queue...)
 		v.pending -= len(entry.queue)
 		entry.queue = nil
@@ -284,6 +326,9 @@ func (v *virtualCoordinator) close() {
 	}
 	for _, delivery := range queued {
 		v.fail(delivery, vivid.ErrorActorSystemStopped)
+	}
+	for _, delivery := range activating {
+		v.replyActivation(delivery, virtual.ActivationStopped, 0)
 	}
 }
 

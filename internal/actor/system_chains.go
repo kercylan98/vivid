@@ -76,6 +76,8 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 		routedCodec := virtual.NewRoutedDeliveryCodec(system.codec)
 		registry.RegisterMessageWithEncoderAndDecoder("*virtual.RoutedDelivery", new(virtual.RoutedDelivery), routedCodec, routedCodec)
 		registry.RegisterMessage("*virtual.DeliveryResult", new(virtual.DeliveryResult))
+		registry.RegisterMessage("*virtual.ActivationRequest", new(virtual.ActivationRequest))
+		registry.RegisterMessage("*virtual.ActivationResult", new(virtual.ActivationResult))
 		registry.RegisterMessageWithEncoderAndDecoder("*endpoint.Information", new(endpoint.Information), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 		registry.RegisterMessage("*memberlist.MemberList", new(memberlist.MemberList))
 		registry.RegisterMessage("*versionvector.VersionVector", new(versionvector.VersionVector))

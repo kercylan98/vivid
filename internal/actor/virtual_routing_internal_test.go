@@ -26,7 +26,7 @@ func (b *routingTestBackend) routingIdentity() ([32]byte, clusterstore.VirtualOw
 
 type routedObservation struct{ sender, payload string }
 
-func newRoutedOwner(t *testing.T, n *raftRuntimeNetwork, id uint64, seen chan routedObservation) (*System, *virtualOwnershipClient) {
+func newRoutedOwner(t *testing.T, n *raftRuntimeNetwork, id uint64, seen chan routedObservation, prepare ...func(*System, *virtualOwnershipClient)) (*System, *virtualOwnershipClient) {
 	t.Helper()
 	var client *virtualOwnershipClient
 	system := newRemoteControlSystemAt(t, n, id, nil, func(s *System) {
@@ -45,6 +45,9 @@ func newRoutedOwner(t *testing.T, n *raftRuntimeNetwork, id uint64, seen chan ro
 				}
 			})
 		})}
+		for _, configure := range prepare {
+			configure(s, client)
+		}
 	})
 	return system, client
 }

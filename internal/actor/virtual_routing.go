@@ -81,6 +81,10 @@ func (*virtualIngressMailbox) Resume()        {}
 func (*virtualIngressMailbox) IsPaused() bool { return false }
 
 func (m *virtualIngressMailbox) Enqueue(envelope vivid.Envelop) {
+	if request, ok := envelope.Message().(*virtual.ActivationRequest); ok {
+		m.activate(envelope, request)
+		return
+	}
 	v := m.coordinator
 	request, ok := envelope.Message().(*virtual.RoutedDelivery)
 	if !ok || !request.Valid() || envelope.Sender() == nil {
@@ -110,13 +114,8 @@ func (m *virtualIngressMailbox) Enqueue(envelope vivid.Envelop) {
 	case v.pending >= v.options.PendingMessageLimit:
 		status = virtual.DeliveryOverloaded
 	default:
-		state := entry.ownership
-		state.deliveries = append(state.deliveries, delivery)
 		v.pending++
-		if !state.checking {
-			state.checking = true
-			v.checking = append(v.checking, &virtualRouteBatch{entry: entry, state: state})
-		}
+		v.queueRouteLocked(entry, delivery)
 		v.startLocked()
 	}
 	v.mu.Unlock()
@@ -126,9 +125,21 @@ func (m *virtualIngressMailbox) Enqueue(envelope vivid.Envelop) {
 }
 
 type virtualRouteDelivery struct {
-	request virtual.RoutedDelivery
-	sender  vivid.ActorRef
-	reply   vivid.ActorRef
+	request    virtual.RoutedDelivery
+	sender     vivid.ActorRef
+	reply      vivid.ActorRef
+	activation *virtual.ActivationRequest
+	deadline   time.Time
+	generation uint64
+}
+
+func (v *virtualCoordinator) queueRouteLocked(entry *virtualActivation, deliveries ...virtualRouteDelivery) {
+	state := entry.ownership
+	state.deliveries = append(state.deliveries, deliveries...)
+	if !state.checking {
+		state.checking = true
+		v.checking = append(v.checking, &virtualRouteBatch{entry: entry, state: state})
+	}
 }
 
 type virtualRouteBatch struct {
@@ -167,8 +178,12 @@ func (v *virtualCoordinator) checkRoute(batch *virtualRouteBatch) {
 		}
 	} else if available && err == nil && v.routeAvailable(batch) {
 		status = virtual.DeliveryAccepted
-		for _, delivery := range batch.deliveries {
-			batch.entry.mailbox.deliverLocked(virtualDelivery{sender: delivery.sender, message: delivery.request.Message})
+		for index, delivery := range batch.deliveries {
+			if delivery.activation != nil {
+				batch.deliveries[index].generation = batch.state.value.Generation
+			} else {
+				batch.entry.mailbox.deliverLocked(virtualDelivery{sender: delivery.sender, message: delivery.request.Message})
+			}
 		}
 	}
 	v.pending -= len(batch.deliveries)
@@ -199,6 +214,23 @@ func (v *virtualCoordinator) checkRoute(batch *virtualRouteBatch) {
 }
 
 func (v *virtualCoordinator) replyRoute(delivery virtualRouteDelivery, status virtual.DeliveryStatus) {
+	if delivery.activation != nil {
+		activation := virtual.ActivationUnavailable
+		switch status {
+		case virtual.DeliveryAccepted:
+			activation = virtual.ActivationReady
+		case virtual.DeliveryStale:
+			activation = virtual.ActivationConflict
+		case virtual.DeliveryOverloaded:
+			activation = virtual.ActivationOverloaded
+		case virtual.DeliveryStopped:
+			activation = virtual.ActivationStopped
+		case virtual.DeliveryInvalid:
+			activation = virtual.ActivationInvalid
+		}
+		v.replyActivation(delivery, activation, delivery.generation)
+		return
+	}
 	m := delivery.request
 	result := &virtual.DeliveryResult{Group: m.Group, Owner: m.Owner, Generation: m.Generation, Kind: m.Kind, Name: m.Name, Status: status}
 	v.system.ResolveMailbox(delivery.reply).Enqueue(mailbox.NewEnvelop(false, v.system.ref, delivery.reply, result))

@@ -26,13 +26,14 @@ type virtualRouteBackend interface {
 // virtualRouter 的缓存只提供联系线索，不能代替接收端对归属的多数派复核。
 // 所有工作在调用方执行，不建立后台刷新或逐身份 goroutine。
 type virtualRouter struct {
-	backend virtualRouteBackend
-	ctx     context.Context
-	slots   chan struct{}
-	limit   int
-	mu      sync.Mutex
-	cache   map[virtualKey]*virtualRouteHint
-	recent  list.List
+	backend    virtualRouteBackend
+	ctx        context.Context
+	placements map[string]clusterstore.VirtualOwner // 仅用于无归属时的显式首次候选
+	slots      chan struct{}
+	limit      int
+	mu         sync.Mutex
+	cache      map[virtualKey]*virtualRouteHint
+	recent     list.List
 }
 
 // virtualRouteHint 发布后不再修改归属；迟到失败只撤销实际使用的缓存观察。
@@ -40,13 +41,23 @@ type virtualRouteHint struct {
 	key       virtualKey
 	ownership clusterstore.VirtualOwnership
 	element   *list.Element
+	ready     bool // 本次解析已经取得初始化就绪回执
 }
 
-func newVirtualRouter(client *virtualOwnershipClient, capacity, concurrency int) (*virtualRouter, error) {
+func newVirtualRouter(client *virtualOwnershipClient, capacity, concurrency int, placements map[string]clusterstore.VirtualOwner) (*virtualRouter, error) {
 	if client == nil || client.control == nil || capacity <= 0 || concurrency <= 0 {
 		return nil, vivid.ErrorIllegalArgument
 	}
 	r := &virtualRouter{backend: client, ctx: client.control.system.options.Context, slots: make(chan struct{}, concurrency), limit: capacity, cache: make(map[virtualKey]*virtualRouteHint)}
+	if len(placements) > 0 {
+		r.placements = make(map[string]clusterstore.VirtualOwner, len(placements))
+		for kind, owner := range placements {
+			if _, err := clusterstore.ClaimVirtualOwnership(kind, "validate", owner, 0); err != nil {
+				return nil, err
+			}
+			r.placements[kind] = owner
+		}
+	}
 	// 系统取消后释放缓存；不为每个缓存项安排定时任务。
 	context.AfterFunc(r.ctx, func() {
 		r.mu.Lock()
@@ -57,8 +68,8 @@ func newVirtualRouter(client *virtualOwnershipClient, capacity, concurrency int)
 	return r, nil
 }
 
-// route 只确认准入；总预算覆盖解析、初次投递和至多一次新代次重定位。
-// 未知回执绝不重发；明确拒绝也不能向同一代次反复发送。
+// route 只确认准入；总预算覆盖解析、按需激活、初次投递和至多一次重定位。
+// 未知回执绝不重发；明确拒绝后须取得新代次或新的 Ready 确认。
 func (r *virtualRouter) route(ctx context.Context, key virtualKey, sender vivid.ActorRef, message vivid.Message) (virtual.DeliveryStatus, error) {
 	if _, err := clusterstore.VirtualOwnershipKey(key.kind, key.name); err != nil {
 		return 0, err
@@ -104,8 +115,8 @@ func (r *virtualRouter) route(ctx context.Context, key virtualKey, sender vivid.
 	if err != nil {
 		return status, err
 	}
-	if next.ownership.Generation <= hint.ownership.Generation {
-		// 记录可能仍指向正在收尾或无法复核的实例，不轮询等待激活。
+	if next.ownership.Generation < hint.ownership.Generation || next.ownership.Generation == hint.ownership.Generation && !next.ready {
+		// 新增 Ready 确认才允许向同代次再发一次；其余情况不轮询等待激活。
 		r.invalidate(next)
 		return status, nil
 	}
@@ -162,19 +173,42 @@ func (r *virtualRouter) resolve(ctx context.Context, key virtualKey) (*virtualRo
 	if err == nil {
 		err = ctx.Err()
 	}
-	if err == nil && !exists {
-		err = errVirtualRouteNotFound
-	}
-	if err == nil {
+	if err == nil && exists {
 		if _, invalid := ownership.Release(); invalid != nil || ownership.Kind != key.kind || ownership.Name != key.name {
 			err = clusterstore.ErrInvalidVirtualOwnership
 		}
+	}
+	initialized := false
+	if err == nil {
+		if activation, ok := r.backend.(virtualActivationBackend); ok {
+			target, generation := ownership.Owner, ownership.Generation
+			if !exists {
+				target = r.placements[key.kind]
+			}
+			if target == (clusterstore.VirtualOwner{}) {
+				err = errVirtualRouteNotFound
+			} else {
+				ownership, err = activation.activate(ctx, key, target, generation)
+				initialized = err == nil
+				if err == nil {
+					_, invalid := ownership.Release()
+					if invalid != nil || ownership.Kind != key.kind || ownership.Name != key.name || ownership.Owner != target || generation != 0 && ownership.Generation != generation {
+						err = clusterstore.ErrInvalidVirtualOwnership
+					}
+				}
+			}
+		} else if !exists {
+			err = errVirtualRouteNotFound
+		}
+	}
+	if err == nil {
+		err = ctx.Err()
 	}
 	if err != nil {
 		r.invalidate(hint)
 		return nil, err
 	}
-	resolved := &virtualRouteHint{key: key, ownership: ownership}
+	resolved := &virtualRouteHint{key: key, ownership: ownership, ready: initialized}
 	r.mu.Lock()
 	// 槽位已被淘汰、失效或被另一查询更新时，迟到结果只供本次使用，不覆盖新缓存。
 	if r.cache[key] == hint && ctx.Err() == nil && r.ctx.Err() == nil {

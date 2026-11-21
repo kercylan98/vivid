@@ -42,7 +42,7 @@ func newRouterTest(t testing.TB, capacity, concurrency int) (*System, *virtualRo
 	require.NoError(t, err)
 	c, err := newVirtualOwnershipClient(s, clusterstore.RaftConfig{GroupID: "router-test", NodeID: 1, Voters: []uint64{1}}, map[uint64]vivid.ActorRef{1: s.Ref()}, owner)
 	require.NoError(t, err)
-	r, err := newVirtualRouter(c, capacity, concurrency)
+	r, err := newVirtualRouter(c, capacity, concurrency, nil)
 	require.NoError(t, err)
 	value := clusterstore.VirtualOwnership{Kind: "worker", Name: "one", Owner: owner, Generation: 1}
 	b := &routerTestBackend{
@@ -316,7 +316,7 @@ func TestVirtualRouter_TCPMigrationUnknownAndNewCall(t *testing.T) {
 		return receipt && loseReply.Load()
 	})
 	client := remoteOwnershipClient(t, caller, n)
-	r, err := newVirtualRouter(client, 4, 4)
+	r, err := newVirtualRouter(client, 4, 4, nil)
 	require.NoError(t, err)
 	var reads, sends atomic.Int32
 	r.backend = &routerTestBackend{
@@ -351,7 +351,7 @@ func TestVirtualRouter_TCPMigrationUnknownAndNewCall(t *testing.T) {
 	}
 	require.EqualValues(t, 1, reads.Load(), "稳定缓存命中不重新查询发送端归属")
 	// 另一个调用方缓存同一旧位置，稍后验证不可达时仅失效而不重发。
-	unreachable, err := newVirtualRouter(client, 4, 4)
+	unreachable, err := newVirtualRouter(client, 4, 4, nil)
 	require.NoError(t, err)
 	_, err = unreachable.resolve(context.Background(), key)
 	require.NoError(t, err)
