@@ -80,16 +80,18 @@ ref, _ := ctx.ActorOf(&MyActor{}, vivid.WithActorSupervisionStrategy(strategy))
 
 当决策为**重启**时，若该 Actor 创建时配置了 **WithActorProvider(provider)**，系统会通过 **provider.Provide()** 获取新实例替换原 Actor；未配置则重启不替换实例。详见 [Actor 配置 - Actor 提供者](/docs/config/actor-config#actor-提供者provider)。
 
+两种方式均保留原 **ActorRef**。重启时依次执行新实例或复用实例的 **OnRestarted**、**OnPrelaunch**（若实现）；成功后向该 Actor 投递 **OnLaunch**，再继续处理排队的业务消息。初始化方式见 [创建与生命周期](/docs/basics/lifecycle#onlaunch)。
+
 ## 重启阶段的扩展钩子（PreRestart / Restarted）
 
 当监督决策为**重启**时，被重启的 Actor 可在以下两个阶段挂载可选逻辑：
 
 | 接口 | 方法 | 调用时机 |
 |------|------|----------|
-| **PreRestartActor** | `OnPreRestart(ctx RestartContext) error` | 监督触发重启**前**；返回 error 则中止本次重启 |
-| **RestartedActor** | `OnRestarted(ctx RestartContext) error` | 重启**完成**后；返回 error 仅记录，不阻止运行 |
+| **PreRestartActor** | `OnPreRestart(ctx RestartContext) error` | 清理旧实例前；error 或 panic 会记录日志并继续重启 |
+| **RestartedActor** | `OnRestarted(ctx RestartContext) error` | 新实例或复用实例的预启动前；error 或 panic 会进入僵尸状态 |
 
-**RestartContext** 提供 **Logger()**、**Ref()**，可在钩子内打日志或获取当前 Actor 引用；不提供消息发送、子 Actor 创建等运行时能力。与**首次启动**相关的 **PrelaunchActor** 见 [创建与生命周期 - 启动阶段：PrelaunchActor](/docs/basics/lifecycle#启动阶段prelaunchactor)。
+**RestartContext** 提供 **Logger()**、**Ref()**，可在钩子内打日志或获取当前 Actor 引用；不提供消息发送、子 Actor 创建等运行时能力。首次创建与重启均会调用的 **PrelaunchActor** 见 [创建与生命周期 - Prelaunch](/docs/basics/lifecycle#prelaunch)。
 
 ### 便捷构造器
 
@@ -98,19 +100,22 @@ ref, _ := ctx.ActorOf(&MyActor{}, vivid.WithActorSupervisionStrategy(strategy))
 - **`vivid.NewPreRestartActor(preRestartFn, actor)`**
 - **`vivid.NewRestartedActor(restartedFn, actor)`**
 
-未传入的 `actor` 会使用占位空实现。若 **OnRestarted** / **OnPreRestart** 等钩子失败，该 Actor 会进入 [僵尸状态](#重启失败与僵尸状态)，需通过 **Kill** 或随系统/父级退出才能释放。
+未传入的 `actor` 会使用占位空实现。若 **OnRestarted** 或 **OnPrelaunch** 失败，该 Actor 会进入 [僵尸状态](#重启失败与僵尸状态)，需通过 **Kill** 或随系统/父级退出才能释放。
 
 ## 重启失败与僵尸状态
 
-当子 Actor 在**监督触发重启**的过程中失败（如 **OnRestarted**、**OnPreRestart** 或 **OnPrelaunch** 返回错误，或重启流程内部异常）时，系统不会无限重试，也不会向父级上报，而是将该 Actor 标记为**僵尸状态**。
+当 Provider panic、返回无效实例，或 **OnRestarted**、**OnPrelaunch** 返回错误或 panic 时，该 Actor 进入**僵尸状态**，不会自动重试本次重启，也不会重新向父级上报。旧实例的 **OnPreRestart**、**OnKill**、**OnKilled** 失败会记录日志并继续重启。
 
 - **含义**：该 Actor 仍占用其 **ActorRef** 与邮箱，但**不再执行任何业务逻辑**。后续消息由框架以“空行为”处理（仅投递与邮箱排空，不调用用户 **OnReceive**），避免错误逻辑继续执行或状态扩散。
 - **影响**：
   - 发往该 ref 的 Tell/Ask 仍可投递，但无业务处理；Ask 可能超时或得不到预期回复。
-  - 该 ref 仍存在，若被缓存或对外暴露，调用方可能继续向“已失效”的 Actor 发消息，需在业务层通过监控或超时发现。
+  - 该 ref 仍存在；本地和远程 **ActorSystem.Probe(ref)** 均返回 **Available == false**。重启初始化中也不可用，成功重启后恢复；Probe 不执行用户行为，不能代替业务健康检查。
+  - 框架清理该 Actor 的全部事件订阅，包括失败初始化期间新增的订阅，并拒绝后续订阅；已选中或已进入邮箱的事件不会撤回。事件订阅规则见 [事件流](/docs/basics/event-stream)。
   - 父级**不会**收到该子 Actor 的 **OnKilled**（因未从系统移除），若父级依赖“子死亡”做清理或重建，需通过日志、监控或健康检查发现僵尸并主动 **Kill**。
 - **解除**：僵尸状态**不会自动恢复**。只有以下情况该 Actor 才会被释放、引用失效：
   - **显式终止**：对 ref 调用 **Kill(ref, ...)**，僵尸会走正常终止流程并从系统移除。
   - **随系统或父级退出**：**ActorSystem.Stop()** 或父 Actor 被终止时，整棵子树（含僵尸子 Actor）会被一并清理。
+
+同一僵尸实例的最终终止只清理和通知一次；终止后的迟到系统消息不会再次清理同路径新实例的资源。重建后请使用创建时返回的新引用。
 
 建议保证 **OnRestarted** / **OnPreRestart** 等钩子尽量可成功，或通过“重启失败；actor is now in zombie state”日志做监控与告警，必要时对对应 ref 执行 **Kill**。发起终止见 [创建与生命周期 - 发起终止](/docs/basics/lifecycle#发起终止kill)。

@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid/internal/sugar"
-	"github.com/kercylan98/vivid/internal/utils"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 )
@@ -33,18 +32,21 @@ type ActorSystem interface {
 	// 启动失败会尝试停止已创建的组件；失败实例不可重启，应重新创建系统。
 	Start() error
 
-	// Stop 优雅地停止当前 ActorSystem 实例。
+	// Stop 有序停止当前 ActorSystem 实例，并同步等待关闭完成。
+	// 成功返回前，根 Actor 的请求、调度、订阅及路由登记已释放，死亡事件发布已返回；不等待订阅者处理事件。
 	//
 	// 主要功能与行为说明：
-	//   - 调用后会触发 ActorSystem 及其全部托管的 Actor（包括根 Actor 及所有子 Actor）的有序关闭过程。
-	//   - 方法实现采用同步阻塞（blocking）方式，调用者会被挂起，直到所有 Actor 确认终止、资源完全释放并安全退出后才会返回。
-	//   - 停止流程包括向所有活跃 Actor 派发终止信号（如 Poison Pill/FSM 终止），并确保子 Actor 优先于父 Actor 停止，递归释放所有托管的上下文与资源。
-	//   - 用于应用生命周期管理，可保障关闭前所有未处理消息与状态持久化等任务优雅完成，防止资源泄漏及并发冲突。
-	//   - 支持可选的超时参数，用于控制停止过程的时间限制。若超时，系统会立即终止并返回错误。
+	//   - 通过系统消息发起关闭，不受普通邮箱暂停影响；保留 [OnKill] 和多阶段收尾，子 Actor 先于父 Actor 结束。
+	//   - 先停止业务 Actor，再依次停止 Gossip、协调节点、远程通信和指标组件；未启用的组件跳过。
+	//   - timeout 控制本次调用的等待时间，未传时使用系统配置；小于等于 0 表示一直等待。
+	//   - 等待超时返回 [ErrorActorSystemStopFailed]，保留 context.DeadlineExceeded 原因；后台继续有序关闭，不提前取消收尾所需的系统上下文和调度器。
+	//   - 停止完成后，新 Ask、Probe 与 Entrust 返回 [ErrorActorSystemStopped]；被拒绝的托管任务不会启动，已接纳的任务不强制中断。
 	//
 	// 注意事项：
-	//   - 多次调用 Stop() 并无额外副作用，仅首个调用会触发实际终止流程，其余调用会在等待终止完成后直接返回。
-	//   - 停止操作一经触发，不可逆转，系统不可再用于消息接收、Actor 创建等操作。
+	//   - 停止中重复调用会再次等待同一次关闭；关闭已完成后调用返回 [ErrorActorSystemAlreadyStopped]。
+	//   - 关闭开始后不可重新启动，也不可通过 ActorSystem.ActorOf 创建新 Actor；此前已开始的创建会纳入关闭。
+	//   - 应在本系统的 Actor 消息线程和创建回调之外调用，避免等待自身完成；停止无法强行中断阻塞的用户回调。
+	//     等待超时也不代表资源已经全部释放。
 	Stop(timeout ...time.Duration) error
 
 	// FindActor 根据引用字符串查找本节点上已存在的 Actor 并返回其引用。
@@ -59,22 +61,33 @@ type ActorSystem interface {
 	// CreateRef 根据地址与路径构造 ActorRef，不要求目标存在；用于本地或远程 Actor 引用。
 	CreateRef(address string, path string) (ActorRef, error)
 
-	// ActorOf 该方法的效果与 ActorContext.ActorOf 相同，但是它是并发安全的。
+	// ActorOf 创建系统直属 Actor，可由多个 goroutine 调用，并可与已有 Actor 的终止同时进行。
+	// 不同创建的初始化可并行执行，初始化回调可重入创建其他系统直属 Actor；同名创建立即拒绝。
+	// 创建子 Actor 时应在所属 Actor 的消息处理流程内调用 ActorContext.ActorOf。
 	ActorOf(actor Actor, options ...ActorOption) (ActorRef, error)
 
-	// VirtualRef 创建一个虚拟 Actor 的引用。
+	// VirtualRef 创建以 (kind, name) 标识的本地虚拟 Actor 引用，首次投递时按需激活。
+	// 空闲钝化后再次投递会创建新实例；不提供跨节点唯一激活或业务状态持久化。
 	VirtualRef(kind string, name string) ActorRef
 
-	// Probe 探测指定 Actor 心跳状态
+	// Probe 查询指定 Actor 的框架可用状态；重启初始化中或重启失败的 Actor 不可用。
+	// 本地直接查询，远程通过传输层应答；不执行用户行为，不保证业务健康或后续投递成功。
+	// 远程等待沿用 Ask：省略 timeout 使用系统默认值，首个值 <= 0 时不设超时；超时不撤销已投递请求。
+	// 本系统停止完成后返回 [ErrorActorSystemStopped]。
 	Probe(ref ActorRef, timeout ...time.Duration) Future[*Heartbeat]
 
 	// ClusterSnapshot 查询本地成员及可达性观察，超时规则与 Ask 相同；查询不会探测远端节点。
 	// 未启动、已停止或未启用集群时，Future 返回相应错误。
 	ClusterSnapshot(timeout ...time.Duration) Future[ClusterSnapshot]
 
-	// ClusterReady 等待本次启动的初始加入结果，超时规则与 Ask 相同。
-	// 超时或 Close 只结束当前调用的等待，不取消节点加入；成功结果不代表持续健康。
+	// ClusterReady 等待本次启动的初始加入结果；省略超时或传入 <= 0 时等待至结果完成或系统停止。
+	// 正超时或 Close 只结束当前调用的等待，不取消节点加入；成功结果不代表持续健康。
 	ClusterReady(timeout ...time.Duration) Future[ClusterJoinResult]
+
+	// CoordinationStatus 查询托管协调节点的本地状态，等待规则沿用 Ask。
+	// Leader 仅为本地观察，不保证当前仍有多数派；启动成功也不等于选主完成。
+	// 业务收尾中仍可查询，协调节点停止后返回错误；未启用时返回 ErrorCoordinationNotEnabled。
+	CoordinationStatus(timeout ...time.Duration) Future[CoordinationStatus]
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。
@@ -119,6 +132,7 @@ func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
 	for _, option := range options {
 		option(opts)
 	}
+	opts.CoordinationOptions = cloneCoordinationOptions(opts.CoordinationOptions)
 
 	return opts
 }
@@ -160,7 +174,7 @@ type ActorSystemOptions struct {
 	// EnableMetricsUpdatedNotify 指定是否启用指标收集更新通知。
 	EnableMetricsUpdatedNotify time.Duration
 
-	// StopTimeout 指定 ActorSystem 停止操作的超时时间。
+	// StopTimeout 指定 ActorSystem 停止操作的默认等待时间。
 	StopTimeout time.Duration
 
 	// EnableMetrics 指定是否启用指标收集。
@@ -173,13 +187,19 @@ type ActorSystemOptions struct {
 	// VirtualActorProviders 指定虚拟 Actor 的提供者。
 	//
 	// 其中 key 为虚拟 Actor 的种类，value 为 VirtualActorProvider。
-	VirtualActorProviders map[string]ActorProvider
+	VirtualActorProviders map[string]VirtualActorProvider
+
+	// VirtualActorOptions 配置虚拟 Actor 的激活并发、等待容量和空闲钝化。
+	VirtualActorOptions VirtualActorOptions
 
 	// MessageRegister 指定消息注册器。
 	MessageRegister []MessageRegister
 
 	// ClusterOptions 指定 ActorSystem 的集群选项。
 	ClusterOptions *ActorSystemClusterOptions
+
+	// CoordinationOptions 配置独立于 Gossip 的固定成员协调节点，nil 不启用。
+	CoordinationOptions *ActorSystemCoordinationOptions
 }
 
 // SystemBasicState 当前 ActorSystem 的基本状态，供控制台等展示；不含集群名称（仅集群有集群名）。
@@ -234,7 +254,7 @@ func WithActorSystemOptions(options *ActorSystemOptions) ActorSystemOption {
 	}
 }
 
-// WithActorSystemStopTimeout 返回一个 ActorSystemOption，用于指定 ActorSystem 停止操作的超时时间。
+// WithActorSystemStopTimeout 返回一个 ActorSystemOption，用于指定 ActorSystem 停止操作的默认等待时间。
 //
 // 用法场景：
 //   - 在构建 ActorSystem 时，通过该 Option 明确设置 ActorSystem 停止操作的超时时间。
@@ -243,7 +263,7 @@ func WithActorSystemOptions(options *ActorSystemOptions) ActorSystemOption {
 // 参数：
 //   - timeout: 期望设置的超时时间，仅当 timeout > 0 时生效（不允许零值或负值；零/负值时忽略该配置）。
 //
-// 其他：假设通过直接构建 ActorSystemOptions 的情况设置了 <= 0 的值，将为导致停止后立刻触发超时。
+// 其他：直接构建 ActorSystemOptions 时若 StopTimeout <= 0，Stop 不传参将一直等待。
 func WithActorSystemStopTimeout(timeout time.Duration) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		if timeout > 0 {
@@ -338,6 +358,7 @@ func WithActorSystemMetrics(metrics metrics.Metrics) ActorSystemOption {
 }
 
 // WithActorSystemLogger 返回一个 ActorSystemOption，用于指定 ActorSystem 的日志记录器。
+// 框架隔离日志 panic，输出仍同步执行，日志器应及时返回。
 //
 // 用法场景：
 //   - 在构建 ActorSystem 时，通过该 Option 明确设置 ActorSystem 的日志记录器。
@@ -363,15 +384,14 @@ func WithActorSystemLogger(logger log.Logger) ActorSystemOption {
 //  2. 可选设置对外公布（广告）的网络地址（advertiseAddr），常用于集群、NAT、端口映射等场景；若未指定，默认使用 bindAddr。
 //
 // 参数：
-//   - bindAddr: string，必选，远程 Listener 的本地绑定地址（如 TCP/UDP 地址）。
+//   - bindAddr: string，必选，TCP 监听地址，可使用通配主机。
 //   - advertiseAddr: ...string，可选，对外广告地址（第一个参数有效），否则默认使用 bindAddr。
+//
+// 广告地址须包含明确主机和有效端口，参数错误由 Start 返回；通配监听需显式提供广告地址。
 func WithActorSystemRemoting(bindAddr string, advertiseAddr ...string) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		opts.RemotingBindAddress = bindAddr
 		opts.RemotingAdvertiseAddress = sugar.FirstOrDefault(advertiseAddr, bindAddr)
-		if utils.IsAddrMissingPort(opts.RemotingAdvertiseAddress) && !utils.IsDomainName(opts.RemotingAdvertiseAddress) {
-			panic("ActorSystem advertise address must be a domain when missing port")
-		}
 	}
 }
 
@@ -399,13 +419,13 @@ func WithActorSystemCodec(codec Codec) ActorSystemOption {
 //   - provider: 虚拟 Actor 的提供者。
 //
 // 如果 kind 已存在，将会发生 panic。
-func WithActorSystemVirtualActorProvider(kind string, provider ActorProvider) ActorSystemOption {
+func WithActorSystemVirtualActorProvider(kind string, provider VirtualActorProvider) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		if provider == nil {
 			return
 		}
 		if opts.VirtualActorProviders == nil {
-			opts.VirtualActorProviders = make(map[string]ActorProvider)
+			opts.VirtualActorProviders = make(map[string]VirtualActorProvider)
 		}
 		if _, ok := opts.VirtualActorProviders[kind]; ok {
 			panic("virtual actor provider already exists for kind: " + kind)

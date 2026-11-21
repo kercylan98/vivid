@@ -125,6 +125,7 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 			var systems []vivid.PrimaryActorSystem
 			var refs []vivid.ActorRef
 			var addresses, backends []string
+			dataCenters := []string{"dc-a", "dc-b"}
 			t.Cleanup(func() {
 				network.partition(false)
 				var stopped sync.WaitGroup
@@ -186,12 +187,14 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 				}
 				opts := vivid.NewActorSystemClusterOptions(
 					vivid.WithActorSystemClusterName("vivid-test"),
+					vivid.WithActorSystemClusterDataCenter(dataCenters[i/2]),
 					vivid.WithActorSystemClusterBootstrap(i%2 == 0),
 					vivid.WithActorSystemClusterSeeds(seeds...),
 					vivid.WithActorSystemClusterJoinTimeout(500*time.Millisecond),
 					vivid.WithActorSystemClusterLaunchDelay(0),
 					vivid.WithActorSystemClusterGossipInterval(50*time.Millisecond),
 					vivid.WithActorSystemClusterGossipPeersCount(1),
+					vivid.WithActorSystemClusterMaxConcurrentProbes(3),
 					vivid.WithActorSystemClusterProbeTimeout(150*time.Millisecond),
 					vivid.WithActorSystemClusterReachabilityTTL(3*time.Second),
 					vivid.WithActorSystemClusterGracefulShutdownTimeout(time.Second),
@@ -243,7 +246,7 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 							return false
 						}
 						for _, member := range snapshot.View.Members().List() {
-							if member.Status != endpoint.StatusUp {
+							if member.Status != endpoint.StatusUp || member.DataCenter != dataCenters[network.groups[member.ActorRef.GetAddress()]] {
 								return false
 							}
 						}
@@ -298,10 +301,12 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 			// 隔离稳定后记录跨机房 Ping 数；成员 UP 不代表链路可达。
 			time.Sleep(300 * time.Millisecond)
 			counts := make([]map[string]uint64, 4)
+			ackCounts := make([]uint64, 4)
 			for i := range systems {
 				snapshot, ok := read(i)
 				require.True(t, ok)
 				counts[i] = snapshot.PingCount
+				ackCounts[i] = snapshot.PongAckCount
 			}
 			time.Sleep(300 * time.Millisecond)
 			for i := range systems {
@@ -338,6 +343,23 @@ func TestActor_GossipPartitionRecovery(t *testing.T) {
 				return true
 			}, 8*time.Second, 50*time.Millisecond)
 			t.Logf("cross-datacenter gossip recovered in %s", time.Since(healedAt))
+			require.Eventually(t, func() bool {
+				for i := range systems {
+					snapshot, ok := read(i)
+					if !ok || snapshot.PongAckCount <= ackCounts[i] {
+						return false
+					}
+				}
+				return true
+			}, 8*time.Second, 50*time.Millisecond, "恢复后通过实际注册 Codec 重新收到轻量应答")
+			for i := range systems {
+				snapshot, ok := read(i)
+				require.True(t, ok)
+				require.LessOrEqual(t, snapshot.MaxPendingProbes, 3, "真实 TCP 故障下观察并发不能突破独立上限")
+				if !initiallyBlocked {
+					require.Greater(t, snapshot.MaxPendingProbes, 1, "单轮只发送一个地址，未完成观察仍可跨轮积累")
+				}
+			}
 		})
 	}
 }

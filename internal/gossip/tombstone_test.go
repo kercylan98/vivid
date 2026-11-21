@@ -21,6 +21,8 @@ type tombstoneRef struct {
 
 func (r *tombstoneRef) String() string     { return r.address + ":/@gossip" }
 func (r *tombstoneRef) GetAddress() string { return r.address }
+func (*tombstoneRef) GetPath() string      { return "/@gossip" }
+func (*tombstoneRef) IsVirtual() bool      { return false }
 func (r *tombstoneRef) Equals(other vivid.ActorRef) bool {
 	return other != nil && r.String() == other.String()
 }
@@ -97,8 +99,11 @@ func TestActor_GossipRemovedVersion(t *testing.T) {
 					version.Increment(sender.ID())
 				}
 				// 本地视图稳定后，迟到的直接或转发视图仍不得覆盖更新的退出记录。
+				stableCtx := &viewStableContext{joinContext: joinContext{*ctx}}
+				notification := queueViewStable(t, a, stableCtx)
+				stableCtx.deliver(a, notification)
 				for i := 0; i < 3; i++ {
-					a.onConverged(ctx)
+					stableCtx.deliver(a, notification)
 					assert.Equal(t, uint64(5), view.Version().Get(removed.ID()))
 					if reply {
 						a.onPong(ctx, gossipmessages.NewPong("vivid-test", gossipmessages.GossipTypeCycleSYNC, sender, members, version))
@@ -115,4 +120,14 @@ func TestActor_GossipRemovedVersion(t *testing.T) {
 			})
 		}
 	}
+}
+
+func memberRecords(members []*endpoint.Information) *memberlist.MemberList {
+	values := make([]endpoint.Information, len(members))
+	for index, member := range members {
+		if member != nil {
+			values[index] = *member
+		}
+	}
+	return memberlist.New(log.GetDefault(), values...)
 }

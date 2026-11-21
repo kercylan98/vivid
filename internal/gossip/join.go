@@ -18,6 +18,12 @@ const joinAttemptsPerSeed = 3
 
 type launchJoin struct{ instanceID string }
 
+type joinRetry struct {
+	instanceID string
+	index      int
+	attempt    int
+}
+
 type joinReply struct {
 	instanceID string
 	index      int
@@ -68,7 +74,7 @@ func (a *Actor) onLaunch(ctx vivid.ActorContext) {
 		changeStatus(ctx, a, EventJoining)
 		return
 	}
-	if err := ctx.Scheduler().Once(ctx.Ref(), a.opts.LaunchDelay, launchJoin{instanceID: a.info.ID()}, vivid.WithSchedulerReference(launchSchedulerReference)); err != nil {
+	if _, err := ctx.Scheduler().Once(ctx.Ref(), a.opts.LaunchDelay, launchJoin{instanceID: a.info.ID()}, vivid.WithSchedulerReference(launchSchedulerReference)); err != nil {
 		a.readiness.complete(vivid.ClusterJoinResult{}, vivid.ErrorGossipScheduleFailed.With(err))
 	}
 }
@@ -89,7 +95,8 @@ func (a *Actor) tryNextSeed(ctx vivid.ActorContext) {
 		return
 	}
 	if a.joinIndex == len(a.seeds) {
-		err := vivid.ErrorClusterJoinFailed.With(a.joinError)
+		err := vivid.ErrorClusterJoinFailed.With(errors.Join(a.joinErrors...))
+		a.joinErrors = nil
 		a.readiness.complete(vivid.ClusterJoinResult{}, err)
 		ctx.Logger().Error("cluster join failed", log.Any("error", err))
 		return
@@ -99,10 +106,7 @@ func (a *Actor) tryNextSeed(ctx vivid.ActorContext) {
 	}
 	remaining := time.Until(a.joinDeadline)
 	if remaining <= 0 || a.joinAttempt == joinAttemptsPerSeed {
-		a.joinError = vivid.ErrorFutureTimeout.WithMessage(a.opts.JoinTimeout.String())
-		a.joinIndex++
-		a.joinAttempt = 0
-		a.tryNextSeed(ctx)
+		a.failJoinSeed(ctx, vivid.ErrorFutureTimeout.WithMessage(a.opts.JoinTimeout.String()))
 		return
 	}
 	// 一次请求可能随连接切换丢失；有限重发共享该种子的总超时，不延长加入预算。
@@ -128,6 +132,11 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 		return
 	}
 	a.joinRequest = nil
+	// Future 完成后结果仍需等待消息线程处理，不能用迟到响应突破种子的总预算。
+	if time.Until(a.joinDeadline) <= 0 {
+		a.failJoinSeed(ctx, vivid.ErrorFutureTimeout.WithMessage(a.opts.JoinTimeout.String()))
+		return
+	}
 	pong, ok := reply.message.(*gossipmessages.Pong)
 	rejected, isRejection := reply.message.(*gossipmessages.JoinRejected)
 	err := reply.err
@@ -136,26 +145,42 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 		case isRejection && rejected != nil && rejected.ClusterName != a.opts.Name:
 			err = a.clusterNameMismatch(rejected.ClusterName)
 		case !ok || pong == nil:
-			err = vivid.ErrorClusterJoinFailed.WithMessage(fmt.Sprintf("invalid join response from %s", a.seeds[a.joinIndex].GetAddress()))
+			err = vivid.ErrorClusterJoinFailed.WithMessage("invalid join response")
 		case pong.ClusterName != a.opts.Name:
 			err = a.clusterNameMismatch(pong.ClusterName)
 		case !a.validJoinPong(pong):
-			err = vivid.ErrorClusterJoinFailed.WithMessage(fmt.Sprintf("invalid join response from %s", a.seeds[a.joinIndex].GetAddress()))
+			err = vivid.ErrorClusterJoinFailed.WithMessage("invalid join response")
+		}
+		if err != nil {
+			// 已收到响应时，拒绝或无效内容不是传输失败，直接尝试下一种子。
+			a.failJoinSeed(ctx, err)
+			return
 		}
 	}
 	if err != nil {
-		a.joinError = err
+		remaining := time.Until(a.joinDeadline)
 		if errors.Is(err, vivid.ErrorFutureTimeout) {
-			a.tryNextSeed(ctx)
+			if a.joinAttempt < joinAttemptsPerSeed && remaining > 0 {
+				a.tryNextSeed(ctx)
+			} else {
+				a.failJoinSeed(ctx, err)
+			}
 			return
 		}
-		a.joinIndex++
-		a.joinAttempt = 0
-		a.tryNextSeed(ctx)
+		if a.joinAttempt < joinAttemptsPerSeed && remaining > 0 {
+			delay := remaining / time.Duration(joinAttemptsPerSeed-a.joinAttempt+1)
+			message := joinRetry{instanceID: a.info.ID(), index: a.joinIndex, attempt: a.joinAttempt}
+			if _, scheduleErr := ctx.Scheduler().Once(ctx.Ref(), delay, message, vivid.WithSchedulerReference(joinRetrySchedulerRef)); scheduleErr != nil {
+				a.failJoinSeed(ctx, vivid.ErrorGossipScheduleFailed.With(scheduleErr))
+			}
+			return
+		}
+		a.failJoinSeed(ctx, err)
 		return
 	}
 	seed := a.seeds[a.joinIndex].GetAddress()
 	a.mergePong(ctx, pong)
+	a.joinErrors = nil
 	a.joinError = nil
 	changeStatus(ctx, a, EventUp)
 	if a.joinError == nil {
@@ -163,18 +188,38 @@ func (a *Actor) onJoinReply(ctx vivid.ActorContext, reply joinReply) {
 	}
 }
 
+func (a *Actor) onJoinRetry(ctx vivid.ActorContext, retry joinRetry) {
+	if retry.instanceID == a.info.ID() && retry.index == a.joinIndex && retry.attempt == a.joinAttempt && a.joinRequest == nil && !a.stopping && a.info.Status == endpoint.StatusJoining {
+		a.tryNextSeed(ctx)
+	}
+}
+
+// failJoinSeed 每个种子只保留最终失败原因，重发超时不重复记录。
+func (a *Actor) failJoinSeed(ctx vivid.ActorContext, err error) {
+	a.joinErrors = append(a.joinErrors, fmt.Errorf("seed %s: %w", a.seeds[a.joinIndex].GetAddress(), err))
+	a.joinIndex++
+	a.joinAttempt = 0
+	a.tryNextSeed(ctx)
+}
+
 func (a *Actor) clusterNameMismatch(name string) error {
-	return vivid.ErrorClusterNameMismatch.WithMessage(fmt.Sprintf("seed %s: expected cluster %q, received %q", a.seeds[a.joinIndex].GetAddress(), a.opts.Name, name))
+	return vivid.ErrorClusterNameMismatch.WithMessage(fmt.Sprintf("expected cluster %q, received %q", a.opts.Name, name))
 }
 
 func (a *Actor) validJoinPong(pong *gossipmessages.Pong) bool {
 	if pong == nil || pong.ClusterName != a.opts.Name || pong.Info == nil || pong.Info.ActorRef == nil || pong.MemberList == nil || pong.Version == nil ||
 		pong.GossipType != gossipmessages.GossipTypeJoin || pong.Info.Status != endpoint.StatusUp || pong.Info.ID() == "" ||
-		pong.Info.ID() == a.info.ID() || !pong.Info.ActorRef.Equals(a.seeds[a.joinIndex]) || pong.Version.Get(pong.Info.ID()) == 0 {
+		pong.Info.ID() == a.info.ID() || !pong.Info.ActorRef.Equals(a.seeds[a.joinIndex]) || pong.Version.Get(pong.Info.ID()) == 0 || !a.validMember(pong.Info) {
 		return false
 	}
 	// 种子应确认收到本实例的 Joining 记录；普通或旧实例的 Pong 不构成加入成功。
-	self := pong.MemberList.Get(a.info.ID())
-	return self != nil && self.ActorRef != nil && self.ActorRef.Equals(a.info.ActorRef) && self.Status == endpoint.StatusJoining &&
+	var self *endpoint.Information
+	for _, member := range pong.MemberList.All() {
+		if member.ID() == a.info.ID() {
+			self = &member
+			break
+		}
+	}
+	return a.validMember(self) && self.ActorRef.Equals(a.info.ActorRef) && self.Status == endpoint.StatusJoining && self.DataCenter == a.info.DataCenter &&
 		pong.Version.Get(a.info.ID()) == a.view.Version().Get(a.info.ID())
 }

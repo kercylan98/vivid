@@ -41,7 +41,7 @@ childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
 - 创建成功后，子 Actor 会经历**预启动（Prelaunch）**（若实现），再收到 **`*vivid.OnLaunch`**，然后开始接收业务消息。**`ctx.Children()`** 返回当前已创建的子 Actor 引用列表（快照），可用于批量 Tell、监控或监督逻辑。
 
 <Callout type="warn" title="并发限制">
-**`ctx.ActorOf` 非并发安全**。不要在多个 goroutine 中并发创建同一父级下的子 Actor，应在单次消息处理内或串行逻辑中创建。
+**`ctx.ActorOf` 非并发安全**，应在所属 Actor 的消息处理流程内创建子 Actor。外部 goroutine 创建系统直属 Actor 时使用 **`system.ActorOf`**；不要保存上下文交给外部 goroutine 操作。
 </Callout>
 
 ### 命名与配置
@@ -101,9 +101,11 @@ childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
 | 维度 | Prelaunch（OnPrelaunch） | OnLaunch |
 |------|--------------------------|----------|
 | **时机** | 在 Actor 正式“启动”之前，尚未开始接收消息 | 启动后收到的第一条消息，已具备完整邮箱与上下文 |
-| **上下文** | 仅 **PrelaunchContext**（Logger、Ref），**不能** Tell/ActorOf/Watch | **ActorContext** 完整可用，可发消息、创建子 Actor、订阅等 |
+| **上下文** | **PrelaunchContext** 提供基础系统访问与预启动配置，**不能**直接 Tell/ActorOf/Watch | **ActorContext** 完整可用，可发消息、创建子 Actor、订阅等 |
 | **典型场景** | 配置校验、环境检查、依赖注入、预加载只读数据；任一失败可令启动中止（返回 error） | 向注册中心注册、订阅 EventStream、创建子 Actor、发起首次 Tell/调度；需要与系统其它部分交互的“上线”逻辑 |
 | **失败后果** | 返回 error → Actor 不启动，**ActorOf** 返回错误 | 若在此 panic 或 **Failed**，由父级监督策略处理（如重启） |
+
+**OnPrelaunch** 可通过 **`ctx.System().ActorOf`** 创建其他系统直属 Actor；它们不属于当前 Actor 的子级，当前初始化失败不会自动终止它们。不同创建的初始化可以并行执行；不要在创建回调中同步等待本系统 **Stop**，关闭会等待该创建返回。
 
 简单划分：**仅做校验与准备、且不需发消息或创建子 Actor 时用 Prelaunch**；**需要与系统其它 Actor 或组件交互的“上线”逻辑放在 OnLaunch**。
 
@@ -113,13 +115,15 @@ childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
 
 ### Prelaunch
 
-在**首次创建与启动**时，若 Actor 实现了 **PrelaunchActor**，系统会在投递 **OnLaunch** 之前先调用 **OnPrelaunch**，用于依赖注入、配置校验、资源预加载等。该阶段在生命周期图中对应「预启动」。
+在**首次创建与重启**时，若 Actor 实现了 **PrelaunchActor**，系统会在投递 **OnLaunch** 之前先调用 **OnPrelaunch**，用于依赖注入、配置校验、资源预加载等。该阶段在生命周期图中对应「预启动」。
 
 | 接口 | 方法 | 调用时机 |
 |------|------|----------|
 | **PrelaunchActor** | `OnPrelaunch(ctx PrelaunchContext) error` | 正式启动前（在 OnLaunch 之前）；返回 error 则启动失败 |
 
-**PrelaunchContext** 提供 **Logger()**、**Ref()**；不提供消息发送、子 Actor 创建等运行时能力。不定义新类型时可用 **`vivid.NewPrelaunchActor(prelaunchFn, actor)`** 挂载预启动逻辑；未传入的 `actor` 使用占位空实现。
+**PrelaunchContext** 提供 **System()**、**Logger()**、**Ref()**、**EventStream()** 与 **WithPhaseKill(...)**；不提供消息发送、子 Actor 创建等运行时能力。不定义新类型时可用 **`vivid.NewPrelaunchActor(prelaunchFn, actor)`** 挂载预启动逻辑；未传入的 `actor` 使用占位空实现。
+
+首次创建会在预启动前检查并预留名称，同名 Actor 已存在或正在初始化时返回 **ErrorActorAlreadyExists**，不执行本次预启动回调。预启动返回错误时，框架释放本次订阅和名称，不触发 OnLaunch、OnKill 或 OnKilled；自行申请的外部资源需在回调失败前自行释放。回调 panic 时同样回滚框架登记，但 panic 仍向调用方传播。
 
 ---
 
@@ -128,6 +132,8 @@ childRef, err := ctx.ActorOf(&WorkerActor{}, vivid.WithActorName("worker-1"))
 ### OnLaunch
 
 Actor 通过预启动（若有）并完成创建后，收到的**第一条系统消息**。此时已有完整 **ActorContext**（可 Tell/Ask、ActorOf、Watch、EventStream、Scheduler 等），适合做**需要运行时上下文**的操作：向外部或本系统其它 Actor 注册自己、订阅事件流、创建子 Actor、调度首次任务等。
+
+成功重启后，被重启的 Actor 会再次收到 **OnLaunch**，然后继续处理排队的业务消息；父 Actor 不会因此再次收到启动消息。初始化逻辑需支持重复执行。
 
 ### OnKill
 
@@ -159,6 +165,8 @@ case *vivid.OnKill:
 
 消息中的 **Ref** 为被终止的 Actor 引用，可根据 **Ref** 判断是谁终止，并做清理、重新创建或告警。主动监听非子级 Actor 见 [Watch 与 Unwatch](/docs/basics/watch-unwatch)。
 
+**OnKill** 与自身 **OnKilled** 中仍可发起 Ask 或 Entrust 做收尾；自身 OnKilled 回调结束后，尚未完成的收尾等待以 **ErrorActorDeaded** 失败。等待结束不撤销已投递的请求，也不强制中断任务。重启同样清理旧实例的等待，新实例可正常发起请求。
+
 ---
 
 ## 发起终止（Kill）
@@ -174,6 +182,12 @@ system.Kill(targetRef, poison, "reason")
 - **poison**：`false` 立即终止（不处理剩余队列）；`true` 毒丸模式（处理完当前与队列中的消息后再终止）。
 - **reason**：可变参数，会拼接为字符串写入 **OnKill.Reason**。
 - 终止请求**异步**，调用后立即返回；目标终止后会向所有 **Watch** 该 ref 的 Actor 发送 **OnKilled**。监听其他 Actor 终止见 [Watch 与 Unwatch](/docs/basics/watch-unwatch)。
+
+### 多阶段终止
+
+在预启动中通过 **`PrelaunchContext.WithPhaseKill(completed, timeout, behavior)`** 注册多阶段终止。收到 **OnKill** 后先执行当前行为的收尾逻辑，收到 `completed` 信号、通道关闭或等待超时后继续终止。等待期间可消费的普通消息由 `behavior` 处理；子 Actor 需由收尾逻辑主动终止，自身仍需等待子 Actor 结束。
+
+普通邮箱暂停不阻塞系统终止请求和阶段完成通知，也不会因完成通知恢复普通消息消费；毒丸请求仍需等待普通邮箱恢复。`timeout` 仅限制完成信号的等待时间，不能打断正在执行的行为，也不是整个终止流程的耗时保证。需要支持重启时，应在每次预启动中重新注册完成通道。
 
 ---
 

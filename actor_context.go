@@ -50,8 +50,8 @@ type ActorContext interface {
 	//   - 构建基于事件的扩展点、监控与告警等功能模块。
 	//
 	// 推荐用法：
-	//   - Publish：c.EventStream().Publish(sender, event)
-	//   - Subscribe：c.EventStream().Subscribe(eventType, handlerFunc)
+	//   - Publish：c.EventStream().Publish(c, event)
+	//   - Subscribe：c.EventStream().Subscribe(c, MyEvent{})
 	//
 	// 返回值：
 	//   - EventStream：系统唯一的事件流对象，可用于事件发布与订阅管理。
@@ -61,7 +61,8 @@ type ActorContext interface {
 	//
 	// 功能与用途说明：
 	//   - Scheduler 支持定时（Once）、周期性（Loop）、Cron 表达式等多种类型的异步消息调度与定时任务投递。
-	//   - 所有调度任务的回调投递均自动封装为 Actor 消息，确保线程安全、串行化处理，并支持伴随 Actor 生命周期自动清理。
+	//   - 到期沿用普通 Tell 投递消息，用户行为仍由目标邮箱处理，任务随所属 Actor 生命周期自动清理。
+	//   - 终止或重启收尾后，已保存的 Scheduler 永久失效；重启初始化时重新获取调度器并注册任务。
 	//
 	// 典型应用场景：
 	//   - 定时发送心跳、延迟执行操作、定制定时业务逻辑。
@@ -71,9 +72,10 @@ type ActorContext interface {
 	// 推荐用法：
 	//   - 一次性延时投递：c.Scheduler().Once(c.Ref(), time.Second, MyMessage{})
 	//   - 周期性发送：c.Scheduler().Loop(c.Ref(), 10*time.Second, HealthCheck{})
-	//   - Cron 调度：c.Scheduler().Cron(c.Ref(), "0 0 * * *", DoSomething{})
-	//   - 取消定时任务：c.Scheduler().Cancel(reference)
-	//   - 全部取消：c.Scheduler().CancelAll()
+	//   - Cron 调度：c.Scheduler().Cron(c.Ref(), "0 0 0 * * ?", DoSomething{})
+	//   - 注册成功返回 ScheduledTask，可通过 task.Cancel() 取消本次任务。
+	//   - 按名称取消当前任务：c.Scheduler().Cancel(reference)
+	//   - 全部取消：c.Scheduler().Clear()
 	//
 	// 返回值：
 	//   - Scheduler：面向当前 ActorContext 生命周期、隔离的调度器实例。
@@ -315,7 +317,7 @@ type ActorContext interface {
 
 	// Available 是基于 [ActorSystem.Probe] 检查 Actor 自身是否还处于可用状态的函数。
 	//
-	// 当 Actor 处于可用状态时意味着投递消息任能被处理，否则将进入死信。
+	// 不执行用户行为，不保证业务健康或后续投递成功；重启初始化中或失败时返回 false。
 	Available() bool
 }
 
@@ -501,6 +503,8 @@ type ActorLiaison interface {
 	//
 	// 行为特性：
 	//   - 支持多种超时控制与异常捕捉，超时后 Future 状态自动为失败，可通过 Future.Error() 获取超时错误。
+	//   - 所属系统停止完成后，新请求以 ErrorActorSystemStopped 失败。
+	//   - 当前 Actor 收尾结束后，尚未完成的收尾请求以 ErrorActorDeaded 失败；重启同样清理旧实例的等待。
 	//   - 若目标 Actor 不存在或已终止，Future 会立即失败。
 	//   - 适用于 RPC、协作、需结果确认等双向通信场景。
 	//
@@ -526,6 +530,8 @@ type ActorLiaison interface {
 	//
 	// 功能与行为说明：
 	//   - 支持将任何实现 EntrustTask 接口的异步任务委托给 ActorContext 持有的独立执行环境；
+	//   - 所属系统停止完成后，新请求以 ErrorActorSystemStopped 失败，被拒绝的任务不会启动；
+	//   - 当前 Actor 收尾结束后，未完成的 Future 以 ErrorActorDeaded 失败，运行中的任务不强制中断；
 	//   - 所有异步任务均在独立的 Goroutine 中调度运行，任务实际执行流程与 Actor 独立，不会阻塞本地业务流程；
 	//   - 提供超时管理能力，timeout 参数用于指定此次任务最大等待时长（如为 0，则不设置超时限制）；
 	//   - 返回值 Future[Message] 可在客户端异步等待、回调处理或超时监控，适用于任务结果依赖、链式业务处理等异步编程场景；
@@ -604,6 +610,7 @@ type FixedOptionContext interface {
 //   - 该上下文在 Actor 创建后、正式启动（OnLaunch 消息处理）前提供，允许在 Actor 初始化阶段访问系统资源。
 //   - 主要用于 Actor 的构造函数或初始化方法中，进行必要的配置、资源准备等操作。
 //   - 与 ActorContext 不同，PrelaunchContext 不提供消息发送、子 Actor 创建等运行时能力，仅提供基础的系统访问接口。
+//   - 首次创建在回调前检查名称冲突；回调失败时释放框架登记的订阅和名称，外部资源需自行清理，panic 在回滚后继续传播。
 //
 // 典型应用场景：
 //   - 在 Actor 构造函数中获取日志记录器，进行初始化日志输出。
@@ -659,14 +666,15 @@ type PrelaunchContext interface {
 	// WithPhaseKill 为当前 Actor 注册多阶段终止：收到 [OnKill] 后先进入“等待阶段”，再执行真正终止。
 	//
 	// 功能说明：
-	//   - 调用后，当本 Actor 收到 [OnKill] 时不会立即执行终止（不停止子 Actor、不执行任何后续终止行为、不进入 [OnKilled]）。
-	//   - 进入等待阶段：仅当 completed 被关闭或经过 timeout 后，框架会向自身投递内部信号，随后执行真正的终止流程（杀子、执行 OnKill 行为、[OnKilled] 等）。
-	//   - 在等待阶段内，本 Actor 处于“正在终止”状态，期间收到的所有消息（除重复的 [OnKill] 被忽略外）均由传入的 behavior 处理，便于做优雅收尾（如排空队列、回复 Ask、通知集群离开等）。
+	//   - 收到 [OnKill] 后先执行当前行为的收尾逻辑，再等待完成信号或超时；框架不会自动停止子 Actor，需由收尾逻辑发起。
+	//   - completed 收到值、被关闭或经过 timeout 后，通过系统消息继续终止，不受普通邮箱暂停影响；仍需等待子 Actor 结束才能进入自身的 [OnKilled]。
+	//   - 等待阶段内可消费的普通消息由 behavior 处理，系统消息仍按框架和当前行为处理；暂停的普通消息不会恢复消费，重复的 [OnKill] 被忽略。
+	//   - 完成通知不会打断正在执行的行为，timeout 仅限制等待信号的时间，不保证整个终止流程的耗时。
 	//
 	// 参数说明：
-	//   - completed：只读 channel。由调用方在“优雅收尾完成”时关闭；若不关闭，则依赖 timeout 触发后续终止。
-	//   - timeout：等待阶段的最长时长，超时后同样会进入真正终止；必须大于 0。
-	//   - behavior：在等待阶段内用于处理每条消息的函数；可在此逻辑中决定何时关闭 completed，或仅做收尾处理。
+	//   - completed：只读 channel。由调用方在“优雅收尾完成”时发送信号或关闭；否则依赖 timeout 触发后续终止。
+	//   - timeout：完成信号的等待时长，超时后同样会继续终止；必须大于 0。
+	//   - behavior：等待阶段处理普通消息的函数；可在此逻辑中决定何时关闭 completed，或仅做收尾处理。
 	//
 	// 典型应用场景：
 	//   - 下线前先向集群发送“离开”并等待收敛，再执行终止。

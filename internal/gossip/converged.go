@@ -4,31 +4,41 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
 )
 
-// maybeEmitConverged 当视图指纹连续两轮不变时向自身投递 Converged（仅投递一次，直到视图再次变化）。
-func maybeEmitConverged(ctx vivid.ActorContext, a *Actor) {
-	// ctx.Logger().Debug("try converged", log.String("status", a.info.Status.String()))
+// viewStable 仅用于本地邮箱，绑定产生通知时的实例与成员视图，不表示远端确认。
+type viewStable struct {
+	instanceID  string
+	fingerprint string
+}
+
+// resetViewStability 成员更新或阶段变化后立即作废原有观察，不等待下一个周期。
+func (a *Actor) resetViewStability() {
+	a.lastViewFingerprint, a.stableRounds = "", 0
+	a.viewStableEmitted, a.pendingViewStable = false, nil
+	a.stabilityStartedAt = time.Time{}
+}
+
+// sampleViewStability 建立基线后，连续三个采样间隔不变时通知自身，同一视图只投递一次。
+func (a *Actor) sampleViewStability(ctx vivid.ActorContext, now time.Time) {
+	if !a.lastStableSample.IsZero() && now.Sub(a.lastStableSample) < a.opts.GossipInterval {
+		return
+	}
+	// 调度积压时只记录本次观察，不补算错过的周期。
+	a.lastStableSample = now
 	fp := a.view.Fingerprint()
 	if fp == a.lastViewFingerprint {
 		a.stableRounds++
-		// ctx.Logger().Debug("stable rounds", log.Int("stable_rounds", a.stableRounds))
-		if a.stableRounds >= 3 && !a.convergedEmitted {
-			// ctx.Logger().Debug("converged emitted")
-			a.convergedEmitted = true
-			ctx.Tell(ctx.Ref(), gossipmessages.NewConverged())
+		if a.stableRounds >= 3 && !a.viewStableEmitted {
+			a.viewStableEmitted = true
+			a.pendingViewStable = &viewStable{instanceID: a.info.ID(), fingerprint: fp}
+			ctx.Tell(ctx.Ref(), a.pendingViewStable)
 		}
-		// else {
-		// ctx.Logger().Debug("not converge", log.Int("stable_rounds", a.stableRounds), log.Bool("converged_emitted", a.convergedEmitted))
-		// }
 	} else {
-		// ctx.Logger().Debug("view fingerprint changed")
-		// ctx.Logger().Debug("before fingerprint", log.String("fingerprint", a.lastViewFingerprint))
-		// ctx.Logger().Debug("latest fingerprint", log.String("fingerprint", fp))
 		a.lastViewFingerprint = fp
 		a.stableRounds = 0
-		a.convergedEmitted = false
-		a.convergenceStartedAt = time.Now() // 视图变化，重新计时收敛耗时
+		a.viewStableEmitted = false
+		a.pendingViewStable = nil
+		a.stabilityStartedAt = now
 	}
 }

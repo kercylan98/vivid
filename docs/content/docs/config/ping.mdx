@@ -20,3 +20,11 @@ rtt := pong.Duration()
 - 返回 **Pong** 含发送/响应时间，**Duration()** 为 RTT；超时或不可达时返回 error。
 
 基础消息投递见 [消息投递](/docs/basics/message-delivery)。
+
+## 框架可用状态（Probe）
+
+使用 **ActorSystem.Probe(ref, timeout...).Result()** 查询 **Heartbeat.Available**：本地直接查询，远程由框架应答，不执行用户行为，不能代替业务健康检查。重启初始化中或失败的 Actor 不可用。
+
+发起探测的系统停止完成后，本地与远程探测均返回 **ErrorActorSystemStopped**。
+
+远程探测省略超时时使用系统默认 Ask 超时；首个参数为正时使用该等待预算，为零或负值时不设超时。等待包含排队、建连及应答，超时返回 **ErrorFutureTimeout**，与成功返回 **Available == false** 不同。超时或主动关闭 Future 仅结束本次等待，不关闭共享连接，也不撤销已投递请求。

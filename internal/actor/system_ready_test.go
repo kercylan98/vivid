@@ -38,6 +38,14 @@ func pendingClusterSystem(t *testing.T, address string, options ...vivid.ActorSy
 }
 
 func TestSystem_ClusterReady(t *testing.T) {
+	t.Run("default_wait_covers_launch_delay", func(t *testing.T) {
+		system := pendingClusterSystem(t, clusterTestAddress(t),
+			vivid.WithActorSystemClusterLaunchDelay(vivid.DefaultAskTimeout+100*time.Millisecond),
+		)
+		result, err := system.ClusterReady().Result()
+		require.NoError(t, err)
+		assert.True(t, result.Bootstrapped)
+	})
 	t.Run("bootstrap", func(t *testing.T) {
 		system := pendingClusterSystem(t, clusterTestAddress(t))
 		result, err := system.ClusterReady(time.Second).Result()
@@ -199,13 +207,19 @@ func TestSystem_ClusterInvalidOptions(t *testing.T) {
 		options []vivid.ActorSystemClusterOption
 	}{
 		{"missing_name", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterName("")}},
+		{"invalid_data_center", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterDataCenter("dc a")}},
 		{"negative_delay", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterLaunchDelay(-1)}},
 		{"zero_interval", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterGossipInterval(0)}},
 		{"negative_peers", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterGossipPeersCount(-1)}},
+		{"zero_probes", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterMaxConcurrentProbes(0)}},
+		{"negative_probes", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterMaxConcurrentProbes(-1)}},
 		{"zero_shutdown", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterGracefulShutdownTimeout(0)}},
 		{"zero_join", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterJoinTimeout(0)}},
 		{"invalid_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("node-without-port")}},
 		{"wildcard_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("0.0.0.0:8080")}},
+		{"wildcard_ipv6_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("[0:0:0:0:0:0:0:0]:8080")}},
+		{"wildcard_mapped_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("[::ffff:0.0.0.0]:8080")}},
+		{"signed_port_seed", []vivid.ActorSystemClusterOption{vivid.WithActorSystemClusterSeeds("node:+8080")}},
 	} {
 		t.Run(options.name, func(t *testing.T) {
 			address := clusterTestAddress(t)

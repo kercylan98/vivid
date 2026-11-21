@@ -64,6 +64,17 @@ type Pong struct {
 	Version       *versionvector.VersionVector
 }
 
+// PongAck 在视图一致时只确认本次直接请求，不携带成员视图或加入确认。
+type PongAck struct {
+	ClusterName   string
+	ProbeSequence uint64
+	ProbeOriginID string
+	GossipType    string
+	Timestamp     time.Time
+	Info          *endpoint.Information
+	Revision      uint64 // 本节点当前状态版本，不用于更新接收方成员记录
+}
+
 // JoinRejected 仅在集群名称不匹配时返回，不携带成员视图或加入确认。
 type JoinRejected struct {
 	ClusterName string // 接收节点配置的集群名称

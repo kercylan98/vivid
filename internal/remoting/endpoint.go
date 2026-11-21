@@ -83,7 +83,13 @@ type endpointInboundReady struct {
 	err     error
 }
 
-type endpointRetryConnect struct{}
+type endpointRetryConnect struct {
+	attempt uint64
+}
+
+type endpointDialReady struct {
+	dial *outboundDial
+}
 
 type endpointConnectCompleted struct {
 	attempt uint64
@@ -129,10 +135,15 @@ type endpoint struct {
 	connecting        bool
 	connectAttempt    uint64 // 当前尝试向该端点发起连接尝试的单调递增计数
 	connectTask       *pendingConnection
+	dialRequest       *outboundDial // 等待或执行中的出站拨号请求
 	writing           bool
-	retryCount        int  // 当前重试次数
-	retryScheduled    bool // 是否已调度重试
+	retryCount        int    // 当前重试次数
+	retryScheduled    bool   // 是否已调度重试
+	retryAttempt      uint64 // 当前重试调度代次，不随重试次数预算重置
 	associationSeq    uint64
+	received          uint64 // 已处理的外部信封与接入会话数量，与管理器投递计数对应
+	stopReceived      uint64 // 解绑路由前已保留的投递总数
+	stopReason        string // 等待已有投递处理完毕后终止自身
 }
 
 func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
@@ -144,11 +155,15 @@ func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
 	case *vivid.OnKilled:
 		e.onKilled(ctx, msg)
 	case vivid.Envelop:
+		e.received++
 		e.onEnvelop(ctx, msg)
 	case endpointAttachSession:
+		e.received++
 		e.onAttachSession(ctx, msg)
 	case endpointRetryConnect:
-		e.onRetryConnect(ctx)
+		e.onRetryConnect(ctx, msg)
+	case endpointDialReady:
+		e.startDial(ctx, msg.dial)
 	case endpointReaderStopped:
 		e.onReaderStopped(ctx, msg)
 	case endpointWriterAck:
@@ -167,16 +182,53 @@ func (e *endpoint) OnReceive(ctx vivid.ActorContext) {
 			e.onPipeUnexpectedResult(ctx, message, msg.Error)
 		}
 	}
+	if e.stopping {
+		e.finishStop(ctx)
+	} else {
+		e.retireIfIdle(ctx)
+	}
+}
+
+// stop 先移除路由并处理待发消息，保留 Actor 直到已预留的投递全部到达。
+func (e *endpoint) stop(ctx vivid.ActorContext, reason string) {
+	if e.stopping {
+		return
+	}
+	e.stopping = true
+	e.stopReceived = max(e.received, e.endpointManager.detachEndpoint(e.address, ctx.Ref()))
+	e.stopReason = reason
+	e.cancelDial()
+	e.cancelRetry(ctx)
+	e.failPending(ctx)
+	e.finishStop(ctx)
+}
+
+func (e *endpoint) finishStop(ctx vivid.ActorContext) {
+	if e.stopReason == "" || e.received != e.stopReceived {
+		return
+	}
+	reason := e.stopReason
+	e.stopReason = ""
+	ctx.Kill(ctx.Ref(), false, reason)
+}
+
+// retireIfIdle 在消息线程确认无业务与连接任务后，原子移除路由，再结束自身。
+func (e *endpoint) retireIfIdle(ctx vivid.ActorContext) {
+	if e.stopping || e.association != nil || e.inboundSession != nil || e.fallbackSession != nil ||
+		e.connecting || e.connectTask != nil || e.dialRequest != nil || e.retryScheduled || e.writing || !e.outboundBuffer.Empty() {
+		return
+	}
+	if e.endpointManager.retireEndpoint(e.address, ctx.Ref(), e.received) {
+		e.stopping = true
+		ctx.Kill(ctx.Ref(), false, "idle endpoint")
+	}
 }
 
 func (e *endpoint) onPipeUnexpectedResult(ctx vivid.ActorContext, message vivid.Message, pipeErr error) {
 	if pipeErr != nil {
 		ctx.Logger().Warn("endpoint received unexpected pipe error", log.String("address", e.address), log.String("type", fmt.Sprintf("%T", message)), log.Any("error", pipeErr))
 		if e.connecting {
-			if e.connectTask != nil {
-				e.connectTask.close()
-				e.connectTask = nil
-			}
+			e.cancelDial()
 			e.connecting = false
 			e.onConnectFailed(ctx, pipeErr)
 		}
@@ -220,10 +272,7 @@ func (e *endpoint) onAttachSession(ctx vivid.ActorContext, message endpointAttac
 	e.cancelRetry(ctx)
 	e.inboundSession = message.session
 	e.connectAttempt++
-	if e.connectTask != nil {
-		e.connectTask.close()
-		e.connectTask = nil
-	}
+	e.cancelDial()
 	e.connecting = false
 	ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
 		response := &Handshake{AdvertiseAddr: message.session.localAddress}
@@ -259,19 +308,39 @@ func (e *endpoint) ensureSession(ctx vivid.ActorContext) {
 	if e.stopping {
 		return
 	}
-	if e.association != nil || e.connecting || e.inboundSession != nil || e.retryScheduled {
+	if e.association != nil || e.connecting || e.dialRequest != nil || e.inboundSession != nil || e.retryScheduled {
 		return
 	}
 	if e.outboundBuffer.Empty() {
 		return
 	}
 
+	ref := ctx.Ref()
+	dial, ready, err := e.endpointManager.requestDial(func(dial *outboundDial) {
+		ctx.Tell(ref, endpointDialReady{dial: dial})
+	})
+	if err != nil {
+		ctx.EventStream().Publish(ctx, ves.RemotingConnectionFailedEvent{Address: e.address, Error: err})
+		e.stop(ctx, "outbound dial rejected")
+		return
+	}
+	e.dialRequest = dial
+	if ready {
+		e.startDial(ctx, dial)
+	}
+}
+
+func (e *endpoint) startDial(ctx vivid.ActorContext, dial *outboundDial) {
+	if dial == nil || e.stopping || e.dialRequest != dial || !dial.begin() {
+		return
+	}
 	e.connecting = true
 	e.connectAttempt++
 	attempt := e.connectAttempt
 	task := e.endpointManager.newPendingConnection(dialTimeout + handshakeTimeout)
 	e.connectTask = task
 	ctx.Entrust(0, vivid.EntrustTaskFN(func() (vivid.Message, error) {
+		defer dial.complete()
 		conn, err := e.dial(task)
 		if err != nil {
 			task.close()
@@ -292,6 +361,17 @@ func (e *endpoint) ensureSession(ctx vivid.ActorContext) {
 			session: session,
 		}, nil
 	})).PipeTo(ctx.Ref().ToActorRefs())
+}
+
+func (e *endpoint) cancelDial() {
+	if e.connectTask != nil {
+		e.connectTask.close()
+		e.connectTask = nil
+	}
+	if e.dialRequest != nil {
+		e.dialRequest.cancel()
+		e.dialRequest = nil
+	}
 }
 
 func (e *endpoint) dial(task *pendingConnection) (net.Conn, error) {
@@ -324,7 +404,7 @@ func (e *endpoint) dial(task *pendingConnection) (net.Conn, error) {
 		}
 		return nil, err
 	}
-	if response.AdvertiseAddr != "" && response.AdvertiseAddr != addr {
+	if response.AdvertiseAddr != addr {
 		mismatchErr := vivid.ErrorRemotingHandshake.WithMessage("remote advertise address mismatch")
 		if closeErr := closeConnection(conn); closeErr != nil {
 			return nil, errors.Join(mismatchErr, closeErr)
@@ -335,8 +415,11 @@ func (e *endpoint) dial(task *pendingConnection) (net.Conn, error) {
 }
 
 func (e *endpoint) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
+	if !outboundEnvelopActive(envelop) {
+		return
+	}
 	if e.stopping {
-		e.envelopHandler.HandleFailedRemotingEnvelop(envelop)
+		failOutboundEnvelop(e.envelopHandler, envelop)
 		return
 	}
 	if err := e.outboundBuffer.Push(envelop); err != nil {
@@ -347,18 +430,19 @@ func (e *endpoint) onEnvelop(ctx vivid.ActorContext, envelop vivid.Envelop) {
 			TargetAddress: e.address,
 			Error:         err,
 		})
-		e.envelopHandler.HandleFailedRemotingEnvelop(envelop)
+		failOutboundEnvelop(e.envelopHandler, envelop)
 		return
 	}
 	ctx.Metrics().Gauge(metrics.RemotingPendingEnvelopsGauge).Inc()
 	e.trySend(ctx)
 }
 
-func (e *endpoint) onRetryConnect(ctx vivid.ActorContext) {
-	e.retryScheduled = false
-	if e.stopping {
+func (e *endpoint) onRetryConnect(ctx vivid.ActorContext, message endpointRetryConnect) {
+	// 取消不能撤回已经投递的通知，旧代次不得清除新一轮退避。
+	if e.stopping || !e.retryScheduled || message.attempt != e.retryAttempt {
 		return
 	}
+	e.retryScheduled = false
 	if e.association != nil || e.outboundBuffer.Empty() {
 		return
 	}
@@ -380,6 +464,7 @@ func (e *endpoint) onConnectCompleted(ctx vivid.ActorContext, completed *endpoin
 
 	e.connecting = false
 	e.connectTask = nil
+	e.dialRequest = nil
 
 	if pipeErr != nil {
 		e.closeSession(ctx, completed.session, false, "connect task failed")
@@ -468,7 +553,7 @@ func (e *endpoint) onWriterAck(ctx vivid.ActorContext, message endpointWriterAck
 		e.writing = false
 		return
 	}
-	e.outboundBuffer.Pop()
+	completeOutboundEnvelop(e.outboundBuffer.Pop())
 	ctx.Metrics().Gauge(metrics.RemotingPendingEnvelopsGauge).Dec()
 	e.writing = false
 	e.retryCount = 0
@@ -491,7 +576,7 @@ func (e *endpoint) onWriterFailed(ctx vivid.ActorContext, message endpointWriter
 				TargetAddress: e.address,
 				Error:         message.err,
 			})
-			e.envelopHandler.HandleFailedRemotingEnvelop(current)
+			failOutboundEnvelop(e.envelopHandler, current)
 		}
 		e.trySend(ctx)
 		return
@@ -561,10 +646,9 @@ func (e *endpoint) onKilled(ctx vivid.ActorContext, message *vivid.OnKilled) {
 
 func (e *endpoint) onKill(ctx vivid.ActorContext) {
 	e.stopping = true
-	if e.connectTask != nil {
-		e.connectTask.close()
-		e.connectTask = nil
-	}
+	e.stopReason = ""
+	e.endpointManager.unregisterEndpoint(e.address, ctx.Ref())
+	e.cancelDial()
 	ctx.Metrics().Gauge(metrics.RemotingOutboundEndpointsGauge).Dec()
 	e.cancelRetry(ctx)
 	e.failPending(ctx)
@@ -579,7 +663,6 @@ func (e *endpoint) onKill(ctx vivid.ActorContext) {
 		e.association.closeSession(ctx, e.address, true, "endpoint closing")
 		e.association = nil
 	}
-	e.endpointManager.unregisterEndpoint(e.address, ctx.Ref())
 	ctx.Logger().Debug("endpoint closing", log.String("address", e.address))
 }
 
@@ -671,19 +754,18 @@ func (e *endpoint) scheduleRetry(ctx vivid.ActorContext, cause error) {
 	})
 	if e.retryCount >= e.retryPolicy.limit {
 		ctx.Logger().Warn("endpoint retries exhausted", log.String("address", e.address), log.Any("error", cause), log.Any("pending", e.outboundBuffer.Len()))
-		e.failPending(ctx)
-		ctx.Kill(ctx.Ref(), false, "endpoint retries exhausted")
+		e.stop(ctx, "endpoint retries exhausted")
 		return
 	}
 
 	delay := e.retryPolicy.delayFor(e.retryCount)
 	e.retryCount++
+	e.retryAttempt++
 	e.retryScheduled = true
-	if err := ctx.Scheduler().Once(ctx.Ref(), delay, endpointRetryConnect{}, vivid.WithSchedulerReference(e.retryScheduleReference())); err != nil {
+	if _, err := ctx.Scheduler().Once(ctx.Ref(), delay, endpointRetryConnect{attempt: e.retryAttempt}, vivid.WithSchedulerReference(e.retryScheduleReference())); err != nil {
 		e.retryScheduled = false
 		ctx.Logger().Warn("endpoint schedule retry failed", log.String("address", e.address), log.Any("error", err))
-		e.failPending(ctx)
-		ctx.Kill(ctx.Ref(), false, "endpoint retry scheduling failed")
+		e.stop(ctx, "endpoint retry scheduling failed")
 	}
 }
 

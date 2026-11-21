@@ -15,6 +15,7 @@ import (
 func TestSystem_Probe(t *testing.T) {
 	t.Run("local actor available", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
+		t.Cleanup(func() { assert.NoError(t, system.Stop(time.Second)) })
 		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
 		assert.NoError(t, err)
 		assert.NotNil(t, ref)
@@ -27,26 +28,31 @@ func TestSystem_Probe(t *testing.T) {
 
 	t.Run("local actor closing", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
+		t.Cleanup(func() { assert.NoError(t, system.Stop(time.Second)) })
 
 		wait := make(chan struct{})
+		defer close(wait)
+		started := make(chan struct{})
 		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 			switch ctx.Message().(type) {
 			case *vivid.OnKill:
+				close(started)
 				<-wait
 			}
 		}))
 		assert.NoError(t, err)
 		assert.NotNil(t, ref)
 		system.Kill(ref, false, "test kill")
+		receiveTellResult(t, started)
 		heartbeat, err := system.Probe(ref).Result()
 		assert.NoError(t, err)
 		assert.NotNil(t, heartbeat)
 		assert.False(t, heartbeat.Available)
-		close(wait)
 	})
 
 	t.Run("local actor not found", func(t *testing.T) {
 		system := actor.NewTestSystem(t)
+		t.Cleanup(func() { assert.NoError(t, system.Stop(time.Second)) })
 		heartbeat, err := system.Probe(system.Ref()).Result()
 		assert.NoError(t, err)
 		assert.NotNil(t, heartbeat)
@@ -54,12 +60,12 @@ func TestSystem_Probe(t *testing.T) {
 	})
 
 	t.Run("remote actor available", func(t *testing.T) {
-		system := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8080"))
+		system := startRemotingTLSSystem(t, nil)
 		ref, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
 		assert.NoError(t, err)
 		assert.NotNil(t, ref)
 
-		testSystem := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8081"))
+		testSystem := startRemotingTLSSystem(t, nil)
 		heartbeat, err := testSystem.Probe(ref.Clone()).Result()
 		assert.NoError(t, err)
 		assert.NotNil(t, heartbeat)
@@ -67,9 +73,9 @@ func TestSystem_Probe(t *testing.T) {
 	})
 
 	t.Run("remote actor not found", func(t *testing.T) {
-		system := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8083"))
+		system := startRemotingTLSSystem(t, nil)
 
-		testSystem := actor.NewTestSystem(t, vivid.WithActorSystemRemoting("127.0.0.1:8084"))
+		testSystem := startRemotingTLSSystem(t, nil)
 		heartbeat, err := testSystem.Probe(system.Ref()).Result()
 		assert.NoError(t, err)
 		assert.NotNil(t, heartbeat)

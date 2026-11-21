@@ -3,9 +3,11 @@ package actor
 import (
 	"fmt"
 	"net/url"
+	"sync/atomic"
 
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/mailbox"
+	"github.com/kercylan98/vivid/pkg/log"
 )
 
 func newContextInitializer(ctx *Context, actor vivid.Actor, options ...vivid.ActorOption) *contextInitializer {
@@ -17,15 +19,18 @@ func newContextInitializer(ctx *Context, actor vivid.Actor, options ...vivid.Act
 }
 
 type contextInitializer struct {
-	ctx     *Context
-	options []vivid.ActorOption
-	actor   vivid.Actor
+	ctx            *Context
+	options        []vivid.ActorOption
+	actor          vivid.Actor
+	mailboxFactory func(*Context) vivid.Mailbox // 仅内部虚拟激活使用，不包装业务 Actor
+	beforeMailbox  func() error                 // 虚拟归属在用户预启动返回后、业务消息准入前复核
 }
 
 func (i *contextInitializer) applyOptions() error {
 	for _, option := range i.options {
 		option(i.ctx.options)
 	}
+	i.ctx.options.Logger = log.Protect(i.ctx.options.Logger)
 	return nil
 }
 
@@ -56,7 +61,34 @@ func (i *contextInitializer) initRef() error {
 		return vivid.ErrorRefInvalidPath.With(joinPathErr).With(newRefErr)
 	}
 	i.ctx.ref = ref
+	ref.events = &eventStreamLifetime{scope: i.ctx.system.eventStreamScope}
+	if i.ctx.parent != nil {
+		return i.ctx.system.reserveActorContext(i.ctx)
+	}
 	return nil
+}
+
+// rollbackInitialization 只清理本次创建占有的资源，不触发尚未启动 Actor 的终止行为。
+func (c *Context) rollbackInitialization() {
+	if c.ref == nil {
+		return
+	}
+	system := c.system
+	system.actorInitLock.Lock()
+	owned := c.parent == nil || system.initializingActors[c.ref.GetPath()] == c
+	system.actorInitLock.Unlock()
+	if !owned {
+		return
+	}
+	// 名称保留到清理结束，失败回调持有的上下文也不能再次登记请求。
+	atomic.StoreInt32(&c.state, killed)
+	system.closeContextRequests(c)
+	c.closeEventStream()
+	c.scheduler.Load().close()
+	c.phaseKill = nil
+	system.actorInitLock.Lock()
+	delete(system.initializingActors, c.ref.GetPath())
+	system.actorInitLock.Unlock()
 }
 
 func (i *contextInitializer) prelaunch() error {
@@ -69,7 +101,16 @@ func (i *contextInitializer) prelaunch() error {
 }
 
 func (i *contextInitializer) initMailbox() error {
-	i.ctx.mailbox = mailbox.NewUnboundedMailbox(256, i.ctx)
+	if i.beforeMailbox != nil {
+		if err := i.beforeMailbox(); err != nil {
+			return err
+		}
+	}
+	if i.mailboxFactory != nil {
+		i.ctx.mailbox = i.mailboxFactory(i.ctx)
+	} else {
+		i.ctx.mailbox = mailbox.NewUnboundedMailbox(256, i.ctx)
+	}
 	return nil
 }
 

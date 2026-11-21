@@ -1,6 +1,8 @@
 package virtual
 
 import (
+	"net/url"
+
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/serialization"
 )
@@ -25,7 +27,12 @@ type Identity struct {
 // Decode implements [serialization.MessageCodec].
 func (i *Identity) Decode(reader *serialization.Reader, message any) error {
 	identity := message.(*Identity)
-	return reader.Read(identity.kind, identity.name)
+	var kind, name string
+	if err := reader.Read(&kind, &name); err != nil {
+		return err
+	}
+	identity.kind, identity.name = kind, name
+	return nil
 }
 
 // Encode implements [serialization.MessageCodec].
@@ -43,8 +50,12 @@ func (i *Identity) Clone() vivid.ActorRef {
 
 func (i *Identity) Equals(other vivid.ActorRef) bool {
 	identity, ok := other.(*Identity)
-	return ok && identity.kind == i.kind && identity.name == i.name
+	return ok && identity != nil && identity.kind == i.kind && identity.name == i.name
 }
+
+func (i *Identity) Kind() string { return i.kind }
+
+func (i *Identity) Name() string { return i.name }
 
 func (i *Identity) GetAddress() string {
 	return "virtual:" + i.kind
@@ -55,7 +66,7 @@ func (i *Identity) GetPath() vivid.ActorPath {
 }
 
 func (i *Identity) String() string {
-	return "virtual:" + i.kind + "/" + i.name
+	return "virtual:" + url.PathEscape(i.kind) + "/" + url.PathEscape(i.name)
 }
 
 func (i *Identity) ToActorRefs() vivid.ActorRefs {

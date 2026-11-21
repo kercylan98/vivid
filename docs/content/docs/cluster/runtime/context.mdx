@@ -14,7 +14,7 @@ func printMembers(system vivid.ActorSystem) error {
         return err
     }
     for _, member := range snapshot.Members() {
-        fmt.Printf("%s %s %s %s\n", member.ID, member.Address, member.Status, member.Reachability)
+        fmt.Printf("%s %s %q %s %s\n", member.ID, member.Address, member.DataCenter, member.Status, member.Reachability)
     }
     return nil
 }
@@ -28,13 +28,15 @@ func printMembers(system vivid.ActorSystem) error {
 | `Member(id)` | 按实例 ID 查询，返回 `ClusterMember` 值及是否存在 |
 | `Members()` | 按实例 ID 排序的独立切片 |
 
-`ClusterMember` 包含 `ID`、`Address`、`Status`、`Revision`、`CreatedAt` 和 `Reachability`。成员的 Revision 是该实例的状态版本，与快照的本地观察序号含义不同。生命周期常量为 `vivid.ClusterMemberStatusNone`、`Joining`、`Up`、`Leaving`、`Exiting`、`Removed`，均使用 `ClusterMemberStatus` 前缀。
+`ClusterMember` 包含 `ID`、`Address`、`DataCenter`、`Status`、`Revision`、`CreatedAt` 和 `Reachability`。`DataCenter` 是实例启动时声明的机房，空表示未声明，配置与边界见[多数据中心](/docs/cluster/topology/multi-datacenter)。成员的 Revision 是该实例的状态版本，与快照的本地观察序号含义不同。生命周期常量为 `vivid.ClusterMemberStatusNone`、`Joining`、`Up`、`Leaving`、`Exiting`、`Removed`，均使用 `ClusterMemberStatus` 前缀。
 
 `Reachability` 是本地最近一次直接往返观察，与生命周期独立，详见[本地可达性](/docs/cluster/runtime/reachability)。快照的 Revision 在成员记录或可达性发生变化时递增。
 
 快照可安全保留，后续变更不会修改旧快照；修改返回的成员值或切片不会影响系统及其他订阅者。查询不发起远程探测，按 ID 查询单个成员可避免复制整个列表。
 
-未启动、已停止、未启用集群时，分别返回 `ErrorActorSystemNotStarted`、`ErrorActorSystemStopped`、`ErrorClusterNotEnabled`。查询也可能因超时失败；通过 Future 的 `Close(err)` 可取消等待。
+未启动、停止中或已停止、未启用集群时，分别返回 `ErrorActorSystemNotStarted`、`ErrorActorSystemStopped`、`ErrorClusterNotEnabled`。查询也可能因超时失败；通过 Future 的 `Close(err)` 可取消等待。
+
+成员实例的地址、机房和创建时间在本次启动内固定；变更这些声明需以新实例加入。无效的直接发送方消息会被丢弃，转发视图中的无效成员记录及其版本会被忽略，不影响其他合法记录的合并。
 
 完整成员列表包含历史实例和退出记录，不能将成员数或 Up 数量作为健康节点数。状态与重启边界见[节点生命周期](/docs/cluster/events/lifecycle)。
 

@@ -31,12 +31,18 @@ description: Remoting 启用、消息注册、Codec 与位置透明
 配置好 Remoting 与 Codec 后，业务侧**无需区分**目标 Actor 在本机还是远程：`ctx.Tell(ref, msg)`、`ctx.Ask(ref, msg)` 等调用方式完全一致，框架根据 `ref` 的地址自动完成本地投递或跨网络序列化与发送。这就是 **location transparency**（位置透明）。
 </Callout>
 
+位置透明表示投递 API 一致。普通 ActorRef 绑定具体地址和路径，目标更换地址后需使用新的引用，已有引用不会自动跟随迁移。当前[虚拟 Actor](/docs/basics/virtual-actor)在本系统内按逻辑标识激活，不提供跨节点位置解析或迁移。
+
 ## 启用 Remoting
 
 通过 **WithActorSystemRemoting(bindAddr, advertiseAddr?)** 启用：
 
 - **bindAddr**（必填）：本机监听地址，如 `"0.0.0.0:8080"`。框架在此地址上启动 Listener 接受连接。
-- **advertiseAddr**（可选）：其他节点可访问的地址，例如 `"node1.example.com:8080"`。不传则使用 bindAddr；监听所有网卡或使用端口映射时，应显式设置可访问的地址与端口。
+- **advertiseAddr**（可选）：其他节点可访问的地址，例如 `"node1.example.com:8080"`。不传则使用 bindAddr；通配监听（如 `0.0.0.0:8080`、`[::]:8080`）必须显式设置广告地址，使用端口映射时也应配置映射后的地址与端口。
+
+广告地址必须使用非通配主机和 `1–65535` 的十进制端口，IPv6 使用方括号，如 `[2001:db8::1]:8080`；首尾空白会被裁剪。地址格式错误由 `Start()` 返回，可使用 `errors.Is(err, vivid.ErrorIllegalArgument)` 判断。格式校验不解析 DNS，也不保证远端可达。
+
+握手双方均须声明有效广告地址，响应地址须与连接目标一致；无效声明会使连接关闭，不使用 TCP 源端口推测节点地址。出站握手地址错误可通过连接失败事件的 `Error` 使用 `errors.Is(err, vivid.ErrorRemotingHandshake)` 判断。广告地址是通信声明，不构成身份认证。
 
 Remoting 使用 TCP 通信。启用后，`Start()` 成功返回表示本地监听已创建；端口占用、监听配置错误会使启动失败，可使用 `errors.Is(err, vivid.ErrorRemotingListen)` 判断，并通过 `errors.As` 获取底层原因。启动失败的实例不可重启，应修正配置后重新创建系统。
 
@@ -218,7 +224,28 @@ system := bootstrap.NewActorSystem(
 
 连接读取、帧解析或消息解码失败时，当前会话会关闭。可订阅 **`ves.RemotingConnectionClosedEvent`**，通过 `Address`、`PeerClosed` 和 `Error` 获取关闭原因；有待发送消息时，系统会尝试重新连接。
 
+断开后，没有待发送消息、连接或重试任务的端点会自动回收；健康连接继续复用。后续通信会按需创建端点，业务可继续使用原来的 ActorRef，无需手动管理端点生命周期。
+
 ## 远程连接重试与死信
+
+每个 ActorSystem 默认最多同时执行 **64** 个出站拨号与握手，另允许 **1024** 个地址按入队顺序等待名额。通过 `WithActorSystemRemotingMaxConcurrentDials` 和 `WithActorSystemRemotingMaxPendingDials` 分别配置，正值生效。等待不启动拨号任务、不额外消耗重试次数；拨号与握手超时从获得名额后开始计算，`Ask` 的等待超时仍包含排队时间。
+
+等待队列满时，该端点的待发消息转为死信，并发布 `ves.RemotingConnectionFailedEvent`，可通过 `errors.Is(event.Error, vivid.ErrorRemotingDialQueueFull)` 判断；本次不再重试，后续新消息可重新尝试。入站连接接管或端点停止会取消其等待。已有健康连接继续复用，不占拨号名额。
+
+### 待发送消息上限
+
+远程消息在进入发送邮箱前检查额度，覆盖入口排队、端点排队、重连和正在写入的消息，所有远程地址共享系统总量上限：
+
+| 配置函数 | 默认值 | 范围 |
+|----------|--------|------|
+| `WithActorSystemRemotingMaxPendingEnvelops` | 1024 | 单个远程地址，包含该地址下的所有 Actor |
+| `WithActorSystemRemotingMaxTotalPendingEnvelops` | 16384 | 单个 ActorSystem 的全部远程地址 |
+
+两项均只接受正值；结构体字段未设置或非正值时使用默认值。额度满时，新消息立即转为死信，不阻塞调用，也不触发连接重试；已有消息继续发送。通过 `ves.RemotingEnvelopSendFailedEvent.Error` 与 `errors.Is` 判断 `vivid.ErrorRemotingPendingEnvelopsFull`（单地址）或 `vivid.ErrorRemotingTotalPendingEnvelopsFull`（系统总量）。两项同时超限时返回单地址错误。`Tell` 不直接返回该错误；`Ask` 仍可能因未收到应答而超时。
+
+本地写入完成或消息失败后归还额度，等待重连仍占用额度。系统停止时处理剩余待发消息；停止不保证消息已交付，失败时也不能证明远端没有执行。限制按消息条数统计，不限制单条业务对象大小，也不限制本地邮箱、死信和事件订阅者的积压，不能视为进程内存上限。
+
+### 连接失败重试
 
 向远程节点发送消息时，连接失败后按 **ActorSystemRemotingOptions** 中的策略有限重试。**NewActorSystemRemotingOptions()** 默认提供：额外重试 10 次、初始延迟 500ms、最大延迟 10s、退避因子 2.5，启用随机抖动。可通过 **WithActorSystemRemotingOption** 配置单项或使用 **WithActorSystemRemotingReconnect** 批量配置：
 
@@ -227,7 +254,7 @@ system := bootstrap.NewActorSystem(
 - **ReconnectFactor**：有限且不小于 1 的退避因子，1 表示固定间隔；非法值忽略。对应 **WithActorSystemRemotingReconnectFactor**。
 - **ReconnectJitter**：启用后，在当前退避间隔的 50% 到 100% 之间随机选择延迟。对应 **WithActorSystemRemotingReconnectJitter**。
 
-退避期间的新消息进入待发送队列，不会提前触发拨号。重试次数限制针对当前 Endpoint 的连接过程；后续新消息仍可重新发起连接，不是对某个地址永久禁用。
+退避期间的新消息进入待发送队列，不会提前触发拨号；已有连接接管或端点停止后，不再执行已取消的重试。重试耗尽只结束当前连接过程，后续新消息仍可使用原 ActorRef 重新发起连接，不是对某个地址永久禁用。
 
 双方同时首次建连时，正常的重复连接仲裁不消耗重试次数，`ReconnectLimit` 为 0 也可完成连接选择。若优选拨号失败，框架会先尝试接管已接入的备用连接；备用连接仍受原握手超时约束，全部失败后才按重试策略处理待发送消息。
 

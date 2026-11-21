@@ -7,6 +7,7 @@ import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
+	"github.com/kercylan98/vivid/internal/gossip/memberlist"
 	"github.com/kercylan98/vivid/pkg/ves"
 )
 
@@ -28,6 +29,7 @@ type localReachability struct {
 	pending       map[string]reachabilityProbe
 	attempts      map[string]probeAttempt
 	candidates    []probeCandidate
+	dataCenters   *dataCenterSchedule
 	scheduleRound uint64
 	sequence      uint64
 	changed       bool
@@ -60,7 +62,7 @@ func (r *localReachability) observe(id string, state vivid.ClusterReachability, 
 }
 
 // begin 为现有 Gossip 消息关联观察；额度耗尽时仍允许正常交换视图。
-func (r *localReachability) begin(peer vivid.ActorRef, members []*endpoint.Information, now time.Time, timeout time.Duration, limit int) uint64 {
+func (r *localReachability) begin(peer vivid.ActorRef, members *memberlist.MemberList, now time.Time, timeout time.Duration, limit int) uint64 {
 	key := peer.GetAddress()
 	if probe, exists := r.pending[key]; exists {
 		return probe.sequence // 重发沿用原序号与截止时间。
@@ -73,13 +75,23 @@ func (r *localReachability) begin(peer vivid.ActorRef, members []*endpoint.Infor
 		r.sequence++
 	}
 	probe := reachabilityProbe{sequence: r.sequence, deadline: now.Add(timeout)}
-	for _, member := range members {
-		if member.ActorRef.GetAddress() == key && observableMember(member.Status) {
-			probe.members = append(probe.members, member.ID())
+	if members != nil {
+		for _, member := range members.All() {
+			if member.ActorRef.GetAddress() == key && observableMember(member.Status) {
+				probe.members = append(probe.members, member.ID())
+			}
 		}
 	}
+
 	r.pending[key] = probe
-	r.attempts[key] = probeAttempt{sequence: probe.sequence, round: r.scheduleRound}
+	attempt := r.attempts[key]
+	attempt.sequence, attempt.round = probe.sequence, r.scheduleRound
+	r.attempts[key] = attempt
+	if r.dataCenters != nil {
+		if group := r.dataCenters.groups[r.dataCenters.addresses[key]]; group != nil {
+			group.sequence = probe.sequence
+		}
+	}
 	return probe.sequence
 }
 
@@ -137,6 +149,7 @@ func (r *localReachability) reset() {
 	clear(r.pending)
 	clear(r.attempts)
 	r.candidates = nil
+	r.dataCenters = nil
 }
 
 func (a *Actor) refreshReachability(ctx vivid.ActorContext, now time.Time) {
@@ -147,16 +160,20 @@ func (a *Actor) refreshReachability(ctx vivid.ActorContext, now time.Time) {
 }
 
 func (a *Actor) observePong(ctx vivid.ActorContext, pong *gossipmessages.Pong, now time.Time) {
-	if a.reachability == nil || a.stopping || pong.ProbeSequence == 0 || pong.ProbeOriginID != a.info.ID() ||
-		pong.Info.ID() == a.info.ID() || ctx.Sender() == nil || !ctx.Sender().Equals(pong.Info.ActorRef) {
+	a.observeResponse(ctx, pong.Info, pong.ProbeSequence, pong.ProbeOriginID, pong.Version.Get(pong.Info.ID()), now)
+}
+
+func (a *Actor) observeResponse(ctx vivid.ActorContext, info *endpoint.Information, sequence uint64, origin string, revision uint64, now time.Time) {
+	if a.reachability == nil || a.stopping || sequence == 0 || origin != a.info.ID() ||
+		info.ID() == a.info.ID() || ctx.Sender() == nil || !ctx.Sender().Equals(info.ActorRef) {
 		return
 	}
-	member := a.view.Members().Get(pong.Info.ID())
-	if member == nil || !observableMember(member.Status) || !member.ActorRef.Equals(pong.Info.ActorRef) ||
-		!observableMember(pong.Info.Status) || pong.Version.Get(pong.Info.ID()) == 0 {
+	member := a.view.Members().Get(info.ID())
+	if member == nil || !observableMember(member.Status) || !member.ActorRef.Equals(info.ActorRef) ||
+		!observableMember(info.Status) || revision == 0 {
 		return
 	}
-	a.reachability.accept(pong.Info.ActorRef, pong.ProbeSequence, pong.Info.ID(), now, a.opts.ReachabilityTTL)
+	a.reachability.accept(info.ActorRef, sequence, info.ID(), now, a.opts.ReachabilityTTL)
 	a.publishReachabilityChanged(ctx)
 }
 

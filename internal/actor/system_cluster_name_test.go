@@ -2,6 +2,7 @@ package actor_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,47 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSystem_ClusterJoinMixedFailures(t *testing.T) {
+	for _, mismatchFirst := range []bool{true, false} {
+		name := "timeout_first"
+		if mismatchFirst {
+			name = "mismatch_first"
+		}
+		t.Run(name, func(t *testing.T) {
+			addresses := []string{clusterTestAddress(t), clusterTestAddress(t)}
+			slices.Sort(addresses)
+			wrongAddress := addresses[1]
+			if mismatchFirst {
+				wrongAddress = addresses[0]
+			}
+			wrong := pendingClusterSystem(t, wrongAddress, vivid.WithActorSystemClusterName("other-cluster"))
+			_, err := wrong.ClusterReady(time.Second).Result()
+			require.NoError(t, err)
+			joiner := pendingClusterSystem(t, clusterTestAddress(t),
+				vivid.WithActorSystemClusterSeeds(addresses[1], addresses[0], addresses[0]),
+				vivid.WithActorSystemClusterJoinTimeout(600*time.Millisecond),
+			)
+			_, err = joiner.ClusterReady(3 * time.Second).Result()
+			require.ErrorIs(t, err, vivid.ErrorClusterJoinFailed)
+			require.ErrorIs(t, err, vivid.ErrorClusterNameMismatch)
+			require.ErrorIs(t, err, vivid.ErrorFutureTimeout)
+			for _, address := range addresses {
+				assert.Equal(t, 1, strings.Count(err.Error(), address), "去重种子及重发只保留一条最终原因")
+			}
+			assert.Contains(t, err.Error(), "other-cluster")
+			assert.Contains(t, err.Error(), "vivid-test")
+			_, repeated := joiner.ClusterReady(time.Second).Result()
+			assert.Same(t, err, repeated, "初始加入结果保持不变")
+			snapshot, err := joiner.ClusterSnapshot(time.Second).Result()
+			require.NoError(t, err)
+			local, found := snapshot.Member(snapshot.LocalID())
+			require.True(t, found)
+			assert.Equal(t, vivid.ClusterMemberStatusJoining, local.Status)
+			assert.Equal(t, 1, snapshot.Len())
+		})
+	}
+}
 
 func TestSystem_ClusterNameMismatch(t *testing.T) {
 	address := clusterTestAddress(t)

@@ -14,20 +14,24 @@ func TestWithActorSystemClusterOptions_Initialize(t *testing.T) {
 	opts := vivid.NewActorSystemOptions(
 		vivid.WithActorSystemClusterOptions(
 			vivid.WithActorSystemClusterName("vivid-test"),
+			vivid.WithActorSystemClusterDataCenter("dc-a"),
 			vivid.WithActorSystemClusterSeeds("127.0.0.1:7070"),
 			vivid.WithActorSystemClusterLaunchDelay(100*time.Millisecond),
 			vivid.WithActorSystemClusterGossipInterval(300*time.Millisecond),
 			vivid.WithActorSystemClusterGossipPeersCount(3),
+			vivid.WithActorSystemClusterMaxConcurrentProbes(7),
 			vivid.WithActorSystemClusterGracefulShutdownTimeout(5*time.Second),
 		),
 	)
 
 	require.NotNil(t, opts.ClusterOptions)
 	assert.Equal(t, "vivid-test", opts.ClusterOptions.Name)
+	assert.Equal(t, "dc-a", opts.ClusterOptions.DataCenter)
 	assert.Equal(t, []string{"127.0.0.1:7070"}, opts.ClusterOptions.Seeds)
 	assert.Equal(t, 100*time.Millisecond, opts.ClusterOptions.LaunchDelay)
 	assert.Equal(t, 300*time.Millisecond, opts.ClusterOptions.GossipInterval)
 	assert.Equal(t, 3, opts.ClusterOptions.GossipPeersCount)
+	assert.Equal(t, 7, opts.ClusterOptions.MaxConcurrentProbes)
 	assert.Equal(t, 5*time.Second, opts.ClusterOptions.GracefulShutdownTimeout)
 	assert.Equal(t, 3*time.Second, opts.ClusterOptions.JoinTimeout)
 	assert.Equal(t, 3*time.Second, opts.ClusterOptions.ProbeTimeout)
@@ -46,6 +50,7 @@ func TestWithActorSystemClusterOptions_Defaults(t *testing.T) {
 	assert.Less(t, opts.ClusterOptions.LaunchDelay, time.Second)
 	assert.Equal(t, 200*time.Millisecond, opts.ClusterOptions.GossipInterval)
 	assert.Equal(t, 5, opts.ClusterOptions.GossipPeersCount)
+	assert.Equal(t, 5, opts.ClusterOptions.MaxConcurrentProbes)
 	assert.Equal(t, 10*time.Second, opts.ClusterOptions.GracefulShutdownTimeout)
 	assert.Equal(t, 3*time.Second, opts.ClusterOptions.JoinTimeout)
 }
@@ -129,5 +134,45 @@ func TestActorSystemClusterOptions_Name(t *testing.T) {
 		opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName(name))
 		assert.NoError(t, opts.Validate(), name)
 		assert.Equal(t, name, opts.Name)
+	}
+}
+
+func TestActorSystemClusterOptions_DataCenter(t *testing.T) {
+	for _, dataCenter := range []string{" ", "dc-a ", " dc-a", "dc a", "dc\n", "dc\x00", "dc\u3000", string([]byte{0xff}), strings.Repeat("x", 129)} {
+		opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterDataCenter(dataCenter))
+		assert.ErrorIs(t, opts.Validate(), vivid.ErrorIllegalArgument, "%q", dataCenter)
+		assert.Equal(t, dataCenter, opts.DataCenter, "校验不应暗中修正标识")
+	}
+	for _, dataCenter := range []string{"", "dc-a", "DC-a", "cn-east_1.az-a", "上海机房", strings.Repeat("x", 128)} {
+		opts := vivid.NewActorSystemOptions(vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterDataCenter(dataCenter)))
+		require.NoError(t, opts.ClusterOptions.Validate(), "%q", dataCenter)
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterSeeds("node.example:8080"))(opts)
+		assert.Equal(t, dataCenter, opts.ClusterOptions.DataCenter, "增量调用保留机房声明")
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterDataCenter("dc-b"))(opts)
+		assert.Equal(t, "dc-b", opts.ClusterOptions.DataCenter)
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterDataCenter(""))(opts)
+		assert.Empty(t, opts.ClusterOptions.DataCenter, "启动前可显式清除声明")
+	}
+}
+
+func TestActorSystemClusterOptions_ProbeConcurrency(t *testing.T) {
+	for _, count := range []int{0, -1} {
+		opts := vivid.NewActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterMaxConcurrentProbes(count))
+		assert.ErrorIs(t, opts.Validate(), vivid.ErrorIllegalArgument)
+	}
+	for _, count := range []int{1, 3, 20} {
+		opts := vivid.NewActorSystemOptions(vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterName("vivid-test"), vivid.WithActorSystemClusterGossipPeersCount(count)))
+		assert.Equal(t, 5, opts.ClusterOptions.MaxConcurrentProbes, "每轮发送数量不应改变默认观察并发")
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterMaxConcurrentProbes(7))(opts)
+		assert.Equal(t, count, opts.ClusterOptions.GossipPeersCount, "观察并发不应改变每轮发送数量")
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterGossipPeersCount(2))(opts)
+		assert.Equal(t, 7, opts.ClusterOptions.MaxConcurrentProbes, "增量修改发送数量时保留观察并发")
+		vivid.WithActorSystemClusterOptions(vivid.WithActorSystemClusterMaxConcurrentProbes(1))(opts)
+		assert.Equal(t, 1, opts.ClusterOptions.MaxConcurrentProbes)
+		assert.Equal(t, 2, opts.ClusterOptions.GossipPeersCount)
+		assert.NoError(t, opts.ClusterOptions.Validate(), "观察并发可小于每轮发送数量")
+		before := *opts.ClusterOptions
+		vivid.WithActorSystemClusterOptions()(opts)
+		assert.Equal(t, before, *opts.ClusterOptions)
 	}
 }

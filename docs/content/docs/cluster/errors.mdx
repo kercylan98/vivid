@@ -29,4 +29,6 @@ func queryCluster(system vivid.ActorSystem) error {
 }
 ```
 
-初始加入失败通过 `ClusterReady()` 返回 `ErrorClusterJoinFailed`；等待超时只结束当前调用，不会取消加入。参数错误通过 `Start()` 返回，使用 `errors.Is(err, vivid.ErrorIllegalArgument)` 判断。完整错误体系见[错误处理](/docs/config/errors)，成员查询见[本地成员查询](/docs/cluster/runtime/context)。
+初始加入全部失败时，`ClusterReady()` 返回 `ErrorClusterJoinFailed`，并保留每个去重种子的地址与最终原因。同一错误可同时匹配 `ErrorClusterNameMismatch` 和 `ErrorFutureTimeout`；可用 `errors.As` 提取底层类型错误，重发不会重复记录同一种子。
+
+先判断 `ErrorClusterJoinFailed`，再检查底层原因，以区分种子超时与本次等待超时。等待超时只结束当前调用，不会取消加入。参数错误通过 `Start()` 返回，使用 `errors.Is(err, vivid.ErrorIllegalArgument)` 判断。完整错误体系见[错误处理](/docs/config/errors)，成员查询见[本地成员查询](/docs/cluster/runtime/context)。

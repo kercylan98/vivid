@@ -14,6 +14,7 @@ import (
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/internal/messages"
+	"github.com/kercylan98/vivid/internal/remoting"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/metrics"
 	"github.com/kercylan98/vivid/pkg/ves"
@@ -35,6 +36,10 @@ const (
 )
 
 func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, options ...vivid.ActorOption) (*Context, error) {
+	return newContext(system, parent, actor, nil, options...)
+}
+
+func newContext(system *System, parent vivid.ActorRef, actor vivid.Actor, configure func(*contextInitializer), options ...vivid.ActorOption) (*Context, error) {
 	ctx := &Context{
 		options: &vivid.ActorOptions{
 			DefaultAskTimeout: system.options.DefaultAskTimeout, // 默认继承系统默认的 Ask 超时时间
@@ -45,9 +50,18 @@ func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, option
 		behaviorStack: NewBehaviorStack(),
 		launchTime:    time.Now(),
 	}
-	ctx.scheduler = newScheduler(ctx)
+	ctx.scheduler.Store(newScheduler(ctx))
+	initialized := false
+	defer func() {
+		if !initialized {
+			ctx.rollbackInitialization()
+		}
+	}()
 
 	initializer := newContextInitializer(ctx, actor, initContextOptions(ctx, actor, options)...)
+	if configure != nil {
+		configure(initializer)
+	}
 
 	if err := chain.New().
 		Append(chain.ChainFN(initializer.applyOptions)).
@@ -59,6 +73,7 @@ func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, option
 		Run(); err != nil {
 		return nil, vivid.ErrorActorSpawnFailed.With(err)
 	}
+	initialized = true
 	return ctx, nil
 }
 
@@ -92,8 +107,9 @@ type Context struct {
 	restarting    *RestartMessage                    // 正在重启的消息
 	watchers      map[string]vivid.ActorRef          // 正在监听该 Actor 终止事件的 ActorRef，其中 key 为 ActorRef 的完整路径
 	stash         []vivid.Envelop                    // 暂存区
-	scheduler     *Scheduler                         // 调度器
+	scheduler     atomic.Pointer[Scheduler]          // 当前生命周期的调度器
 	phaseKill     *phaseKill                         // 多阶段终止流程
+	requestEpoch  atomic.Uint64                      // 请求生命周期，奇数表示收尾结束，登记与切换由 futureLock 协调
 }
 
 func (c *Context) WithPhaseKill(completed <-chan struct{}, timeout time.Duration, behavior vivid.Behavior) error {
@@ -185,28 +201,30 @@ func (c *Context) EventStream() vivid.EventStream {
 }
 
 func (c *Context) Scheduler() vivid.Scheduler {
-	return c.scheduler
+	return c.scheduler.Load()
 }
 
 func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {
+	return c.actorOf(actor, nil, options...)
+}
+
+func (c *Context) actorOf(actor vivid.Actor, configure func(*contextInitializer), options ...vivid.ActorOption) (vivid.ActorRef, error) {
 	var status = atomic.LoadInt32(&c.state)
 	if status == killed {
 		return nil, vivid.ErrorActorDeaded
 	}
 
-	childCtx, err := NewContext(c.system, c.ref, actor, options...)
+	childCtx, err := newContext(c.system, c.ref, actor, configure, options...)
 	if err != nil {
 		return nil, err
 	}
 
 	if c.system.appendActorContext(childCtx) {
+		childCtx.rollbackInitialization()
 		return nil, vivid.ErrorActorAlreadyExists.WithMessage(childCtx.Ref().GetPath())
 	}
 
-	if c.children == nil {
-		c.children = make(map[vivid.ActorPath]vivid.ActorRef)
-	}
-	c.children[childCtx.Ref().GetPath()] = childCtx.Ref()
+	c.addChild(childCtx.Ref())
 
 	c.tell(true, childCtx.Ref(), new(vivid.OnLaunch))
 	c.Logger().Debug("actor spawned", log.String("path", childCtx.Ref().GetPath()))
@@ -298,7 +316,7 @@ func (c *Context) tellWithSender(system bool, sender vivid.ActorRef, recipient v
 		}
 		receiverMailbox.Enqueue(mailbox.NewEnvelop(system, sender, recipient, message))
 	} else {
-		err = c.system.virtualCoordinator.TellVirtual(sender, recipient, message)
+		err = c.system.dispatchVirtual(system, sender, recipient, message, nil)
 	}
 	return
 }
@@ -312,29 +330,56 @@ func (c *Context) ask(system bool, recipient vivid.ActorRef, message vivid.Messa
 }
 
 func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message, timeout ...time.Duration) vivid.Future[vivid.Message] {
+	if c.system.requestsStopped() {
+		return future.NewFutureFail[vivid.Message](vivid.ErrorActorSystemStopped)
+	}
+	owner := c
+	// 显式转发的请求仍归属于本地发送方的生命周期。
+	if sender != c.ref && sender.GetAddress() == c.ref.GetAddress() {
+		value, _ := c.system.actorContexts.Load(sender.GetPath())
+		ctx, ok := value.(*Context)
+		if !ok {
+			return future.NewFutureFail[vivid.Message](vivid.ErrorActorDeaded)
+		}
+		owner = ctx
+	}
+	generation := owner.requestEpoch.Load()
+	if generation&1 != 0 {
+		return future.NewFutureFail[vivid.Message](vivid.ErrorActorDeaded)
+	}
 	var askTimeout = c.options.DefaultAskTimeout
 	if len(timeout) > 0 {
 		askTimeout = timeout[0]
 	}
 
-	if !recipient.IsVirtual() {
-		// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
-		agentRef, _ := NewAgentRef(sender.(*Ref))
-		futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
-			c.system.removeFuture(agentRef)
-		})
-		c.system.appendFuture(agentRef, futureIns)
-
-		envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
-		c.enqueueToMailbox(recipient, envelop)
-
+	// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
+	agentRef, _ := NewAgentRef(sender.(*Ref))
+	futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
+		c.system.removeFuture(agentRef)
+	})
+	if err := c.system.appendFuture(agentRef, futureIns, owner, generation); err != nil {
+		futureIns.Close(err)
 		return futureIns
-	} else {
-		return c.system.virtualCoordinator.AskVirtual(sender, recipient, message, timeout...)
 	}
+
+	if recipient.IsVirtual() {
+		if err := c.system.dispatchVirtual(system, agentRef.ref, recipient, message, futureIns); err != nil {
+			futureIns.Close(err)
+		}
+	} else {
+		c.enqueueToMailbox(recipient, mailbox.NewEnvelop(system, agentRef.ref, recipient, message))
+	}
+	return futureIns
 }
 
 func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.Future[vivid.Message] {
+	if c.system.requestsStopped() {
+		return future.NewFutureFail[vivid.Message](vivid.ErrorActorSystemStopped)
+	}
+	generation := c.requestEpoch.Load()
+	if generation&1 != 0 {
+		return future.NewFutureFail[vivid.Message](vivid.ErrorActorDeaded)
+	}
 	if task == nil {
 		return future.NewFutureFail[vivid.Message](vivid.ErrorFutureInvalid.WithMessage("no task to be executed"))
 	}
@@ -344,7 +389,10 @@ func (c *Context) Entrust(timeout time.Duration, task vivid.EntrustTask) vivid.F
 	futureIns := future.NewFuture[vivid.Message](c, timeout, func() {
 		c.system.removeFuture(agentRef)
 	})
-	c.system.appendFuture(agentRef, futureIns)
+	if err := c.system.appendFuture(agentRef, futureIns, c, generation); err != nil {
+		futureIns.Close(err)
+		return futureIns
+	}
 
 	go func() {
 		defer func() {
@@ -414,6 +462,9 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 			c.handleMessage(envelop, c.phaseKill.behavior)
 			return
 		} // 是否处于僵尸状态
+		if remoting.FailOutboundMessage(envelop.Message()) {
+			return
+		}
 		if _, ok := envelop.Message().(ves.DeathLetterEvent); ok {
 			// 避免在已终止阶段将死信再次投递给自己，形成无限递归的死信风暴。
 			return
@@ -430,6 +481,9 @@ func (c *Context) HandleEnvelop(envelop vivid.Envelop) {
 	// 僵尸状态的消息处理仅用作能正确的确保 Actor 被释放
 	behavior := c.behaviorStack.Peek()
 	if c.zombie {
+		if remoting.FailOutboundMessage(envelop.Message()) {
+			return
+		}
 		behavior = emptyBehavior
 	}
 
@@ -457,10 +511,8 @@ func (c *Context) handleMessage(envelop vivid.Envelop, behavior vivid.Behavior) 
 		c.onWatch(message)
 	case *messages.UnwatchMessage:
 		c.onUnwatch(message)
-	case *SchedulerMessage:
-		c.onScheduler(message, behavior)
 	case *phaseKill:
-		c.onPhaseKill()
+		c.onPhaseKill(message)
 	default:
 		if c.IsMetricsEnabled() {
 			c.Metrics().Counter(metrics.MessagesProcessedTotalCounter).Inc()
@@ -469,10 +521,15 @@ func (c *Context) handleMessage(envelop vivid.Envelop, behavior vivid.Behavior) 
 	}
 }
 
-func (c *Context) onPhaseKill() {
+func (c *Context) onPhaseKill(message *phaseKill) {
+	// 重复通知及重启前的旧通知不能推进当前终止流程。
+	if message == nil || message != c.phaseKill || message.completed || message.envelope == nil || atomic.LoadInt32(&c.state) != killing {
+		return
+	}
 	// 多阶段终止流程结束
-	c.envelop = c.phaseKill.envelope // 恢复 OnKill 消息
-	c.phaseKill.completed = true
+	c.envelop = message.envelope // 恢复 OnKill 消息
+	message.envelope = nil
+	message.completed = true
 	c.doKill(c.Message().(*vivid.OnKill), c.behaviorStack.Peek())
 }
 
@@ -497,15 +554,6 @@ func (c *Context) executeBehaviorWithRecovery(behavior vivid.Behavior) {
 		}
 	}()
 	behavior(c)
-}
-
-func (c *Context) onScheduler(message *SchedulerMessage, behavior vivid.Behavior) {
-	// 消息替换
-	c.envelop = newReplacedEnvelop(c.envelop, message.Message)
-	if c.IsMetricsEnabled() {
-		c.Metrics().Counter(metrics.MessagesProcessedTotalCounter).Inc()
-	}
-	c.executeBehaviorWithRecovery(behavior)
 }
 
 func (c *Context) onCommand(message *messages.NoneArgsCommandMessage) {
@@ -655,7 +703,12 @@ func (c *Context) onRestart(message *RestartMessage, behavior vivid.Behavior) {
 }
 
 func (c *Context) onKill(message *vivid.OnKill, behavior vivid.Behavior) {
-	if !c.zombie && !atomic.CompareAndSwapInt32(&c.state, running, killing) {
+	previous := running
+	if c.zombie {
+		// 重启失败保留 killed 状态，显式终止后同样只进入一次收尾。
+		previous = killed
+	}
+	if !atomic.CompareAndSwapInt32(&c.state, previous, killing) {
 		return
 	}
 	c.doKill(message, behavior)
@@ -681,15 +734,22 @@ func (c *Context) doKill(message *vivid.OnKill, behavior vivid.Behavior) {
 	c.system.removeFuturesByAgentPath(c.ref.GetPath(), vivid.ErrorActorDeaded)
 
 	// 等待所有子 Actor 结束，假设是重启，子 Actor 不应该跟随重启，应该由父节点决定是否重启
-	// 多阶段终止时，子节点已在 apply 阶段通过 behavior（OnKill）通知过，此处不再重复发送 OnKill，避免死信
+	// 多阶段终止由 OnKill 收尾逻辑负责通知子节点，此处不再重复发送 OnKill，避免死信。
 	if c.phaseKill == nil || !c.phaseKill.completed {
-		for _, child := range c.children {
-			c.Kill(child, message.Poison, message.Reason)
+		if c.parent == nil {
+			// 根节点与外部创建共享名单，投递必须在快照锁外执行。
+			for _, child := range c.Children() {
+				c.Kill(child, message.Poison, message.Reason)
+			}
+		} else {
+			for _, child := range c.children {
+				c.Kill(child, message.Poison, message.Reason)
+			}
 		}
 	}
 
-	// 宣告自己进入死亡中
-	if c.restarting != nil {
+	// 宣告自己进入死亡中，多阶段流程已在等待前执行过 OnKill，重启时也不重复执行。
+	if c.restarting != nil && c.phaseKill == nil {
 		// 失败意味着资源可能无法正确释放，但不应阻止新实例的创建。
 		// 可能存在资源泄漏，应当记录警告
 		logger := c.Logger()
@@ -712,9 +772,18 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 
 	v := chain.NewVoid()
 	if c.zombie {
-		handler.shouldContinue = true
+		handler.handleChildDeath()
+		handler.checkAndMarkKilled()
+		if !handler.shouldContinue {
+			return
+		}
+		// 最终终止后按 killed 丢弃迟到消息，不再进入僵尸清理。
+		c.zombie = false
+		c.restarting = nil
 		handler.prepareSelfKilledMessage()
 		handler.restarting = false
+		handler.cleanupRequests()
+		handler.cleanupScheduler()
 		handler.cleanupIfNotRestarting()
 		return
 	}
@@ -723,8 +792,9 @@ func (c *Context) onKilled(message *vivid.OnKilled, behavior vivid.Behavior) {
 		Append(chain.VoidFN(handler.checkAndMarkKilled)).
 		Append(chain.VoidFN(handler.prepareSelfKilledMessage)).
 		Append(chain.VoidFN(handler.executeBehavior)).
-		Append(chain.VoidFN(handler.cleanupIfNotRestarting)).
+		Append(chain.VoidFN(handler.cleanupRequests)).
 		Append(chain.VoidFN(handler.cleanupScheduler)).
+		Append(chain.VoidFN(handler.cleanupIfNotRestarting)).
 		Append(chain.VoidFN(handler.handleRestart)).
 		Run()
 }
@@ -776,11 +846,34 @@ func (c *Context) Kill(ref vivid.ActorRef, poison bool, reason ...string) {
 }
 
 func (c *Context) Children() vivid.ActorRefs {
+	if c.parent == nil {
+		c.system.rootChildrenLock.Lock()
+		defer c.system.rootChildrenLock.Unlock()
+	}
 	children := make(vivid.ActorRefs, 0, len(c.children))
 	for _, child := range c.children {
 		children = append(children, child)
 	}
 	return children
+}
+
+func (c *Context) addChild(ref vivid.ActorRef) {
+	if c.parent == nil {
+		c.system.rootChildrenLock.Lock()
+		defer c.system.rootChildrenLock.Unlock()
+	}
+	if c.children == nil {
+		c.children = make(map[vivid.ActorPath]vivid.ActorRef)
+	}
+	c.children[ref.GetPath()] = ref
+}
+
+func (c *Context) hasChildren() bool {
+	if c.parent == nil {
+		c.system.rootChildrenLock.Lock()
+		defer c.system.rootChildrenLock.Unlock()
+	}
+	return len(c.children) != 0
 }
 
 func (c *Context) failed(fault vivid.Message) {

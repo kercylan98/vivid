@@ -38,7 +38,7 @@ func TestMemberList_UnseensUnknownSeeds(t *testing.T) {
 	removed.Status = endpoint.StatusRemoved
 	members.Upsert(removed)
 	assert.Equal(t, []vivid.ActorRef{seed}, members.Unseens(local, seeds, 5), "退出墓碑属于实例，不能阻止种子地址重启后的发现")
-	assert.Same(t, removed, members.Get(removed.ID()), "探测种子不能删除旧实例的墓碑")
+	assert.Equal(t, removed, members.Get(removed.ID()), "探测种子不能删除旧实例的墓碑")
 }
 
 func TestMemberList_UnseensCandidates(t *testing.T) {

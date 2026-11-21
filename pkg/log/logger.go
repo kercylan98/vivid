@@ -148,37 +148,59 @@ func GetDefault() Logger {
 }
 
 type SLogLogger struct {
-	logger *slog.Logger
+	logger    *slog.Logger
+	protected bool
 }
 
 func (s *SLogLogger) Debug(message string, args ...any) {
+	if s.protected {
+		defer recoverLogPanic()
+	}
 	s.logger.Debug(message, args...)
 }
 
 func (s *SLogLogger) Error(message string, args ...any) {
+	if s.protected {
+		defer recoverLogPanic()
+	}
 	s.logger.Error(message, args...)
 }
 
 func (s *SLogLogger) Info(message string, args ...any) {
+	if s.protected {
+		defer recoverLogPanic()
+	}
 	s.logger.Info(message, args...)
 }
 
 func (s *SLogLogger) Warn(message string, args ...any) {
+	if s.protected {
+		defer recoverLogPanic()
+	}
 	s.logger.Warn(message, args...)
 }
 
-func (s *SLogLogger) With(args ...any) Logger {
-	return &SLogLogger{logger: s.logger.With(args...)}
+func (s *SLogLogger) With(args ...any) (result Logger) {
+	result = s
+	if s.protected {
+		defer recoverLogPanic()
+	}
+	return &SLogLogger{logger: s.logger.With(args...), protected: s.protected}
 }
 
-func (s *SLogLogger) WithGroup(group string) Logger {
-	return &SLogLogger{logger: s.logger.WithGroup(group)}
+func (s *SLogLogger) WithGroup(group string) (result Logger) {
+	result = s
+	if s.protected {
+		defer recoverLogPanic()
+	}
+	return &SLogLogger{logger: s.logger.WithGroup(group), protected: s.protected}
 }
 
 // VividLogger 基于可配置的 Handler 输出日志，支持调用栈跳过与增强能力。
 type VividLogger struct {
-	handler  slog.Handler
-	callSkip int
+	handler   slog.Handler
+	callSkip  int
+	protected bool
 }
 
 func (v *VividLogger) Debug(message string, args ...any) {
@@ -197,22 +219,35 @@ func (v *VividLogger) Warn(message string, args ...any) {
 	v.log(slog.LevelWarn, message, args...)
 }
 
-func (v *VividLogger) With(args ...any) Logger {
+func (v *VividLogger) With(args ...any) (result Logger) {
+	result = v
+	if v.protected {
+		defer recoverLogPanic()
+	}
 	attrs := attrsFromArgs(args...)
 	return &VividLogger{
-		handler:  v.handler.WithAttrs(attrs),
-		callSkip: v.callSkip,
+		handler:   v.handler.WithAttrs(attrs),
+		callSkip:  v.callSkip,
+		protected: v.protected,
 	}
 }
 
-func (v *VividLogger) WithGroup(group string) Logger {
+func (v *VividLogger) WithGroup(group string) (result Logger) {
+	result = v
+	if v.protected {
+		defer recoverLogPanic()
+	}
 	return &VividLogger{
-		handler:  v.handler.WithGroup(group),
-		callSkip: v.callSkip,
+		handler:   v.handler.WithGroup(group),
+		callSkip:  v.callSkip,
+		protected: v.protected,
 	}
 }
 
 func (v *VividLogger) log(level slog.Level, message string, args ...any) {
+	if v.protected {
+		defer recoverLogPanic()
+	}
 	if v.handler == nil {
 		return
 	}

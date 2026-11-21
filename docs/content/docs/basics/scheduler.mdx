@@ -7,20 +7,30 @@ description: 定时与周期消息投递（Once、Loop、Cron）及任务管理
 
 每个 **ActorContext** 拥有独立的 **Scheduler** 实例，通过 `ctx.Scheduler()` 获取。调度器用于在指定时间或周期向**目标 ActorRef**（通常为当前 Actor 或子 Actor）**投递消息**。
 
-- **生命周期**：任务与当前 Actor 绑定，Actor 终止时其调度器上的任务会被自动清理。
-- **作用域**：系统不提供全局 Scheduler，所有调度均通过某一 Actor 的 Context 创建。
+- **生命周期**：任务与创建它的 Actor 绑定，终止或重启收尾后自动清理，旧 Scheduler 永久拒绝新任务；重启初始化时需重新调用 `ctx.Scheduler()` 并注册任务。`OnKill`、自身 `OnKilled` 收尾期间仍可注册，随后一并清理；`Stop` 等待超时不提前关闭仍在收尾的调度器。
+- **作用域**：reference 在所属 Scheduler 内唯一；不同 Actor、同路径重建的 Actor 可使用相同 reference，清理任务互不影响。`system.Scheduler()` 属于根 Actor。
+- **投递边界**：取消或清理任务不会撤回已取出、正在投递或已进入邮箱的消息。
+- **并发操作**：同一 Scheduler 支持并发注册、查询、取消与清理；相同 reference 的重复注册失败，不替换原任务。注册失败不会新增登记，`Exists` 只反映查询当时的状态。
+
+调度在本进程运行；向远程 Actor 投递沿用普通消息传输，不提供任务持久化或故障后补执行。Actor 已收尾时注册返回 `ErrorActorDeaded`，系统停止完成后返回 `ErrorActorSystemStopped`；初始化失败也会关闭并清理本次调度器。
+
+远程调度直接传输业务消息，须按普通远程消息配置编解码器或注册消息类型。
+
+调度沿用普通 `Tell` 的路由及框架消息语义。同一任务重复投递同一个消息对象，请按不可变对象使用；目标 Actor 的处理速度不会限制定时消息入队，需业务背压时可在处理结束后用 `Once` 安排下一次。
+
+同一 ActorSystem 的任务共享分片计时队列，等待中的任务不会各自占用 goroutine；分片按需启动，到期投递的并发上限按系统创建时的 `GOMAXPROCS` 固定。大量任务集中到期时会排队延后，自定义引用、邮箱和日志应快速返回，阻塞投递会影响同分片的其他任务。调度不保证实时性，任务登记与消息积压仍需消耗内存；周期任务可分批启动，避免全部集中在同一时刻触发。
 
 <Mermaid diagram={`flowchart LR
   subgraph Scheduler
     O[Once: 延时一次]
-    L[Loop: 固定间隔]
+    L[Loop: 固定延迟]
     C[Cron: 日历表达式]
   end
   subgraph 目标
     Ref[ActorRef]
   end
   O -->|到期投递| Ref
-  L -->|每 interval| Ref
+  L -->|投递后等待 interval| Ref
   C -->|匹配时间点| Ref
   Ref --> Mailbox[邮箱 → OnReceive]
 `} title="调度方式与投递目标" />
@@ -31,7 +41,7 @@ description: 定时与周期消息投递（Once、Loop、Cron）及任务管理
 
 在**延时一段时间后**向目标 Actor **投递一次**消息。
 
-**方法**：`Once(receiver ActorRef, delay time.Duration, message Message, options ...ScheduleOption) error`
+**方法**：`Once(receiver ActorRef, delay time.Duration, message Message, options ...ScheduleOption) (ScheduledTask, error)`
 
 | 参数 | 说明 |
 |------|------|
@@ -41,30 +51,35 @@ description: 定时与周期消息投递（Once、Loop、Cron）及任务管理
 | **options** | 可选，如 **WithSchedulerReference(id)** 便于后续取消或查询 |
 
 ```go
-err := ctx.Scheduler().Once(ctx.Ref(), 5*time.Second, &MyMessage{Data: "delayed"})
+task, err := ctx.Scheduler().Once(ctx.Ref(), 5*time.Second, &MyMessage{Data: "delayed"})
 ```
 
-- 返回 **error** 表示调度是否成功（如参数不合法）。
-- **delay 为 0** 时会在极短延时后投递一次；任务到期后只投递一次。
+- 注册成功返回任务句柄和 `nil`；失败返回 `nil` 和错误。非正延时的任务可能在注册方法返回前已取出投递。
+- **delay 非正**时尽快异步投递一次；到期可能因运行时调度而延迟，不因超过延时自动丢弃。
+- 任务取出投递时自动移除登记，可以重新使用相同 reference；此时消息可能仍在投递途中。
 
 ---
 
-## 固定间隔循环（Loop）
+## 固定延迟循环（Loop）
 
-按**固定间隔**重复向目标 Actor 投递消息，直到任务被取消或 Actor 终止。
+首次等待一个周期，之后在**每次投递尝试结束后再等待一个周期**，直到任务被取消或所属 Actor 结束生命周期。
 
-**方法**：`Loop(receiver ActorRef, interval time.Duration, message Message, options ...ScheduleOption) error`
+**方法**：`Loop(receiver ActorRef, interval time.Duration, message Message, options ...ScheduleOption) (ScheduledTask, error)`
 
 | 参数 | 说明 |
 |------|------|
 | **receiver** | 接收消息的 ActorRef |
-| **interval** | 两次投递之间的时间间隔 |
+| **interval** | 首次等待及每次投递尝试结束后的等待时间，必须大于零 |
 | **message** | 每次触发时投递的消息 |
 | **options** | 可选，如 **WithSchedulerReference(reference)** 便于后续取消 |
 
 ```go
-err := ctx.Scheduler().Loop(ctx.Ref(), 10*time.Second, &TickMessage{})
+task, err := ctx.Scheduler().Loop(ctx.Ref(), 10*time.Second, &TickMessage{})
 ```
+
+周期为零或负值时，返回 `nil` 和 `ErrorIllegalArgument`，不创建任务。立即异步投递一次请使用 `Once`。
+
+同一任务不会并发投递，也不补发错过的周期；等待从投递尝试结束开始，**不等待目标 Actor 处理消息**。`Once`、`Loop` 的相对等待使用标准计时器，支持完整的正 `time.Duration` 范围。
 
 ---
 
@@ -72,50 +87,71 @@ err := ctx.Scheduler().Loop(ctx.Ref(), 10*time.Second, &TickMessage{})
 
 使用 **Cron 表达式**定义日历式调度，在匹配的时间点向目标 Actor 投递消息。
 
-**方法**：`Cron(receiver ActorRef, cron string, message Message, options ...ScheduleOption) error`
+**方法**：`Cron(receiver ActorRef, cron string, message Message, options ...ScheduleOption) (ScheduledTask, error)`
 
 | 参数 | 说明 |
 |------|------|
 | **receiver** | 接收消息的 ActorRef |
-| **cron** | 标准五段 Cron 表达式：分 时 日 月 周，如 `"0 0 * * *"` 表示每天 0 点 |
+| **cron** | 六段表达式：秒 分 时 日 月 星期，可追加第七段年份（1970–9999），如 `"0 0 0 * * ?"` 表示每天 0 点 |
 | **message** | 在匹配时间点投递的消息 |
 | **options** | 可选，**WithScheduleLocation(loc)** 控制时区（默认 **time.Local**），**WithSchedulerReference** 便于取消 |
 
 ```go
 // 每天 0 点
-err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 * * *", &DailyJob{})
+task, err := ctx.Scheduler().Cron(ctx.Ref(), "0 0 0 * * ?", &DailyJob{})
 ```
 
 - 若 Cron 表达式非法，返回 **ErrorCronParse**。
+- 星期使用 `0–6`（周日至周六）或 `SUN–SAT`，月份可使用 `JAN–DEC`；支持 `*`、列表、范围、步长，`?` 仅用于日或星期。日与星期不能同时限制，不支持 `L/W/#`。
+- 支持 `@yearly`、`@annually`、`@monthly`、`@weekly`、`@daily`、`@midnight`、`@hourly`；时区由 `WithScheduleLocation` 设置。
+- 注册时没有未来触发时间，返回 **ErrorScheduledTaskExpired**。任务到期后尽快投递一次；慢投递经过的时间点不补发，同一任务的投递尝试不重叠。
+- 无后续触发时间时自动释放登记，随后可复用 reference；末次消息可能仍在投递或处理。夏令时跳过不存在的时刻，回拨时重复的匹配时刻可分别触发；系统时间调整在计时器下次唤醒时重新计算。
 
 ---
 
 ## 任务管理
 
-创建任务时若未传 **WithSchedulerReference**，框架会自动生成唯一 reference；若需**后续取消或查询**，应在创建时传入并保存 reference。
+`Once`、`Loop`、`Cron` 注册成功均返回 **ScheduledTask**。保存句柄即可查询和取消，无需自行生成名称：
+
+```go
+task, err := ctx.Scheduler().Once(ctx.Ref(), time.Minute, msg)
+if err != nil {
+    return err
+}
+reference := task.Reference() // 未指定时由框架生成
+exists := task.Exists()      // 本次注册是否仍有登记
+err = task.Cancel()         // 只取消本次注册
+```
+
+句柄绑定一次注册。同名任务重新注册或 Actor 重启后，旧句柄不会查询或取消新任务；旧登记释放后 `Exists()` 返回 `false`，`Cancel()` 返回 `ErrorNotFound`。这些结果不表示消息已处理。
+
+如需按名称管理任务，可在注册时指定 `WithSchedulerReference(reference)`。`Scheduler.Exists(reference)` 和 `Scheduler.Cancel(reference)` 始终作用于当前同名登记。
 
 ### 检查任务是否存在（Exists）
 
-判断指定 reference 的调度任务是否仍存在（未取消且未到期）。
+查询当前 Scheduler 是否保留指定 reference 的登记。
 
 **方法**：`Exists(reference string) bool`
 
-- 返回 **true** 表示该 reference 对应的任务仍在调度器中；**false** 表示不存在或已取消/已到期。
+- 返回 **true** 表示仍有登记，**false** 表示没有登记。`Once` 在取出投递时移除登记；`Cron` 无后续触发时间时移除登记。不能据此判断消息是否已处理。
 
 ### 取消任务（Cancel）
 
-按 reference 取消该调度任务。
+按 reference 取消当前同名任务；只取消某次注册时使用 `task.Cancel()`。
 
 **方法**：`Cancel(reference string) error`
 
 - 取消成功返回 **nil**。
 - 若 reference 不存在，返回 **ErrorNotFound**。
+- 一次任务已取出投递时返回 **ErrorNotFound**；后续投递仍可能完成。
 
 ```go
 refID := "my-timer-1"
-ctx.Scheduler().Once(ctx.Ref(), time.Minute, msg, vivid.WithSchedulerReference(refID))
-// ...
-err := ctx.Scheduler().Cancel(refID)
+_, err := ctx.Scheduler().Once(ctx.Ref(), time.Minute, msg, vivid.WithSchedulerReference(refID))
+if err != nil {
+    return err
+}
+err = ctx.Scheduler().Cancel(refID)
 ```
 
 ### 清空全部任务（Clear）
@@ -124,7 +160,7 @@ err := ctx.Scheduler().Cancel(refID)
 
 **方法**：`Clear()`
 
-- 无参数、无返回值，调用后该 Actor 的调度器上不再有任何任务。
+- 无参数、无返回值，清除当前任务；不禁止后续注册，并发注册的任务可能在清理后加入。
 
 ---
 
@@ -136,3 +172,5 @@ err := ctx.Scheduler().Cancel(refID)
 |------|------|
 | **Location** | Cron 使用的时区，默认 **time.Local** |
 | **Reference** | 任务唯一标识，用于 **Exists** / **Cancel**；不传则自动生成 |
+
+配置项按顺序应用；`WithScheduleOptions` 整体替换配置，空字段在最后补齐默认值，`nil` 配置项忽略。重复名称返回 `ErrorScheduledTaskAlreadyExists`，不替换原任务。

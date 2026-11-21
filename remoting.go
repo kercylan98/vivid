@@ -12,16 +12,19 @@ type ActorSystemRemotingOption func(options *ActorSystemRemotingOptions)
 
 func NewActorSystemRemotingOptions(opts ...ActorSystemRemotingOption) ActorSystemRemotingOptions {
 	options := &ActorSystemRemotingOptions{
-		ReconnectLimit:        10,
-		ReconnectInitialDelay: 500 * time.Millisecond,
-		ReconnectMaxDelay:     10 * time.Second,
-		ReconnectFactor:       2.5,
-		ReconnectJitter:       true,
-		MaxPendingEnvelops:    1024,
-		ReadTimeout:           30 * time.Second,
-		HeartbeatInterval:     10 * time.Second, // 默认启用心跳，避免空闲连接读超时
-		StopTimeout:           10 * time.Minute,
-		DecodeLimits:          DefaultDecodeLimits(),
+		ReconnectLimit:          10,
+		ReconnectInitialDelay:   500 * time.Millisecond,
+		ReconnectMaxDelay:       10 * time.Second,
+		ReconnectFactor:         2.5,
+		ReconnectJitter:         true,
+		MaxPendingEnvelops:      1024,
+		MaxTotalPendingEnvelops: 16384,
+		MaxConcurrentDials:      64,
+		MaxPendingDials:         1024,
+		ReadTimeout:             30 * time.Second,
+		HeartbeatInterval:       10 * time.Second, // 默认启用心跳，避免空闲连接读超时
+		StopTimeout:             10 * time.Minute,
+		DecodeLimits:            DefaultDecodeLimits(),
 	}
 	for _, opt := range opts {
 		opt(options)
@@ -47,8 +50,17 @@ type ActorSystemRemotingOptions struct {
 	// ReconnectJitter 启用时，在当前退避间隔的 50% 到 100% 之间随机选择延迟。
 	ReconnectJitter bool
 
-	// MaxPendingEnvelops 单个远程地址的最大待发送信封数；超过后新消息将直接失败。
+	// MaxPendingEnvelops 单个远程地址未完成写入的信封数，入邮箱前检查；非正值使用默认值 1024。
 	MaxPendingEnvelops int
+
+	// MaxTotalPendingEnvelops 单个系统未完成写入的远程信封总数；非正值使用默认值 16384。
+	MaxTotalPendingEnvelops int
+
+	// MaxConcurrentDials 单个系统同时执行的出站拨号与握手数量；非正值使用默认值 64。
+	MaxConcurrentDials int
+
+	// MaxPendingDials 单个系统等待出站拨号名额的地址数量；非正值使用默认值 1024。
+	MaxPendingDials int
 
 	// DecodeLimits 限制单个远程信封的解码资源，零字段使用默认预算。
 	DecodeLimits DecodeLimits
@@ -209,10 +221,37 @@ func WithActorSystemRemotingMaxPendingEnvelops(limit int) ActorSystemRemotingOpt
 	}
 }
 
+// WithActorSystemRemotingMaxTotalPendingEnvelops 返回一个 ActorSystemRemotingOption，用于配置系统级待发送远程信封总数。
+func WithActorSystemRemotingMaxTotalPendingEnvelops(limit int) ActorSystemRemotingOption {
+	return func(opts *ActorSystemRemotingOptions) {
+		if limit > 0 {
+			opts.MaxTotalPendingEnvelops = limit
+		}
+	}
+}
+
 // WithActorSystemRemotingDecodeLimits 返回一个 ActorSystemRemotingOption，用于配置单个远程信封的解码预算。
 func WithActorSystemRemotingDecodeLimits(limits DecodeLimits) ActorSystemRemotingOption {
 	return func(opts *ActorSystemRemotingOptions) {
 		opts.DecodeLimits = limits
+	}
+}
+
+// WithActorSystemRemotingMaxConcurrentDials 返回一个 ActorSystemRemotingOption，用于配置系统级出站拨号与握手并发上限。
+func WithActorSystemRemotingMaxConcurrentDials(limit int) ActorSystemRemotingOption {
+	return func(opts *ActorSystemRemotingOptions) {
+		if limit > 0 {
+			opts.MaxConcurrentDials = limit
+		}
+	}
+}
+
+// WithActorSystemRemotingMaxPendingDials 返回一个 ActorSystemRemotingOption，用于配置系统级等待拨号名额的地址数上限。
+func WithActorSystemRemotingMaxPendingDials(limit int) ActorSystemRemotingOption {
+	return func(opts *ActorSystemRemotingOptions) {
+		if limit > 0 {
+			opts.MaxPendingDials = limit
+		}
 	}
 }
 

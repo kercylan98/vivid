@@ -59,7 +59,7 @@ func (e *endpointHeartbeat) scheduleNext(ctx vivid.ActorContext) {
 	if e.interval <= 0 {
 		return
 	}
-	if err := ctx.Scheduler().Once(ctx.Ref(), e.interval, endpointHeartbeatTick{}); err != nil {
+	if _, err := ctx.Scheduler().Once(ctx.Ref(), e.interval, endpointHeartbeatTick{}); err != nil {
 		ctx.Tell(e.parentRef, endpointHeartbeatFailed{
 			associationID: e.associationID,
 			heartbeat:     ctx.Ref(),

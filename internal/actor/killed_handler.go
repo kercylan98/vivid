@@ -32,7 +32,22 @@ type killedHandler struct {
 // handleChildDeath 处理子 Actor 死亡
 func (h *killedHandler) handleChildDeath() {
 	if !h.message.Ref.Equals(h.ctx.ref) {
-		delete(h.ctx.children, h.message.Ref.GetPath())
+		if h.ctx.parent == nil {
+			h.ctx.system.rootChildrenLock.Lock()
+			// 旧实例释放系统索引后，同路径可能已创建新实例。
+			// 本地子级通知持有原始引用，不能用地址与路径相等代替实例身份。
+			if h.ctx.children[h.message.Ref.GetPath()] != h.message.Ref {
+				h.ctx.system.rootChildrenLock.Unlock()
+				return
+			}
+			delete(h.ctx.children, h.message.Ref.GetPath())
+			h.ctx.system.rootChildrenLock.Unlock()
+		} else {
+			if child, exists := h.ctx.children[h.message.Ref.GetPath()]; exists && child != h.message.Ref {
+				return
+			}
+			delete(h.ctx.children, h.message.Ref.GetPath())
+		}
 		h.ctx.executeBehaviorWithRecovery(h.behavior)
 		// h.ctx.Logger().Debug("child death", log.Int("children_count", len(h.ctx.children)), log.String("ref", h.ctx.ref.GetPath()), log.String("child", h.message.Ref.GetPath()))
 	}
@@ -46,7 +61,7 @@ func (h *killedHandler) checkAndMarkKilled() {
 		return
 	}
 	// 如果还有子 Actor，则不处理自身死亡
-	if len(h.ctx.children) != 0 || !atomic.CompareAndSwapInt32(&h.ctx.state, killing, killed) {
+	if h.ctx.hasChildren() || !atomic.CompareAndSwapInt32(&h.ctx.state, killing, killed) {
 		h.shouldContinue = false
 		return
 	}
@@ -88,13 +103,20 @@ func (h *killedHandler) executeBehavior() {
 	}
 }
 
+// cleanupRequests 在自身收尾结束后关闭请求登记，重启时同样清理旧实例的请求。
+func (h *killedHandler) cleanupRequests() {
+	if h.shouldContinue {
+		h.ctx.system.closeContextRequests(h.ctx)
+	}
+}
+
 // cleanupIfNotRestarting 如果不是重启状态，进行清理
 func (h *killedHandler) cleanupIfNotRestarting() {
 	if !h.shouldContinue || h.restarting {
 		return
 	}
 
-	h.ctx.EventStream().UnsubscribeAll(h.ctx)
+	h.ctx.closeEventStream()
 	h.ctx.system.removeActorContext(h.ctx)
 
 	// 通知所有监听者
@@ -102,8 +124,9 @@ func (h *killedHandler) cleanupIfNotRestarting() {
 		h.ctx.tell(true, watcher, h.selfKilledMessage)
 	}
 
-	// 通知父节点
-	if h.ctx.parent != nil {
+	virtual, virtualActor := h.ctx.mailbox.(*virtualMailbox)
+	// 虚拟实例先完成激活登记释放，再允许父级把该子级视为收尾完成。
+	if h.ctx.parent != nil && !virtualActor {
 		h.ctx.tell(true, h.ctx.parent, h.selfKilledMessage)
 	}
 
@@ -113,6 +136,23 @@ func (h *killedHandler) cleanupIfNotRestarting() {
 		Type:     reflect.TypeOf(h.ctx.actor),
 		Duration: time.Since(h.ctx.launchTime),
 	})
+	if virtualActor {
+		system, parent, ref, message := h.ctx.system, h.ctx.parent, h.ctx.ref, h.selfKilledMessage
+		virtual.releaseThen(func() {
+			if parent != nil {
+				system.ResolveMailbox(parent).Enqueue(mailbox.NewEnvelop(true, ref, parent, message))
+			}
+		})
+	}
+	if h.ctx.parent == nil {
+		// 根行为结束不等于框架清理完成，系统须等待登记释放及事件发布返回。
+		// 根邮箱串行执行，完成信号只通知一次。
+		select {
+		case <-h.ctx.system.rootCleanupCompleted:
+		default:
+			close(h.ctx.system.rootCleanupCompleted)
+		}
+	}
 }
 
 // cleanupScheduler 清理调度器
@@ -120,8 +160,8 @@ func (h *killedHandler) cleanupScheduler() {
 	if !h.shouldContinue {
 		return
 	}
-	// 清理调度器，重启也清理
-	h.ctx.scheduler.Clear()
+	// 旧句柄永久关闭，重启初始化使用新的调度器。
+	h.ctx.scheduler.Load().close()
 	h.ctx.Logger().Debug("actor killed",
 		log.String("path", h.ctx.ref.GetPath()),
 		log.Bool("restarting", h.restarting))
@@ -133,16 +173,44 @@ func (h *killedHandler) handleRestart() {
 		return
 	}
 
+	// 多阶段终止属于旧实例，新实例需在预启动中重新注册。
+	h.ctx.phaseKill = nil
+
 	// 如果提供了提供者，则使用提供者提供新的 Actor 实例
-	if h.ctx.options.Provider != nil {
-		h.ctx.actor = h.ctx.options.Provider.Provide()
+	var success = true
+	if virtual, ok := h.ctx.mailbox.(*virtualMailbox); ok && virtual.entry.ownership != nil {
+		success = h.ctx.restarting.recoverExec(h.ctx.Logger(), "validate virtual ownership", true, func() error {
+			return virtual.coordinator.validateOwnership(virtual.entry)
+		})
 	}
-	h.ctx.behaviorStack.Clear().Push(h.ctx.actor.OnReceive)
-	h.ctx.Logger().Debug("actor restarted", log.String("path", h.ctx.ref.GetPath()))
+	if h.ctx.options.Provider != nil && success {
+		success = h.ctx.restarting.recoverExec(h.ctx.Logger(), "provide actor", true, func() error {
+			actor := h.ctx.options.Provider.Provide()
+			if actor == nil {
+				return vivid.ErrorIllegalArgument.WithMessage("actor provider returned nil")
+			}
+			// 接口中的 nil 指针、函数等也不是有效实例，不能依赖其方法是否会 panic。
+			value := reflect.ValueOf(actor)
+			switch value.Kind() {
+			case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+				if value.IsNil() {
+					return vivid.ErrorIllegalArgument.WithMessage("actor provider returned nil")
+				}
+			}
+			h.ctx.actor = actor
+			return nil
+		})
+	}
+	if success {
+		h.ctx.scheduler.Store(newScheduler(h.ctx))
+		// 新实例的初始化可以发起请求，旧生命周期中尚未登记的请求仍会被拒绝。
+		h.ctx.system.reopenContextRequests(h.ctx)
+		h.ctx.behaviorStack.Clear().Push(h.ctx.actor.OnReceive)
+		h.ctx.Logger().Debug("actor restarted", log.String("path", h.ctx.ref.GetPath()))
+	}
 
 	// 触发重启后的回调
-	var success = true
-	if restartedActor, ok := h.ctx.actor.(vivid.RestartedActor); ok {
+	if restartedActor, ok := h.ctx.actor.(vivid.RestartedActor); ok && success {
 		success = h.ctx.restarting.recoverExec(h.ctx.Logger(), "on restarted", true, func() error {
 			return restartedActor.OnRestarted(h.ctx)
 		})
@@ -154,9 +222,18 @@ func (h *killedHandler) handleRestart() {
 			return preLaunchActor.OnPrelaunch(h.ctx)
 		})
 	}
+	if virtual, ok := h.ctx.mailbox.(*virtualMailbox); ok && virtual.entry.ownership != nil && success {
+		success = h.ctx.restarting.recoverExec(h.ctx.Logger(), "validate restarted virtual ownership", true, func() error {
+			return virtual.coordinator.validateOwnership(virtual.entry)
+		})
+	}
 
 	// 当子 Actor 重启失败时，不再通知父 Actor 其死亡，而是让其进入"僵尸状态"，避免异常状态扩散。
 	if !success {
+		h.ctx.system.closeContextRequests(h.ctx)
+		h.ctx.scheduler.Load().close()
+		// 释放不可用实例的事件订阅，包含失败钩子中新建的登记。
+		h.ctx.closeEventStream()
 		// 记录错误并释放资源
 		h.ctx.Logger().Error("restart failed; actor is now in zombie state", log.String("path", h.ctx.ref.GetPath()))
 		h.ctx.zombie = true
@@ -171,7 +248,7 @@ func (h *killedHandler) handleRestart() {
 		h.ctx.restarting = nil
 		h.ctx.system.unmarkActorAsClosing(h.ctx.ref)
 		atomic.StoreInt32(&h.ctx.state, running)
-		h.ctx.tell(true, h.ctx.parent, new(vivid.OnLaunch))
+		h.ctx.tell(true, h.ctx.ref, new(vivid.OnLaunch))
 		h.ctx.mailbox.Resume()
 
 		// 通知事件流

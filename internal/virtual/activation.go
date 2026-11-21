@@ -1,73 +1,103 @@
 package virtual
 
 import (
-	"sync"
+	"errors"
 	"time"
+	"unicode/utf8"
 
-	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/bridge"
-	"golang.org/x/sync/singleflight"
+	"github.com/kercylan98/vivid/internal/serialization"
 )
 
-func newActivation(system bridge.VirtualActorSystem) *activation {
-	return &activation{
-		system:      system,
-		activations: make(map[string]vivid.ActorRef),
-		ttl:         time.Minute * 10,
-	}
+var ErrInvalidActivation = errors.New("invalid virtual actor activation")
+
+type ActivationStatus uint8
+
+const (
+	ActivationReady ActivationStatus = iota + 1 // 预启动与邮箱初始化完成且当次归属复核成功，不等待 OnLaunch 业务处理
+	ActivationConflict
+	ActivationUnavailable
+	ActivationOverloaded
+	ActivationStopped
+	ActivationInvalid
+	ActivationFailed
+	ActivationUnknown // 取得归属的结果未知，不得换节点重新认领
+)
+
+// ActivationRequest 不包含业务消息。Generation 为 0 时才允许尝试取得不存在的归属。
+// Owner 绑定目标启动实例，同地址重启不能接纳发给旧实例的激活请求。
+type ActivationRequest struct {
+	Group      [32]byte
+	Owner      [16]byte
+	Generation uint64
+	Kind, Name string
+	Timeout    time.Duration
 }
 
-type activation struct {
-	system      bridge.VirtualActorSystem // 虚拟 Actor 系统
-	lock        sync.RWMutex              // 保护激活的虚拟 Actor 集合
-	activations map[string]vivid.ActorRef // 已激活的虚拟 Actor 引用
-	loading     singleflight.Group        // 避免重复加载虚拟 Actor
-	ttl         time.Duration             // 虚拟 Actor 的钝化时间
+func (m *ActivationRequest) Valid() bool {
+	return m != nil && validActivationIdentity(m.Group, m.Owner, m.Kind, m.Name) && m.Timeout > 0
 }
 
-func (a *activation) deactivate(ref vivid.ActorRef) {
-	a.lock.Lock()
-	defer a.lock.Unlock()
-
-	for key, r := range a.activations {
-		if r.Equals(ref) {
-			delete(a.activations, key)
-			break
-		}
-	}
+func validActivationIdentity(group [32]byte, owner [16]byte, kind, name string) bool {
+	return group != [32]byte{} && owner != [16]byte{} && kind != "" && name != "" && len(kind) <= 1024 && len(name) <= 1024 && utf8.ValidString(kind) && utf8.ValidString(name)
 }
 
-func (a *activation) activate(ctx vivid.ActorContext, identity *Identity) (vivid.ActorRef, error) {
-	key := identity.String()
-
-	a.lock.RLock()
-	if ref, exist := a.activations[key]; exist {
-		a.lock.RUnlock()
-		return ref, nil
+func (*ActivationRequest) Encode(w *serialization.Writer, message any) error {
+	m := message.(*ActivationRequest)
+	if !m.Valid() {
+		return ErrInvalidActivation
 	}
-	a.lock.RUnlock()
+	return w.Write(uint8(1), m.Group, m.Owner, m.Generation, m.Kind, m.Name, m.Timeout).Err()
+}
 
-	provider := a.system.GetVirtualActorProvider(identity.kind)
-	if provider == nil {
-		return nil, vivid.ErrorVirtualActorProviderNotFound.WithMessage(identity.kind)
+func (*ActivationRequest) Decode(r *serialization.Reader, message any) error {
+	var m ActivationRequest
+	var version uint8
+	if err := r.Read(&version, &m.Group, &m.Owner, &m.Generation, &m.Kind, &m.Name, &m.Timeout); err != nil {
+		return err
 	}
-
-	a.lock.Lock()
-	defer a.lock.Unlock()
-
-	res, err, _ := a.loading.Do(key, func() (interface{}, error) {
-		actor := newPassivatedActor(provider.Provide(), a.ttl)
-		ref, err := ctx.ActorOf(actor, vivid.WithActorName(key))
-		if err != nil {
-			return nil, err
-		}
-
-		a.activations[key] = ref
-		return ref, nil
-	})
-
-	if err != nil {
-		return nil, err
+	if version != 1 || !m.Valid() {
+		return ErrInvalidActivation
 	}
-	return res.(vivid.ActorRef), nil
+	*message.(*ActivationRequest) = m
+	return nil
+}
+
+type ActivationResult struct {
+	Group             [32]byte
+	Owner             [16]byte
+	Generation        uint64 // 回显请求中的预期代次
+	Kind, Name        string
+	Status            ActivationStatus
+	CurrentGeneration uint64 // 仅 Ready 回执携带实际代次
+}
+
+func (m *ActivationResult) Valid() bool {
+	if m == nil || !validActivationIdentity(m.Group, m.Owner, m.Kind, m.Name) || m.Status < ActivationReady || m.Status > ActivationUnknown {
+		return false
+	}
+	if m.Status == ActivationReady {
+		return m.CurrentGeneration != 0 && (m.Generation == 0 || m.Generation == m.CurrentGeneration)
+	}
+	return m.CurrentGeneration == 0
+}
+
+func (*ActivationResult) Encode(w *serialization.Writer, message any) error {
+	m := message.(*ActivationResult)
+	if !m.Valid() {
+		return ErrInvalidActivation
+	}
+	return w.Write(uint8(1), m.Group, m.Owner, m.Generation, m.Kind, m.Name, uint8(m.Status), m.CurrentGeneration).Err()
+}
+
+func (*ActivationResult) Decode(r *serialization.Reader, message any) error {
+	var m ActivationResult
+	var version uint8
+	if err := r.Read(&version, &m.Group, &m.Owner, &m.Generation, &m.Kind, &m.Name, &m.Status, &m.CurrentGeneration); err != nil {
+		return err
+	}
+	if version != 1 || !m.Valid() {
+		return ErrInvalidActivation
+	}
+	*message.(*ActivationResult) = m
+	return nil
 }

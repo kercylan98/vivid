@@ -3,6 +3,7 @@ package actor
 import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/chain"
+	"github.com/kercylan98/vivid/internal/clusterstore"
 	"github.com/kercylan98/vivid/internal/gossip"
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
@@ -16,17 +17,20 @@ import (
 	"github.com/kercylan98/vivid/internal/serialization"
 	"github.com/kercylan98/vivid/internal/virtual"
 	"github.com/kercylan98/vivid/pkg/metrics"
+	"github.com/kercylan98/vivid/pkg/ves"
 )
 
 const (
-	remotingActorName = "@remoting"
-	metricsActorName  = "@metrics"
+	remotingActorName     = "@remoting"
+	coordinationActorName = "@coordination"
+	metricsActorName      = "@metrics"
 )
 
 // 停止优先级, 值越大越先停止（越靠后越先停止）
 const (
 	metricsStopPriority = iota
 	remotingStopPriority
+	coordinationStopPriority
 	gossipStopPriority
 )
 
@@ -56,6 +60,9 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 		registry.RegisterMessage("*vivid.Error", new(vivid.Error))
 		registry.RegisterMessage("*actor.Ref", new(Ref))
 		registry.RegisterMessage("*actor.AgentRef", new(AgentRef))
+		registry.RegisterMessage("*clusterstore.RaftWire", new(clusterstore.RaftWire))
+		registry.RegisterMessage("*clusterstore.RaftControlRequest", new(clusterstore.RaftControlRequest))
+		registry.RegisterMessage("*clusterstore.RaftControlResponse", new(clusterstore.RaftControlResponse))
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnLaunch", new(vivid.OnLaunch), messagecodecs.OnLaunchEncoder(), messagecodecs.OnLaunchDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKill", new(vivid.OnKill), messagecodecs.OnKillEncoder(), messagecodecs.OnKillDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKilled", new(vivid.OnKilled), messagecodecs.OnKilledEncoder(), messagecodecs.OnKilledDecoder())
@@ -67,13 +74,20 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 		registry.RegisterMessageWithEncoderAndDecoder("*messages.PongMessage", new(messages.PongMessage), messagecodecs.PongMessageEncoder(), messagecodecs.PongMessageDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*messages.WatchMessage", new(messages.WatchMessage), messagecodecs.WatchMessageEncoder(), messagecodecs.WatchMessageDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*messages.UnwatchMessage", new(messages.UnwatchMessage), messagecodecs.UnwatchMessageEncoder(), messagecodecs.UnwatchMessageDecoder())
-		registry.RegisterMessageWithEncoderAndDecoder("*actor.SchedulerMessage", new(SchedulerMessage), messagecodecs.SchedulerMessageEncoder(), messagecodecs.SchedulerMessageDecoder())
 		registry.RegisterMessage("*virtual.Identity", new(virtual.Identity))
+		routedCodec := virtual.NewRoutedDeliveryCodec(system.codec)
+		registry.RegisterMessageWithEncoderAndDecoder("*virtual.RoutedDelivery", new(virtual.RoutedDelivery), routedCodec, routedCodec)
+		registry.RegisterMessage("*virtual.DeliveryResult", new(virtual.DeliveryResult))
+		registry.RegisterMessage("*virtual.ActivationRequest", new(virtual.ActivationRequest))
+		registry.RegisterMessage("*virtual.ActivationResult", new(virtual.ActivationResult))
+		registry.RegisterMessage("*virtual.DiscoveryRequest", new(virtual.DiscoveryRequest))
+		registry.RegisterMessage("*virtual.DiscoveryResult", new(virtual.DiscoveryResult))
 		registry.RegisterMessageWithEncoderAndDecoder("*endpoint.Information", new(endpoint.Information), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 		registry.RegisterMessage("*memberlist.MemberList", new(memberlist.MemberList))
 		registry.RegisterMessage("*versionvector.VersionVector", new(versionvector.VersionVector))
 		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.Ping", new(gossipmessages.Ping), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.Pong", new(gossipmessages.Pong), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
+		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.PongAck", new(gossipmessages.PongAck), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*gossipmessages.JoinRejected", new(gossipmessages.JoinRejected), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 
 		// 注册用户消息
@@ -87,10 +101,13 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 
 func (c *systemChains) spawnGuardActor(system *System) chain.Chain {
 	return chain.ChainFN(func() (err error) {
-		system.Context, err = NewContext(system, nil, guard.NewActor(system.guardClosedSignal))
+		ctx, err := NewContext(system, nil, guard.NewActor())
 		if err != nil {
 			return err
 		}
+		system.statusLock.Lock()
+		system.Context = ctx
+		system.statusLock.Unlock()
 		return nil
 	})
 }
@@ -108,7 +125,7 @@ func (c *systemChains) initializeMetrics(system *System) chain.Chain {
 			if err != nil {
 				return err
 			}
-			system.TellSelf(&guard.RegisterStopPriority{
+			system.tell(true, system.Ref(), &guard.RegisterStopPriority{
 				ActorRef: ref,
 				Priority: metricsStopPriority,
 			})
@@ -128,6 +145,16 @@ func (c *systemChains) initializeRemoting(system *System) chain.Chain {
 			remotingOptions.StopTimeout = system.options.StopTimeout
 		}
 		system.options.Logger = system.options.Logger.With("addr", system.options.RemotingAdvertiseAddress)
+		system.remotingAdmission = remoting.NewOutboundAdmission(remotingOptions, system.remotingEnvelopHandler, func(envelop vivid.Envelop, err error) {
+			var address string
+			if receiver := envelop.Receiver(); receiver != nil {
+				address = receiver.GetAddress()
+			}
+			system.EventStream().Publish(system, ves.RemotingEnvelopSendFailedEvent{
+				TargetAddress: address,
+				Error:         err,
+			})
+		})
 		ref, err := system.ActorOf(remoting.New(
 			c.availableSignal,
 			system.options.RemotingBindAddress,
@@ -135,12 +162,14 @@ func (c *systemChains) initializeRemoting(system *System) chain.Chain {
 			system.codec,
 			system.remotingEnvelopHandler,
 			remotingOptions,
+			system.remotingAdmission,
 		), vivid.WithActorName(remotingActorName))
 		if err != nil {
 			return err
 		}
 		system.remotingRef = ref
-		system.TellSelf(&guard.RegisterStopPriority{
+		system.remotingMailbox = remoting.NewMailbox(system.options.Context, system, ref, system, system.remotingAdmission)
+		system.tell(true, system.Ref(), &guard.RegisterStopPriority{
 			ActorRef: ref,
 			Priority: remotingStopPriority,
 		})
@@ -148,14 +177,13 @@ func (c *systemChains) initializeRemoting(system *System) chain.Chain {
 	})
 }
 
-func (c *systemChains) initializeVirtualCoordinator(system *System) chain.Chain {
-	return chain.ChainFN(func() (err error) {
-		if len(system.options.VirtualActorProviders) == 0 {
-			return nil
+func (c *systemChains) validateVirtualActors(system *System) chain.Chain {
+	return chain.ChainFN(func() error {
+		options := system.virtualCoordinator.options
+		if options.ActivationConcurrency < 0 || options.PendingMessageLimit < 0 {
+			return vivid.ErrorIllegalArgument.WithMessage("virtual activation concurrency and pending message limit must not be negative")
 		}
-		coordinatorInjecter := virtual.NewCoordinatorActor(system)
-		system.virtualCoordinator, err = coordinatorInjecter.Inject(system)
-		return err
+		return nil
 	})
 }
 
@@ -181,9 +209,9 @@ func (c *systemChains) initializeCluster(system *System) chain.Chain {
 		system.statusLock.Unlock()
 
 		// 注册停止优先级
-		system.TellSelf(&guard.RegisterStopPriority{
+		system.tell(true, system.Ref(), &guard.RegisterStopPriority{
 			ActorRef: gossipRef,
-			Priority: remotingStopPriority,
+			Priority: gossipStopPriority,
 		})
 		return nil
 	})

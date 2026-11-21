@@ -37,12 +37,12 @@ var (
 
 // 参数、调度与状态相关错误。
 var (
-	ErrorIllegalArgument = RegisterError(120000, "illegal argument")                            // 参数无效或缺失
-	ErrorCronParse       = RegisterError(120001, "parse cron expression", ErrorIllegalArgument) // Cron 表达式解析失败
-	//ErrorTriggerExpired          = RegisterError(120002, "trigger has expired")        // 触发器已过期
+	ErrorIllegalArgument      = RegisterError(120000, "illegal argument")                            // 参数无效或缺失
+	ErrorCronParse            = RegisterError(120001, "parse cron expression", ErrorIllegalArgument) // Cron 表达式解析失败
+	ErrorScheduledTaskExpired = RegisterError(120002, "scheduled task has expired")                  // 调度任务没有未来触发时间
 	//ErrorIllegalState            = RegisterError(120003, "illegal state")              // 违反当前状态或上下文
 	//ErrorQueueEmpty              = RegisterError(120004, "queue is empty")             // 队列空无法出队
-	//ErrorJobAlreadyExists        = RegisterError(120005, "job already exists")         // 任务已注册
+	ErrorScheduledTaskAlreadyExists = RegisterError(120005, "scheduled task already exists") // 当前调度器已保留同名任务
 	//ErrorJobIsSuspended          = RegisterError(120006, "job is suspended")           // Job 已挂起时再次挂起
 	//ErrorJobIsActive             = RegisterError(120007, "job is active")              // Job 已激活时再次激活
 	//ErrorActorRefAddressMismatch = RegisterError(120008, "actor ref address mismatch") // ActorRef 地址不一致
@@ -59,18 +59,22 @@ var (
 
 // Remoting 相关错误。
 var (
-	ErrorRemotingStopped                = RegisterError(140000, "remoting stopped")                                  // 远程通信已停止
-	ErrorRemotingListen                 = RegisterError(140001, "listen failed", ErrorException)                     // 监听失败
-	ErrorRemotingAccept                 = RegisterError(140002, "accept endpoint session failed", ErrorException)    // 接受连接失败
-	ErrorRemotingEndpointUnableToCreate = RegisterError(140003, "unable to create endpoint", ErrorActorSpawnFailed)  // 无法创建端点
-	ErrorRemotingEndpointSendData       = RegisterError(140004, "failed to send data to remote endpoint")            // 发送数据到远程端点失败
-	ErrorRemotingHandshake              = RegisterError(140005, "handshake negotiation with remote endpoint failed") // 与远程端点握手协商失败
+	ErrorRemotingStopped                  = RegisterError(140000, "remoting stopped")                                  // 远程通信已停止
+	ErrorRemotingListen                   = RegisterError(140001, "listen failed", ErrorException)                     // 监听失败
+	ErrorRemotingAccept                   = RegisterError(140002, "accept endpoint session failed", ErrorException)    // 接受连接失败
+	ErrorRemotingEndpointUnableToCreate   = RegisterError(140003, "unable to create endpoint", ErrorActorSpawnFailed)  // 无法创建端点
+	ErrorRemotingEndpointSendData         = RegisterError(140004, "failed to send data to remote endpoint")            // 发送数据到远程端点失败
+	ErrorRemotingHandshake                = RegisterError(140005, "handshake negotiation with remote endpoint failed") // 与远程端点握手协商失败
+	ErrorRemotingDialQueueFull            = RegisterError(140006, "outbound dial queue full")                          // 出站拨号等待队列已满
+	ErrorRemotingPendingEnvelopsFull      = RegisterError(140007, "remote endpoint pending envelops full")             // 单地址待发送远程信封已满
+	ErrorRemotingTotalPendingEnvelopsFull = RegisterError(140008, "total pending remote envelops full")                // 系统待发送远程信封总量已满
 )
 
 // Virtual 相关错误。
 var (
 	ErrorVirtualActorProviderNotFound = RegisterError(160000, "virtual actor provider not found", ErrorNotFound) // 虚拟 Actor 种类未找到
 	ErrorVirtualRecipientException    = RegisterError(160001, "virtual recipient exception", ErrorException)     // 虚拟 Actor 接收者异常，该错误通常是框架内部逻辑错误，正常不应该产生
+	ErrorVirtualPendingMessagesFull   = RegisterError(160002, "virtual pending messages full")                   // 等待虚拟 Actor 激活或钝化的消息已满
 )
 
 // Gossip 相关错误。
@@ -80,6 +84,12 @@ var (
 	ErrorClusterNotEnabled    = RegisterError(170002, "cluster is not enabled")                            // 未启用集群
 	ErrorClusterJoinFailed    = RegisterError(170003, "cluster join failed")                               // 所有非本地种子均未接受加入
 	ErrorClusterNameMismatch  = RegisterError(170004, "cluster name mismatch")                             // 加入响应的集群名称不匹配
+)
+
+// Coordination 相关错误。
+var (
+	ErrorCoordinationNotEnabled  = RegisterError(180000, "coordination is not enabled") // 未托管协调节点
+	ErrorCoordinationUnavailable = RegisterError(180001, "coordination is unavailable") // 协调节点尚未初始化或已失败
 )
 
 var (
