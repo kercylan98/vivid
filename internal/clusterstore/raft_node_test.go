@@ -14,10 +14,11 @@ import (
 // memoryRaftStorage 使用同一状态约束，省略磁盘延迟，以便大量重排协议消息。
 // 真实刷盘顺序另由磁盘存储和故障注入用例验证。
 type memoryRaftStorage struct {
-	config  RaftConfig
-	state   raftPersistentState
-	failure error
-	saves   int
+	config   RaftConfig
+	state    raftPersistentState
+	failure  error
+	saves    int
+	snapshot RaftSnapshot
 }
 
 func (s *memoryRaftStorage) Configuration() RaftConfig     { return s.config }
@@ -62,6 +63,56 @@ func (s *memoryRaftStorage) Save(update RaftUpdate) error {
 	s.state = storage.state
 	s.saves++
 	return nil
+}
+
+func (s *memoryRaftStorage) Snapshot() (RaftSnapshot, error) {
+	snapshot := s.snapshot
+	snapshot.Data = bytes.Clone(snapshot.Data)
+	return snapshot, nil
+}
+
+func (s *memoryRaftStorage) Compact(data []byte) error {
+	if s.failure != nil {
+		return s.failure
+	}
+	store, err := Restore(data)
+	if err != nil {
+		return err
+	}
+	index := store.Index()
+	if index <= s.state.baseIndex || index > s.state.hard.Commit {
+		return ErrInvalidRaftUpdate
+	}
+	term, err := s.Term(index)
+	if err != nil {
+		return err
+	}
+	s.installSnapshot(RaftSnapshot{Index: index, Term: term, Data: data}, s.state.hard, s.state.entries[index-s.state.baseIndex:])
+	return nil
+}
+
+func (s *memoryRaftStorage) InstallSnapshot(snapshot RaftSnapshot) error {
+	if s.failure != nil {
+		return s.failure
+	}
+	storage := RaftStorage{config: s.config, state: s.state}
+	// prepareSnapshot 仅查询状态，真实存储的可用性检查由磁盘用例覆盖。
+	hard, suffix, err := storage.prepareSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	s.installSnapshot(snapshot, hard, suffix)
+	return nil
+}
+
+func (s *memoryRaftStorage) installSnapshot(snapshot RaftSnapshot, hard RaftHardState, suffix []RaftEntry) {
+	entries := append([]RaftEntry(nil), suffix...)
+	s.state = raftPersistentState{baseIndex: snapshot.Index, baseTerm: snapshot.Term, hard: hard, entries: entries}
+	for _, entry := range entries {
+		s.state.bytes += len(entry.Data)
+	}
+	snapshot.Data = bytes.Clone(snapshot.Data)
+	s.snapshot = snapshot
 }
 
 type raftNetwork struct {
@@ -149,6 +200,14 @@ func (s *raftNetwork) recover(t testing.TB) *RaftNode {
 		s.queue = append(s.queue, out...)
 		s.drain(t)
 		if candidate.role == RaftLeader {
+			for _, id := range candidate.config.Voters {
+				if peer := candidate.peers[id]; peer != nil && peer.snapshot {
+					out, err := candidate.SendSnapshot(id)
+					require.NoError(t, err)
+					s.queue = append(s.queue, out...)
+				}
+			}
+			s.drain(t)
 			return candidate
 		}
 	}

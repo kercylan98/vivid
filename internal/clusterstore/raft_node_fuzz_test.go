@@ -9,6 +9,21 @@ import (
 func FuzzRaftNode_Network(f *testing.F) {
 	f.Add([]byte{0, 0, 0, 0, 0, 1, 1, 0, 2, 0, 0, 0})
 	f.Add([]byte{0, 1, 1, 1, 3, 2, 0, 0, 4, 1, 2, 0, 0, 3, 0, 0})
+	f.Add([]byte{0, 0, 0, 0, 1, 0, 0, 0, 7, 0, 0, 0, 8, 0, 0, 0})
+	// 先完成选举，再隔离副本、推进提交、压缩并重发快照。
+	seed := []byte{0, 0, 0, 0}
+	for range 12 {
+		seed = append(seed, 2, 0, 0, 0)
+	}
+	seed = append(seed, 3, 4, 0, 0)
+	for range 24 {
+		seed = append(seed, 1, 0, 0, 0)
+	}
+	seed = append(seed, 7, 0, 0, 0, 8, 0, 0, 0, 3, 4, 0, 0)
+	for range 12 {
+		seed = append(seed, 8, 0, 0, 0)
+	}
+	f.Add(seed)
 	f.Fuzz(func(t *testing.T, operations []byte) {
 		if len(operations) > 1024 {
 			return
@@ -18,7 +33,7 @@ func FuzzRaftNode_Network(f *testing.F) {
 			id := uint64(operations[step+1]%5 + 1)
 			node := network.nodes[id]
 			choice := int(operations[step+2])<<8 | int(operations[step+3])
-			switch operations[step] % 7 {
+			switch operations[step] % 9 {
 			case 0:
 				if node.role != RaftLeader {
 					network.campaign(t, id)
@@ -49,6 +64,21 @@ func FuzzRaftNode_Network(f *testing.F) {
 				if len(network.queue) > 0 {
 					index := choice % len(network.queue)
 					network.queue = append(network.queue[:index], network.queue[index+1:]...)
+				}
+			case 7:
+				if node.hard.Commit > network.disks[id].state.baseIndex {
+					store := Store{index: node.hard.Commit}
+					require.NoError(t, node.Compact(store.Snapshot()))
+				}
+			case 8:
+				if node.role == RaftLeader {
+					for _, peerID := range node.config.Voters {
+						if peer := node.peers[peerID]; peer != nil && peer.snapshot {
+							out, err := node.SendSnapshot(peerID)
+							require.NoError(t, err)
+							network.queue = append(network.queue, out...)
+						}
+					}
 				}
 			}
 			if len(network.queue) > 0 {

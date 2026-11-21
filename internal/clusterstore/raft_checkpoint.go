@@ -25,7 +25,7 @@ type RaftSnapshot struct {
 	Data  []byte
 }
 
-// Snapshot 返回最近成功安装的本地快照，尚无快照时返回零值。
+// Snapshot 返回最近成功安装的快照，尚无快照时返回零值。
 // 数据独立于磁盘及后续调用，调用方恢复它后仍需应用到 Commit 的保留日志。
 func (s *RaftStorage) Snapshot() (RaftSnapshot, error) {
 	if err := s.available(); err != nil {
@@ -66,8 +66,68 @@ func (s *RaftStorage) compact(data []byte, stage func(string) error) error {
 	if err != nil {
 		return err
 	}
-	digest := sha256.Sum256(data)
-	if err := s.writeSnapshot(data, digest); err != nil {
+	return s.rewriteSnapshot(RaftSnapshot{Index: index, Term: term, Data: data}, s.state.hard, s.state.entries[index-s.state.baseIndex:], stage)
+}
+
+// InstallSnapshot 持久化由共识层接纳的远端快照，不能自行证明发送者具有 Leader 资格。
+// 仅接纳超过本地 Commit 的快照，保留当前任期与投票；匹配末尾任期时保留后缀。
+// 调用期间输入不可修改，切换失败及清理错误的处理约定与 Compact 相同。
+func (s *RaftStorage) InstallSnapshot(snapshot RaftSnapshot) error {
+	return s.installSnapshot(snapshot, nil)
+}
+
+func (s *RaftStorage) installSnapshot(snapshot RaftSnapshot, stage func(string) error) error {
+	if err := s.available(); err != nil {
+		return err
+	}
+	hard, suffix, err := s.prepareSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	return s.rewriteSnapshot(snapshot, hard, suffix, stage)
+}
+
+func validateRaftSnapshot(snapshot RaftSnapshot) error {
+	if snapshot.Index == 0 || snapshot.Term == 0 {
+		return ErrInvalidSnapshot
+	}
+	store, err := Restore(snapshot.Data)
+	if err != nil {
+		return err
+	}
+	if store.Index() != snapshot.Index {
+		return ErrInvalidSnapshot
+	}
+	return nil
+}
+
+func (s *RaftStorage) prepareSnapshot(snapshot RaftSnapshot) (RaftHardState, []RaftEntry, error) {
+	if err := validateRaftSnapshot(snapshot); err != nil {
+		return RaftHardState{}, nil, err
+	}
+	hard := s.state.hard
+	committedTerm := s.state.baseTerm
+	if hard.Commit > s.state.baseIndex {
+		committedTerm = s.state.entries[hard.Commit-s.state.baseIndex-1].Term
+	}
+	if snapshot.Index <= hard.Commit || snapshot.Term > hard.Term || snapshot.Term < committedTerm {
+		return RaftHardState{}, nil, ErrInvalidRaftUpdate
+	}
+	var suffix []RaftEntry
+	if snapshot.Index <= s.state.lastIndex() {
+		term := s.state.entries[snapshot.Index-s.state.baseIndex-1].Term
+		if term == snapshot.Term {
+			suffix = s.state.entries[snapshot.Index-s.state.baseIndex:]
+		}
+	}
+	hard.Commit = snapshot.Index
+	return hard, suffix, nil
+}
+
+// rewriteSnapshot 共用快照发布与恢复入口切换，调用前已经确定保留后缀和最终状态。
+func (s *RaftStorage) rewriteSnapshot(snapshot RaftSnapshot, target RaftHardState, suffix []RaftEntry, stage func(string) error) error {
+	digest := sha256.Sum256(snapshot.Data)
+	if err := s.writeSnapshot(snapshot.Data, digest); err != nil {
 		return err
 	}
 	notify := func(name string) error {
@@ -95,20 +155,20 @@ func (s *RaftStorage) compact(data []byte, stage func(string) error) error {
 	if _, err := candidate.Append(encodeRaftConfig(s.config)); err != nil {
 		return err
 	}
-	hard := s.state.hard
-	hard.Commit = index
-	if _, err := candidate.Append(encodeRaftCheckpoint(index, term, hard, digest)); err != nil {
+	hard := target
+	hard.Commit = snapshot.Index
+	if _, err := candidate.Append(encodeRaftCheckpoint(snapshot.Index, snapshot.Term, hard, digest)); err != nil {
 		return err
 	}
-	start := int(index - s.state.baseIndex)
-	for start < len(s.state.entries) {
+	start := 0
+	for start < len(suffix) {
 		end, size := start, raftUpdateHeaderBytes
-		for end < len(s.state.entries) && size+raftEntryHeaderBytes+len(s.state.entries[end].Data) <= maxJournalRecordBytes {
-			size += raftEntryHeaderBytes + len(s.state.entries[end].Data)
+		for end < len(suffix) && size+raftEntryHeaderBytes+len(suffix[end].Data) <= maxJournalRecordBytes {
+			size += raftEntryHeaderBytes + len(suffix[end].Data)
 			end++
 		}
-		hard.Commit = min(s.state.hard.Commit, s.state.entries[end-1].Index)
-		if _, err := candidate.Append(encodeRaftUpdate(RaftUpdate{HardState: hard, Entries: s.state.entries[start:end]})); err != nil {
+		hard.Commit = min(target.Commit, suffix[end-1].Index)
+		if _, err := candidate.Append(encodeRaftUpdate(RaftUpdate{HardState: hard, Entries: suffix[start:end]})); err != nil {
 			return err
 		}
 		start = end
