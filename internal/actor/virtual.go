@@ -41,16 +41,19 @@ type virtualActivation struct {
 // virtualCoordinator 只协调本系统的逻辑身份与物理实例，不保存业务 ActorContext 供外部调用。
 // 锁内只更新登记和默认邮箱，Provider、生命周期及失败回调均在锁外执行。
 type virtualCoordinator struct {
-	system   *System
-	options  vivid.VirtualActorOptions
-	mu       sync.Mutex
-	entries  map[virtualKey]*virtualActivation
-	waiting  []*virtualActivation
-	running  int
-	pending  int
-	closed   bool
-	gate     *virtualOwnershipGate
-	retiring []*virtualActivation
+	system       *System
+	options      vivid.VirtualActorOptions
+	mu           sync.Mutex
+	entries      map[virtualKey]*virtualActivation
+	waiting      []*virtualActivation
+	running      int
+	pending      int
+	closed       bool
+	gate         *virtualOwnershipGate
+	retiring     []*virtualActivation
+	checking     []*virtualRouteBatch
+	ingress      virtualIngressMailbox
+	activateNext bool // 复核与激活交替取得空闲槽，持续远程流量不能饿死首次激活
 }
 
 func newVirtualCoordinator(system *System) *virtualCoordinator {
@@ -64,7 +67,9 @@ func newVirtualCoordinator(system *System) *virtualCoordinator {
 	if options.PendingMessageLimit == 0 {
 		options.PendingMessageLimit = 4096
 	}
-	return &virtualCoordinator{system: system, options: options, entries: make(map[virtualKey]*virtualActivation)}
+	v := &virtualCoordinator{system: system, options: options, entries: make(map[virtualKey]*virtualActivation)}
+	v.ingress.coordinator = v
+	return v
 }
 
 func (s *System) dispatchVirtual(system bool, sender, recipient vivid.ActorRef, message vivid.Message, request *future.Future[vivid.Message]) error {
@@ -126,6 +131,16 @@ func (v *virtualCoordinator) startLocked() {
 			go v.releaseOwnership(entry)
 			continue
 		}
+		if len(v.checking) > 0 && (v.closed || !v.activateNext || len(v.waiting) == 0) {
+			batch := v.checking[0]
+			v.checking[0] = nil
+			v.checking = v.checking[1:]
+			batch.deliveries, batch.state.deliveries = batch.state.deliveries, nil
+			v.running++
+			v.activateNext = true
+			go v.checkRoute(batch)
+			continue
+		}
 		if v.closed || len(v.waiting) == 0 {
 			return
 		}
@@ -138,6 +153,7 @@ func (v *virtualCoordinator) startLocked() {
 		v.waiting[0] = nil
 		v.waiting = v.waiting[1:]
 		entry.creating = true
+		v.activateNext = false
 		v.running++
 		go v.create(parent, entry)
 	}
@@ -260,6 +276,7 @@ func (v *virtualCoordinator) close() {
 		}
 	}
 	v.waiting = nil
+	v.startLocked()
 	v.finishOwnershipLocked()
 	v.mu.Unlock()
 	if v.gate != nil {

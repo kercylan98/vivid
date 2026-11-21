@@ -30,15 +30,20 @@ func (h *controlEnvelopHandler) HandleRemotingEnvelop(system bool, sender, recei
 // newRemoteControlSystem 使用第四个真实 TCP 系统；同样通过代理参与分区，不借用 Raft 节点的本地入口。
 func newRemoteControlSystem(t *testing.T, n *raftRuntimeNetwork, hold func(probeRequest) bool, prepare ...func(*System)) *System {
 	t.Helper()
+	return newRemoteControlSystemAt(t, n, 4, hold, prepare...)
+}
+
+func newRemoteControlSystemAt(t *testing.T, n *raftRuntimeNetwork, id uint64, hold func(probeRequest) bool, prepare ...func(*System)) *System {
+	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	backend := admissionSystemAddress(t)
 	n.mu.Lock()
-	n.addresses[listener.Addr().String()] = 4
+	n.addresses[listener.Addr().String()] = id
 	n.listeners = append(n.listeners, listener)
 	n.mu.Unlock()
 	n.wg.Add(1)
-	go n.proxy(listener, backend, 4)
+	go n.proxy(listener, backend, id)
 	system := NewSystem(vivid.WithActorSystemRemoting(backend, listener.Addr().String()),
 		vivid.WithActorSystemRemotingOption(vivid.WithActorSystemRemotingReconnect(2, 20*time.Millisecond, 40*time.Millisecond, 2, false)),
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError), log.WithErrorStack(false))))

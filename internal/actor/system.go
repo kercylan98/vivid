@@ -565,7 +565,7 @@ func (s *System) reserveActorContext(ctx *Context) error {
 	defer s.actorInitLock.Unlock()
 	path := ctx.Ref().GetPath()
 	_, exists := s.actorContexts.Load(path)
-	if path == "/" || exists || s.initializingActors[path] != nil {
+	if path == "/" || path == virtualDeliveryPath || exists || s.initializingActors[path] != nil {
 		return vivid.ErrorActorAlreadyExists.WithMessage(path)
 	}
 	if s.initializingActors == nil {
@@ -650,6 +650,9 @@ func (s *System) findMailbox(ref *Ref) vivid.Mailbox {
 		return s.remotingMailbox
 	}
 
+	if ref.GetPath() == virtualDeliveryPath {
+		return &s.virtualCoordinator.ingress
+	}
 	// 在 actorContexts 中查找指定路径（GetPath）对应的 Context，并尝试获取其邮箱（Mailbox）。
 	if value, ok := s.actorContexts.Load(ref.GetPath()); ok {
 		switch v := value.(type) {

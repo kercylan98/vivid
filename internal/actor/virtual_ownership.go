@@ -93,17 +93,26 @@ type virtualOwnershipGate struct {
 	deadline time.Time // 停止时所有释放任务共用此预算，不逐任务延长
 	done     chan struct{}
 	finished bool
+	group    [32]byte
+	owner    clusterstore.VirtualOwner
 }
 
 type virtualOwnershipState struct {
-	value    clusterstore.VirtualOwnership
-	deadline time.Time
-	retiring bool
-	after    func()
+	value      clusterstore.VirtualOwnership
+	deadline   time.Time
+	retiring   bool
+	after      func()
+	deliveries []virtualRouteDelivery
+	checking   bool
 }
 
 // configureOwnership 只在系统启动前安装内部准入策略，不开放尚未完整的公共集群配置。
 func (v *virtualCoordinator) configureOwnership(backend virtualOwnershipBackend, timeout time.Duration) error {
+	var group [32]byte
+	var owner clusterstore.VirtualOwner
+	if routing, ok := backend.(virtualRoutingIdentity); ok {
+		group, owner = routing.routingIdentity()
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.system.statusLock.Lock()
@@ -115,7 +124,7 @@ func (v *virtualCoordinator) configureOwnership(backend virtualOwnershipBackend,
 		timeout = 5 * time.Second
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	v.gate = &virtualOwnershipGate{backend: backend, timeout: timeout, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	v.gate = &virtualOwnershipGate{backend: backend, timeout: timeout, ctx: ctx, cancel: cancel, done: make(chan struct{}), group: group, owner: owner}
 	return nil
 }
 
