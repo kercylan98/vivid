@@ -72,6 +72,7 @@ type raftNodeStorage interface {
 	Snapshot() (RaftSnapshot, error)
 	Compact([]byte) error
 	InstallSnapshot(RaftSnapshot) error
+	SnapshotMetadata() (RaftSnapshotMetadata, error)
 }
 
 type raftPeer struct {
@@ -233,13 +234,8 @@ func (n *RaftNode) Step(m RaftMessage) ([]RaftMessage, error) {
 	if !n.validMessage(m) {
 		return nil, ErrInvalidRaftMessage
 	}
-	if m.Term > n.hard.Term {
-		hard := n.hard
-		hard.Term, hard.Vote = m.Term, 0
-		if err := n.save(hard, nil); err != nil {
-			return nil, err
-		}
-		n.follow(0)
+	if err := n.observeTerm(m.Term); err != nil {
+		return nil, err
 	}
 	if m.Term < n.hard.Term {
 		if m.Type == RaftVoteRequest || m.Type == RaftAppendRequest || m.Type == RaftSnapshotRequest {
@@ -558,6 +554,19 @@ func (n *RaftNode) follow(leader uint64) {
 	n.role, n.leader = RaftFollower, leader
 	n.votes = nil
 	clear(n.peers)
+}
+
+func (n *RaftNode) observeTerm(term uint64) error {
+	if term <= n.hard.Term {
+		return nil
+	}
+	hard := n.hard
+	hard.Term, hard.Vote = term, 0
+	if err := n.save(hard, nil); err != nil {
+		return err
+	}
+	n.follow(0)
+	return nil
 }
 
 func (n *RaftNode) available() error {

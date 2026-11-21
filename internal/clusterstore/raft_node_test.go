@@ -2,6 +2,7 @@ package clusterstore
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -69,6 +70,10 @@ func (s *memoryRaftStorage) Snapshot() (RaftSnapshot, error) {
 	snapshot := s.snapshot
 	snapshot.Data = bytes.Clone(snapshot.Data)
 	return snapshot, nil
+}
+
+func (s *memoryRaftStorage) SnapshotMetadata() (RaftSnapshotMetadata, error) {
+	return RaftSnapshotMetadata{Index: s.snapshot.Index, Term: s.snapshot.Term, Size: uint64(len(s.snapshot.Data)), Digest: sha256.Sum256(s.snapshot.Data)}, nil
 }
 
 func (s *memoryRaftStorage) Compact(data []byte) error {

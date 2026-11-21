@@ -25,6 +25,30 @@ type RaftSnapshot struct {
 	Data  []byte
 }
 
+// RaftSnapshotMetadata 只读取文件大小，供分块传输在加载完整快照前预留额度。
+// Digest 来自已经发布的恢复入口，不代替读取时的完整校验。
+type RaftSnapshotMetadata struct {
+	Index, Term, Size uint64
+	Digest            [sha256.Size]byte
+}
+
+func (s *RaftStorage) SnapshotMetadata() (RaftSnapshotMetadata, error) {
+	if err := s.available(); err != nil {
+		return RaftSnapshotMetadata{}, err
+	}
+	if s.state.baseIndex == 0 {
+		return RaftSnapshotMetadata{}, nil
+	}
+	info, err := os.Stat(s.snapshotPath(s.snapshot))
+	if err != nil {
+		return RaftSnapshotMetadata{}, err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxSnapshotBytes {
+		return RaftSnapshotMetadata{}, ErrInvalidSnapshot
+	}
+	return RaftSnapshotMetadata{Index: s.state.baseIndex, Term: s.state.baseTerm, Size: uint64(info.Size()), Digest: s.snapshot}, nil
+}
+
 // Snapshot 返回最近成功安装的快照，尚无快照时返回零值。
 // 数据独立于磁盘及后续调用，调用方恢复它后仍需应用到 Commit 的保留日志。
 func (s *RaftStorage) Snapshot() (RaftSnapshot, error) {

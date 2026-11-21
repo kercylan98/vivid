@@ -37,7 +37,7 @@ func (n *RaftNode) Compact(data []byte) error {
 }
 
 // SendSnapshot 为需要快照的副本生成或重发一个完整快照，不在普通心跳中读取快照文件。
-// 每份消息归调用方所有；负载受 maxSnapshotBytes 限制，调用方须限制在途数量，尚不提供分块传输。
+// 每份完整消息归调用方所有，调用方须限制在途数量；分块发送使用 RaftSnapshotTransfer。
 func (n *RaftNode) SendSnapshot(id uint64) ([]RaftMessage, error) {
 	if err := n.available(); err != nil {
 		return nil, err
