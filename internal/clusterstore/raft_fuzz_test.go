@@ -51,6 +51,12 @@ func FuzzRaftState_Transitions(f *testing.F) {
 		config, err := normalizeRaftConfig(raftTestConfig())
 		require.NoError(t, err)
 		storage, recovered := &RaftStorage{config: config}, &RaftStorage{config: config}
+		base := uint64(0)
+		if len(operations) > 0 && operations[0]&0x80 != 0 {
+			base = uint64(operations[0]) * maxRaftEntries
+			storage.state = raftPersistentState{baseIndex: base, baseTerm: 1, hard: RaftHardState{Term: 1, Commit: base}}
+			recovered.state = storage.state
+		}
 		for _, operation := range operations {
 			before, entries := storage.state.hard, raftEntries(storage)
 			update := RaftUpdate{HardState: before}
@@ -60,9 +66,9 @@ func FuzzRaftState_Transitions(f *testing.F) {
 				update.HardState.Vote = 0
 			case 1:
 				update.HardState.Term = max(1, before.Term)
-				update.Entries = []RaftEntry{{Index: uint64(len(entries)) + 1, Term: update.HardState.Term, Data: []byte{operation}}}
+				update.Entries = []RaftEntry{{Index: base + uint64(len(entries)) + 1, Term: update.HardState.Term, Data: []byte{operation}}}
 			case 2:
-				update.HardState.Commit = uint64(len(entries))
+				update.HardState.Commit = base + uint64(len(entries))
 			case 3:
 				update.HardState.Vote = uint64(operation%3 + 1)
 			case 4:
@@ -74,7 +80,7 @@ func FuzzRaftState_Transitions(f *testing.F) {
 					update.Entries = entries[:int(operation)%len(entries)+1]
 				}
 			case 6:
-				update.HardState.Commit = uint64(len(entries)) + 1
+				update.HardState.Commit = base + uint64(len(entries)) + 1
 			case 7:
 				if len(entries) != 0 {
 					entry := entries[0]
@@ -94,14 +100,14 @@ func FuzzRaftState_Transitions(f *testing.F) {
 			if storage.state.hard.Term == before.Term && before.Vote != 0 {
 				require.Equal(t, before.Vote, storage.state.hard.Vote)
 			}
-			require.GreaterOrEqual(t, uint64(len(storage.state.entries)), storage.state.hard.Commit)
-			for index := uint64(0); index < before.Commit; index++ {
+			require.GreaterOrEqual(t, base+uint64(len(storage.state.entries)), storage.state.hard.Commit)
+			for index := uint64(0); index < before.Commit-base; index++ {
 				require.Equal(t, entries[index], storage.state.entries[index], "已提交前缀不可变化")
 			}
 			var logicalBytes int
-			var previous uint64
+			previous := storage.state.baseTerm
 			for i, entry := range storage.state.entries {
-				require.EqualValues(t, i+1, entry.Index)
+				require.EqualValues(t, base+uint64(i)+1, entry.Index)
 				require.GreaterOrEqual(t, entry.Term, previous)
 				require.LessOrEqual(t, entry.Term, storage.state.hard.Term)
 				previous = entry.Term

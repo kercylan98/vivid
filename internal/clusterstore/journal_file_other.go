@@ -7,3 +7,7 @@ import "os"
 func lockJournal(*os.File) error { return ErrJournalUnsupported }
 
 func publishJournal(string, string) error { return ErrJournalUnsupported }
+
+func replaceJournal(string, string) error { return ErrJournalUnsupported }
+
+func syncJournalDirectory(string) error { return ErrJournalUnsupported }

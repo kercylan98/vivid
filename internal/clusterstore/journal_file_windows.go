@@ -16,6 +16,16 @@ func lockJournal(file *os.File) error {
 }
 
 func publishJournal(temporary, path string) error {
+	return moveJournal(temporary, path, windows.MOVEFILE_WRITE_THROUGH)
+}
+
+func replaceJournal(temporary, path string) error {
+	return moveJournal(temporary, path, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+}
+
+func syncJournalDirectory(string) error { return nil } // 发布使用 MOVEFILE_WRITE_THROUGH，删除残留不影响恢复入口
+
+func moveJournal(temporary, path string, flags uint32) error {
 	from, err := windows.UTF16PtrFromString(temporary)
 	if err != nil {
 		return err
@@ -24,6 +34,5 @@ func publishJournal(temporary, path string) error {
 	if err != nil {
 		return err
 	}
-	// 不设置 REPLACE_EXISTING，避免覆盖已有节点的数据；等待文件名移动完成。
-	return windows.MoveFileEx(from, to, windows.MOVEFILE_WRITE_THROUGH)
+	return windows.MoveFileEx(from, to, flags)
 }

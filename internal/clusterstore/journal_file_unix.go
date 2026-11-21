@@ -26,6 +26,17 @@ func publishJournal(temporary, path string) error {
 	if err := os.Remove(temporary); err != nil {
 		return err
 	}
+	return syncJournalDirectory(path)
+}
+
+func replaceJournal(temporary, path string) error {
+	if err := os.Rename(temporary, path); err != nil {
+		return err
+	}
+	return syncJournalDirectory(path)
+}
+
+func syncJournalDirectory(path string) error {
 	directory, err := os.Open(filepath.Dir(path))
 	if err != nil {
 		return err

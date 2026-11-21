@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"unicode/utf8"
 )
@@ -23,6 +25,7 @@ var (
 	ErrRaftIdentity      = errors.New("raft journal identity does not match configuration")
 	ErrRaftCapacity      = errors.New("raft storage capacity exceeded")
 	ErrRaftEntryMissing  = errors.New("raft entry is unavailable")
+	ErrRaftCompacted     = errors.New("raft entry has been compacted")
 )
 
 // RaftConfig 固定投票成员与稳定身份，不保存通信地址，也不复用 Gossip 的启动实例 ID。
@@ -57,16 +60,23 @@ type RaftUpdate struct {
 
 // RaftStorage 串行维护固定成员 Raft 的本地持久状态，不执行选举、复制或状态机应用。
 // 必须通过 CreateRaftStorage 或 OpenRaftStorage 构造，使用后不可复制。
+// 节点目录须独占，WAL 与锁文件不得被外部替换或通过路径别名并行打开。
 type RaftStorage struct {
-	journal *Journal
-	config  RaftConfig
-	state   raftPersistentState
+	journal  *Journal
+	lock     *os.File
+	path     string
+	failed   bool
+	snapshot [32]byte
+	config   RaftConfig
+	state    raftPersistentState
 }
 
 type raftPersistentState struct {
-	hard    RaftHardState
-	entries []RaftEntry
-	bytes   int
+	baseIndex uint64
+	baseTerm  uint64
+	hard      RaftHardState
+	entries   []RaftEntry
+	bytes     int
 }
 
 type raftChange struct {
@@ -84,14 +94,18 @@ func CreateRaftStorage(path string, config RaftConfig) (*RaftStorage, error) {
 	if err != nil {
 		return nil, err
 	}
-	journal, err := CreateJournal(path)
+	path, lock, err := lockRaftStorage(path)
 	if err != nil {
 		return nil, err
 	}
-	if _, err = journal.Append(encodeRaftConfig(config)); err != nil {
-		return nil, errors.Join(err, journal.Close())
+	journal, err := CreateJournal(path)
+	if err != nil {
+		return nil, errors.Join(err, lock.Close())
 	}
-	return &RaftStorage{journal: journal, config: config}, nil
+	if _, err = journal.Append(encodeRaftConfig(config)); err != nil {
+		return nil, errors.Join(err, journal.Close(), lock.Close())
+	}
+	return &RaftStorage{journal: journal, lock: lock, path: path, config: config}, nil
 }
 
 // OpenRaftStorage 恢复时核对预期身份和固定成员；成员顺序不影响匹配。
@@ -101,10 +115,21 @@ func OpenRaftStorage(path string, config RaftConfig) (*RaftStorage, error) {
 	if err != nil {
 		return nil, err
 	}
-	storage := &RaftStorage{config: config}
-	expected := encodeRaftConfig(config)
+	path, lock, err := lockRaftStorage(path)
+	if err != nil {
+		return nil, err
+	}
+	storage := &RaftStorage{config: config, lock: lock, path: path}
+	if err := storage.openJournal(); err != nil {
+		return nil, errors.Join(err, lock.Close())
+	}
+	return storage, nil
+}
+
+func (storage *RaftStorage) openJournal() error {
+	expected := encodeRaftConfig(storage.config)
 	initialized := false
-	journal, err := OpenJournal(path, func(sequence uint64, payload []byte) error {
+	journal, err := OpenJournal(storage.path, func(sequence uint64, payload []byte) error {
 		if sequence == 1 {
 			if !validRaftConfigRecord(payload) {
 				return ErrInvalidRaftState
@@ -114,6 +139,12 @@ func OpenRaftStorage(path string, config RaftConfig) (*RaftStorage, error) {
 			}
 			initialized = true
 			return nil
+		}
+		if isRaftCheckpoint(payload) {
+			if sequence != 2 {
+				return ErrInvalidRaftState
+			}
+			return storage.restoreCheckpoint(payload)
 		}
 		update, err := decodeRaftUpdate(payload)
 		if err != nil {
@@ -127,13 +158,17 @@ func OpenRaftStorage(path string, config RaftConfig) (*RaftStorage, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if !initialized {
-		return nil, errors.Join(ErrInvalidRaftState, journal.Close())
+		return errors.Join(ErrInvalidRaftState, journal.Close())
+	}
+	// 上次入口替换可能在目录同步前中断；回收旧文件前先固定本次恢复选择。
+	if err := syncJournalDirectory(storage.path); err != nil {
+		return errors.Join(err, journal.Close())
 	}
 	storage.journal = journal
-	return storage, nil
+	return nil
 }
 
 // Configuration 返回独立的成员列表，调用方不能修改持久化身份。
@@ -155,7 +190,24 @@ func (s *RaftStorage) LastIndex() (uint64, error) {
 	if err := s.available(); err != nil {
 		return 0, err
 	}
-	return uint64(len(s.state.entries)), nil
+	return s.state.lastIndex(), nil
+}
+
+// Term 可查询快照基准位置的任期，未压缩时位置 0 的任期为 0。
+func (s *RaftStorage) Term(index uint64) (uint64, error) {
+	if err := s.available(); err != nil {
+		return 0, err
+	}
+	if index < s.state.baseIndex {
+		return 0, ErrRaftCompacted
+	}
+	if index == s.state.baseIndex {
+		return s.state.baseTerm, nil
+	}
+	if index > s.state.lastIndex() {
+		return 0, ErrRaftEntryMissing
+	}
+	return s.state.entries[index-s.state.baseIndex-1].Term, nil
 }
 
 // RecoveredTailBytes 返回本次恢复丢弃的未完整写入批次字节数。
@@ -171,10 +223,13 @@ func (s *RaftStorage) Entry(index uint64) (RaftEntry, error) {
 	if err := s.available(); err != nil {
 		return RaftEntry{}, err
 	}
-	if index == 0 || index > uint64(len(s.state.entries)) {
+	if s.state.baseIndex != 0 && index <= s.state.baseIndex {
+		return RaftEntry{}, ErrRaftCompacted
+	}
+	if index == 0 || index > s.state.lastIndex() {
 		return RaftEntry{}, ErrRaftEntryMissing
 	}
-	entry := s.state.entries[index-1]
+	entry := s.state.entries[index-s.state.baseIndex-1]
 	entry.Data = bytes.Clone(entry.Data)
 	return entry, nil
 }
@@ -200,15 +255,25 @@ func (s *RaftStorage) Save(update RaftUpdate) error {
 }
 
 func (s *RaftStorage) Close() error {
-	if s.journal == nil {
-		return nil
+	var err error
+	if s.journal != nil {
+		err = s.journal.Close()
 	}
-	err := s.journal.Close()
+	if s.lock != nil {
+		err = errors.Join(err, s.lock.Close())
+		s.lock = nil
+	}
 	s.state = raftPersistentState{}
 	return err
 }
 
 func (s *RaftStorage) available() error {
+	if s.lock == nil {
+		return ErrJournalClosed
+	}
+	if s.failed {
+		return ErrJournalFailed
+	}
 	if s.journal == nil || s.journal.file == nil {
 		return ErrJournalClosed
 	}
@@ -216,6 +281,22 @@ func (s *RaftStorage) available() error {
 		return ErrJournalFailed
 	}
 	return nil
+}
+
+func lockRaftStorage(path string) (string, *os.File, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", nil, err
+	}
+	// 固定锁文件不参与 WAL 替换，也不删除；调用方不得通过别名创建第二个恢复入口。
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := lockJournal(lock); err != nil {
+		return "", nil, errors.Join(err, lock.Close())
+	}
+	return path, lock, nil
 }
 
 func normalizeRaftConfig(config RaftConfig) (RaftConfig, error) {
@@ -242,7 +323,7 @@ func (s *RaftStorage) prepare(update RaftUpdate) (raftChange, error) {
 	if len(update.Entries) > maxRaftEntries {
 		return raftChange{}, ErrRaftCapacity
 	}
-	if hard.Term < state.hard.Term || hard.Commit < state.hard.Commit || hard.Term == 0 && hard.Vote != 0 || hard.Term == state.hard.Term && state.hard.Vote != 0 && hard.Vote != state.hard.Vote {
+	if hard.Term < state.hard.Term || hard.Commit < state.hard.Commit || hard.Commit < state.baseIndex || hard.Term < state.baseTerm || hard.Term == 0 && hard.Vote != 0 || hard.Term == state.hard.Term && state.hard.Vote != 0 && hard.Vote != state.hard.Vote {
 		return raftChange{}, ErrInvalidRaftUpdate
 	}
 	if hard.Vote != 0 {
@@ -256,17 +337,18 @@ func (s *RaftStorage) prepare(update RaftUpdate) (raftChange, error) {
 	var previous uint64
 	diverged := false
 	for i, entry := range update.Entries {
-		if entry.Index == 0 || entry.Index > maxRaftEntries || entry.Term == 0 || entry.Term > hard.Term || len(entry.Data) > maxRaftEntryBytes {
+		if entry.Index <= state.baseIndex || entry.Index-state.baseIndex > maxRaftEntries || entry.Term == 0 || entry.Term > hard.Term || len(entry.Data) > maxRaftEntryBytes {
 			return raftChange{}, ErrInvalidRaftUpdate
 		}
 		if i == 0 {
-			if entry.Index > uint64(len(state.entries))+1 {
+			if entry.Index-1 > state.lastIndex() {
 				return raftChange{}, ErrInvalidRaftUpdate
 			}
-			if entry.Index > 1 {
-				previous = state.entries[entry.Index-2].Term
+			previous = state.baseTerm
+			if entry.Index-state.baseIndex > 1 {
+				previous = state.entries[entry.Index-state.baseIndex-2].Term
 			}
-		} else if entry.Index != update.Entries[i-1].Index+1 {
+		} else if update.Entries[i-1].Index == ^uint64(0) || entry.Index != update.Entries[i-1].Index+1 {
 			return raftChange{}, ErrInvalidRaftUpdate
 		}
 		if entry.Term < previous {
@@ -277,7 +359,7 @@ func (s *RaftStorage) prepare(update RaftUpdate) (raftChange, error) {
 		if encodedBytes > maxJournalRecordBytes {
 			return raftChange{}, ErrRaftCapacity
 		}
-		position := int(entry.Index - 1)
+		position := int(entry.Index - state.baseIndex - 1)
 		if position < len(state.entries) && entry.Term == state.entries[position].Term && !bytes.Equal(entry.Data, state.entries[position].Data) {
 			return raftChange{}, ErrInvalidRaftUpdate
 		}
@@ -301,7 +383,7 @@ func (s *RaftStorage) prepare(update RaftUpdate) (raftChange, error) {
 		}
 		change.entries = append(change.entries, entry)
 	}
-	if hard.Commit > uint64(change.prefix+len(change.entries)) {
+	if hard.Commit > state.baseIndex+uint64(change.prefix+len(change.entries)) {
 		return raftChange{}, ErrInvalidRaftUpdate
 	}
 	for i := range change.entries {
@@ -316,6 +398,10 @@ func (s *RaftStorage) prepare(update RaftUpdate) (raftChange, error) {
 		copy(change.reserved, state.entries[:change.prefix])
 	}
 	return change, nil
+}
+
+func (s *raftPersistentState) lastIndex() uint64 {
+	return s.baseIndex + uint64(len(s.entries))
 }
 
 func (s *raftPersistentState) install(change raftChange) {
