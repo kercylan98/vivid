@@ -1,4 +1,4 @@
-// Package clusterstore 提供协调状态机、本地持久化和固定成员 Raft 运行时，尚未提供线性一致读取或集群单例。
+// Package clusterstore 提供协调状态机、本地持久化和固定成员 Raft 运行时，不提供集群唯一执行保证。
 package clusterstore
 
 import (
