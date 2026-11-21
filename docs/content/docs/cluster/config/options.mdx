@@ -50,7 +50,7 @@ system := bootstrap.NewActorSystem(
 
 ## 当前能力范围
 
-集群名称用于避免不同组误合并成员，不是认证凭据，也不隔离直接发送的远程业务消息。机房标识随成员视图传播，用于 Gossip 目标轮换，不改变业务路由或超时；没有 Quorum、加入令牌、白名单或集群单例等选项。连接认证通过 Remoting 的 TLS/mTLS 配置，见[连接认证](/docs/cluster/auth/join-auth)。
+集群名称用于避免不同组误合并成员，不是认证凭据，也不隔离直接发送的远程业务消息。机房标识随成员视图传播，用于 Gossip 目标轮换，不改变业务路由或超时；Gossip 配置不提供多数派授权、加入令牌、白名单或集群单例。固定成员共识使用独立的[协调节点配置](/docs/cluster/coordination)。连接认证通过 Remoting 的 TLS/mTLS 配置，见[连接认证](/docs/cluster/auth/join-auth)。
 
 无种子时独立启动；配置种子后默认必须加入成功，全部失败时保持 Joining 并返回初始加入失败结果。主动建立新组需使用 Bootstrap，结果通过 `system.ClusterReady()` 等待，见[启动与加入就绪](/docs/cluster/runtime/readiness)。
 

@@ -97,6 +97,7 @@ type System struct {
 	gossipRef              vivid.ActorRef                                    // 集群 gossip 引用
 	clusterReadiness       *gossip.Readiness                                 // 本次启动的初始加入结果
 	virtualCoordinator     *virtualCoordinator                               // 虚拟协调器
+	coordinationRef        vivid.ActorRef                                    // 托管协调节点，状态锁内发布
 	closingActors          sync.Map                                          // 即将关闭的本地实例引用，不按可复用路径索引
 }
 
@@ -292,6 +293,12 @@ func (s *System) Start() error {
 			return vivid.ErrorActorSystemStartFailed.With(err).With(s.Stop(s.options.StopTimeout))
 		}
 	}
+	if s.options.CoordinationOptions != nil {
+		if err := s.validateCoordination(); err != nil {
+			s.completeStart()
+			return vivid.ErrorActorSystemStartFailed.With(err).With(s.Stop(s.options.StopTimeout))
+		}
+	}
 	s.Logger().Debug("actor system starting")
 
 	availableSignal := make(chan struct{})
@@ -304,6 +311,7 @@ func (s *System) Start() error {
 			Append(systemChains.spawnGuardActor(s)).
 			Append(systemChains.initializeMetrics(s)).
 			Append(systemChains.initializeRemoting(s)).
+			Append(systemChains.initializeCoordination(s)).
 			Append(systemChains.initializeCluster(s)).
 			Append(systemChains.validateVirtualActors(s)).
 			Run()

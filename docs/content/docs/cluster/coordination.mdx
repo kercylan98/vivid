@@ -1,0 +1,60 @@
+---
+title: 协调节点
+description: 托管固定成员的 Raft 协调节点，明确创建、恢复和停止边界
+---
+
+通过 `WithActorSystemCoordination` 托管一个固定成员的 Raft 协调节点，用于框架协调元数据。它复用 Remoting，与 Gossip 的成员发现独立；成员地址和稳定编号须显式配置，不根据 Gossip 自动增删。
+
+## 配置
+
+```go
+system := bootstrap.NewActorSystem(
+    vivid.WithActorSystemRemoting("127.0.0.1:9101"),
+    vivid.WithActorSystemCoordination(vivid.ActorSystemCoordinationOptions{
+        GroupID: "owners",
+        NodeID:  1,
+        Members: map[uint64]string{
+            1: "127.0.0.1:9101",
+            2: "127.0.0.1:9102",
+            3: "127.0.0.1:9103",
+        },
+        Path:   "node-1.wal",
+        Create: true, // 仅首次创建；恢复时设为 false
+    }),
+)
+```
+
+示例使用 `github.com/kercylan98/vivid` 和 `github.com/kercylan98/vivid/pkg/bootstrap`。每个投票成员运行独立系统，使用相同 GroupID 和编号集合，分别设置自己的 NodeID、广告地址及 WAL 路径。本成员地址须与 Remoting 广告地址一致；通信地址必须包含具体主机及端口，不允许通配地址。一个系统托管一个协调节点，未配置时不启动。
+
+NodeID 是跨重启保持的稳定编号，不是 Gossip 的启动实例 ID。WAL 的父目录须已存在；`Create: true` 不覆盖已有文件，`false` 不自动创建缺失文件。恢复时会核对组与固定成员身份，不能通过改配置直接扩缩容或重新初始化已有组。
+
+心跳周期默认 100ms，竞选等待在 1–2s 之间随机取值；可通过 `HeartbeatInterval`、`ElectionMin`、`ElectionMax` 调整。最短竞选等待须至少为心跳周期三倍，最大值须大于最小值。跨机房应按实际延迟与抖动设置，较长等待会延迟故障后的选主。
+
+## 启动、查询与停止
+
+`Start()` 成功表示监听和本地 WAL 初始化完成；文件缺失、损坏、身份不匹配或存储被占用时返回启动错误并回滚组件。它不等待其他节点、选主或多数派确认。
+
+```go
+status, err := system.CoordinationStatus(time.Second).Result()
+if err != nil {
+    return err
+}
+fmt.Println(status.NodeID, status.Role, status.Term, status.Leader)
+```
+
+`CoordinationStatus` 查询本地状态，超时规则沿用 Ask。角色为 `CoordinationFollower`、`CoordinationCandidate` 或 `CoordinationLeader`；Leader 为 0 表示未知。返回的 Leader 和提交位置是本地观察，不代表实时多数派授权或业务就绪。未配置时返回 `ErrorCoordinationNotEnabled`，节点初始化或运行失败返回 `ErrorCoordinationUnavailable`，底层原因可用 `errors.Is` 检查。
+
+`Stop()` 先停止业务，再依次停止 Gossip、协调节点、Remoting 和指标组件。业务收尾中仍可查询协调状态；停止等待超时后后台继续关闭，不提前释放协调存储或远程链路。业务处理阻塞仍需自行结束。
+
+仓库中的 `examples/coordination` 可验证单节点创建与恢复：
+
+```sh
+go run ./examples/coordination -create -path node.wal
+go run ./examples/coordination -path node.wal
+```
+
+示例查询本地状态后停止，不等待选主。单节点不具备节点故障容错；三投票成员需要至少两个成员确认才能推进共识。跨机房分布需按可接受的分区和多数派存活位置规划。
+
+## 使用边界
+
+当前公开能力为节点托管与状态查询，尚无通用数据库读写 API；启用协调节点不会改变 `VirtualRef` 的本地激活行为，也不自动授予故障接管或跨节点唯一执行。协议中的组与节点编号不是认证凭据，连接认证使用 Remoting 的 [TLS/mTLS](/docs/cluster/auth/join-auth)。

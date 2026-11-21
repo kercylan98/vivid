@@ -86,6 +86,12 @@ var (
 	ErrorClusterNameMismatch  = RegisterError(170004, "cluster name mismatch")                             // 加入响应的集群名称不匹配
 )
 
+// Coordination 相关错误。
+var (
+	ErrorCoordinationNotEnabled  = RegisterError(180000, "coordination is not enabled") // 未托管协调节点
+	ErrorCoordinationUnavailable = RegisterError(180001, "coordination is unavailable") // 协调节点尚未初始化或已失败
+)
+
 var (
 	_             error                      = (*Error)(nil)
 	_             serialization.MessageCodec = (*Error)(nil)

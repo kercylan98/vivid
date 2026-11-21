@@ -37,7 +37,7 @@ type ActorSystem interface {
 	//
 	// 主要功能与行为说明：
 	//   - 通过系统消息发起关闭，不受普通邮箱暂停影响；保留 [OnKill] 和多阶段收尾，子 Actor 先于父 Actor 结束。
-	//   - 先停止业务 Actor，再依次停止集群、远程通信和指标组件；不保证排空普通消息或完成业务持久化。
+	//   - 先停止业务 Actor，再依次停止 Gossip、协调节点、远程通信和指标组件；未启用的组件跳过。
 	//   - timeout 控制本次调用的等待时间，未传时使用系统配置；小于等于 0 表示一直等待。
 	//   - 等待超时返回 [ErrorActorSystemStopFailed]，保留 context.DeadlineExceeded 原因；后台继续有序关闭，不提前取消收尾所需的系统上下文和调度器。
 	//   - 停止完成后，新 Ask、Probe 与 Entrust 返回 [ErrorActorSystemStopped]；被拒绝的托管任务不会启动，已接纳的任务不强制中断。
@@ -83,6 +83,11 @@ type ActorSystem interface {
 	// ClusterReady 等待本次启动的初始加入结果；省略超时或传入 <= 0 时等待至结果完成或系统停止。
 	// 正超时或 Close 只结束当前调用的等待，不取消节点加入；成功结果不代表持续健康。
 	ClusterReady(timeout ...time.Duration) Future[ClusterJoinResult]
+
+	// CoordinationStatus 查询托管协调节点的本地状态，等待规则沿用 Ask。
+	// Leader 仅为本地观察，不保证当前仍有多数派；启动成功也不等于选主完成。
+	// 业务收尾中仍可查询，协调节点停止后返回错误；未启用时返回 ErrorCoordinationNotEnabled。
+	CoordinationStatus(timeout ...time.Duration) Future[CoordinationStatus]
 }
 
 // PrimaryActorSystem 定义了“主”ActorSystem 的扩展接口，代表系统的具体实现，提供创建子 Actor 的能力。
@@ -127,6 +132,7 @@ func NewActorSystemOptions(options ...ActorSystemOption) *ActorSystemOptions {
 	for _, option := range options {
 		option(opts)
 	}
+	opts.CoordinationOptions = cloneCoordinationOptions(opts.CoordinationOptions)
 
 	return opts
 }
@@ -191,6 +197,9 @@ type ActorSystemOptions struct {
 
 	// ClusterOptions 指定 ActorSystem 的集群选项。
 	ClusterOptions *ActorSystemClusterOptions
+
+	// CoordinationOptions 配置独立于 Gossip 的固定成员协调节点，nil 不启用。
+	CoordinationOptions *ActorSystemCoordinationOptions
 }
 
 // SystemBasicState 当前 ActorSystem 的基本状态，供控制台等展示；不含集群名称（仅集群有集群名）。

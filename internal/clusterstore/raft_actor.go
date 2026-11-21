@@ -30,6 +30,7 @@ type RaftActorOptions struct {
 }
 
 type RaftRuntimeStatusRequest struct{}
+type CoordinationStatusRequest struct{}
 type RaftRuntimeCompact struct{}
 
 // RaftRuntimeLocalLog 查询本地已提交日志，仅用于恢复诊断。
@@ -177,15 +178,14 @@ func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
 			a.close()
 		}
 	case RaftRuntimeStatusRequest:
-		if a.node != nil {
-			status, err := a.node.Status()
-			if err != nil {
-				a.fail(err)
-			} else {
-				a.status = status
-			}
+		ctx.Reply(a.runtimeStatus())
+	case CoordinationStatusRequest:
+		status := a.runtimeStatus()
+		if status.Err != nil {
+			ctx.Reply(vivid.ErrorCoordinationUnavailable.With(status.Err))
+		} else {
+			ctx.Reply(vivid.CoordinationStatus{GroupID: a.opts.Config.GroupID, NodeID: status.ID, Role: vivid.CoordinationRole(status.Role), Term: status.Term, Leader: status.Leader, Commit: status.Commit, Applied: status.Applied})
 		}
-		ctx.Reply(RaftRuntimeStatus{RaftStatus: a.status, Applied: a.applied, PendingBytes: a.pendingBytes, PendingExecutions: len(a.executions), PendingReads: len(a.reads), Err: a.err})
 	case RaftRuntimeExecute:
 		a.execute(ctx, message, time.Now())
 	case *RaftControlRequest:
@@ -232,6 +232,18 @@ func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
 			a.receive(ctx, message.Data, time.Now())
 		}
 	}
+}
+
+func (a *RaftActor) runtimeStatus() RaftRuntimeStatus {
+	if a.node != nil {
+		status, err := a.node.Status()
+		if err != nil {
+			a.fail(err)
+		} else {
+			a.status = status
+		}
+	}
+	return RaftRuntimeStatus{RaftStatus: a.status, Applied: a.applied, PendingBytes: a.pendingBytes, PendingExecutions: len(a.executions), PendingReads: len(a.reads), Err: a.err}
 }
 
 func (a *RaftActor) start(ctx vivid.ActorContext) {

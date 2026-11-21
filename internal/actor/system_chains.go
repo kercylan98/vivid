@@ -21,14 +21,16 @@ import (
 )
 
 const (
-	remotingActorName = "@remoting"
-	metricsActorName  = "@metrics"
+	remotingActorName     = "@remoting"
+	coordinationActorName = "@coordination"
+	metricsActorName      = "@metrics"
 )
 
 // 停止优先级, 值越大越先停止（越靠后越先停止）
 const (
 	metricsStopPriority = iota
 	remotingStopPriority
+	coordinationStopPriority
 	gossipStopPriority
 )
 

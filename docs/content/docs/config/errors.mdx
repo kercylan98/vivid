@@ -180,6 +180,15 @@ ActorRef 解析、格式及 Agent 引用。
 | 170002 | **ErrorClusterNotEnabled** | 未启用集群时查询成员或等待就绪 | — |
 | 170003 | **ErrorClusterJoinFailed** | 所有可用种子均未完成有效加入 | — |
 
+### 协调节点
+
+托管配置与使用边界见[协调节点](/docs/cluster/coordination)。
+
+| 代码 | 变量名 | 说明 | 父类 |
+|------|--------|------|------|
+| 180000 | **ErrorCoordinationNotEnabled** | 未启用托管协调节点 | — |
+| 180001 | **ErrorCoordinationUnavailable** | 协调节点尚未初始化或已失败；保留底层原因 | — |
+
 ---
 
 **RegisterError** 用于在包 init 或启动阶段注册自定义错误码，供跨节点一致识别；可选 **optionalCauses** 在注册时挂载父类错误，不改变 code 与 message，仅便于 **errors.Is** / **errors.As** 命中。
