@@ -81,6 +81,10 @@ func (*virtualIngressMailbox) Resume()        {}
 func (*virtualIngressMailbox) IsPaused() bool { return false }
 
 func (m *virtualIngressMailbox) Enqueue(envelope vivid.Envelop) {
+	if request, ok := envelope.Message().(*virtual.DiscoveryRequest); ok {
+		m.discover(envelope, request)
+		return
+	}
 	if request, ok := envelope.Message().(*virtual.ActivationRequest); ok {
 		m.activate(envelope, request)
 		return

@@ -14,7 +14,12 @@ import (
 
 type routerReadyTestBackend struct {
 	*routerTestBackend
+	discoverFn func(context.Context, string, string) (clusterstore.VirtualOwner, error)
 	activateFn func(context.Context, virtualKey, clusterstore.VirtualOwner, uint64) (clusterstore.VirtualOwnership, error)
+}
+
+func (b *routerReadyTestBackend) discover(ctx context.Context, address, kind string) (clusterstore.VirtualOwner, error) {
+	return b.discoverFn(ctx, address, kind)
 }
 
 func (b *routerReadyTestBackend) activate(ctx context.Context, key virtualKey, target clusterstore.VirtualOwner, generation uint64) (clusterstore.VirtualOwnership, error) {
@@ -56,7 +61,7 @@ func TestVirtualActivation_TCPConcurrentColdRouteAndPassivation(t *testing.T) {
 	})
 	caller := newRemoteControlSystemAt(t, n, 5, nil)
 	client := remoteOwnershipClient(t, caller, n)
-	placements := map[string]clusterstore.VirtualOwner{"worker": ownerClient.owner}
+	placements := map[string]string{"worker": ownerClient.owner.Address}
 	router, err := newVirtualRouter(client, 16, 32, placements)
 	require.NoError(t, err)
 	delete(placements, "worker") // 外部修改配置不能改变已安装的候选。
@@ -177,7 +182,7 @@ func TestVirtualActivation_LostReadyDoesNotSendBusiness(t *testing.T) {
 		return false
 	})
 	client := remoteOwnershipClient(t, caller, n)
-	router, err := newVirtualRouter(client, 16, 16, map[string]clusterstore.VirtualOwner{"worker": oc.owner})
+	router, err := newVirtualRouter(client, 16, 16, map[string]string{"worker": oc.owner.Address})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	_, err = router.route(ctx, virtualKey{"worker", "lost"}, caller.Ref(), caller.Ref())

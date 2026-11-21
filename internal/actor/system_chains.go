@@ -78,6 +78,8 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 		registry.RegisterMessage("*virtual.DeliveryResult", new(virtual.DeliveryResult))
 		registry.RegisterMessage("*virtual.ActivationRequest", new(virtual.ActivationRequest))
 		registry.RegisterMessage("*virtual.ActivationResult", new(virtual.ActivationResult))
+		registry.RegisterMessage("*virtual.DiscoveryRequest", new(virtual.DiscoveryRequest))
+		registry.RegisterMessage("*virtual.DiscoveryResult", new(virtual.DiscoveryResult))
 		registry.RegisterMessageWithEncoderAndDecoder("*endpoint.Information", new(endpoint.Information), messagecodecs.GenericEncoder(), messagecodecs.GenericDecoder())
 		registry.RegisterMessage("*memberlist.MemberList", new(memberlist.MemberList))
 		registry.RegisterMessage("*versionvector.VersionVector", new(versionvector.VersionVector))

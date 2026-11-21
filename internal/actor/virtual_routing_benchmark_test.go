@@ -25,7 +25,7 @@ func BenchmarkVirtualRouterTCPAdmission(b *testing.B) {
 	benchmarkVirtualRouteTCPAdmission(b, true, false)
 }
 
-// BenchmarkVirtualRouterTCPColdActivation 包含首次 CAS/WAL、初始化、Ready 复核及业务准入，不含跨机房链路。
+// BenchmarkVirtualRouterTCPColdActivation 包含身份发现、首次 CAS/WAL、初始化、Ready 复核及业务准入，不含跨机房链路。
 func BenchmarkVirtualRouterTCPColdActivation(b *testing.B) {
 	benchmarkVirtualRouteTCPAdmission(b, true, true)
 }
@@ -71,7 +71,7 @@ func benchmarkVirtualRouteTCPAdmission(b *testing.B, routed, cold bool) {
 	require.NoError(b, err)
 	var router *virtualRouter
 	if routed {
-		router, err = newVirtualRouter(caller, 1024, 16, map[string]clusterstore.VirtualOwner{"worker": owner})
+		router, err = newVirtualRouter(caller, 1024, 16, map[string]string{"worker": owner.Address})
 		require.NoError(b, err)
 		if !cold {
 			status, err := router.route(context.Background(), virtualKey{"worker", "one"}, control.Ref(), control.Ref())

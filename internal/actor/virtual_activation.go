@@ -17,6 +17,7 @@ var (
 )
 
 type virtualActivationBackend interface {
+	discover(context.Context, string, string) (clusterstore.VirtualOwner, error)
 	activate(context.Context, virtualKey, clusterstore.VirtualOwner, uint64) (clusterstore.VirtualOwnership, error)
 }
 

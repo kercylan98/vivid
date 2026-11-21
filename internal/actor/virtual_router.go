@@ -28,7 +28,7 @@ type virtualRouteBackend interface {
 type virtualRouter struct {
 	backend    virtualRouteBackend
 	ctx        context.Context
-	placements map[string]clusterstore.VirtualOwner // 仅用于无归属时的显式首次候选
+	placements map[string]string // 仅用于无归属时的显式首次入口，启动身份按需发现
 	slots      chan struct{}
 	limit      int
 	mu         sync.Mutex
@@ -44,18 +44,24 @@ type virtualRouteHint struct {
 	ready     bool // 本次解析已经取得初始化就绪回执
 }
 
-func newVirtualRouter(client *virtualOwnershipClient, capacity, concurrency int, placements map[string]clusterstore.VirtualOwner) (*virtualRouter, error) {
+func newVirtualRouter(client *virtualOwnershipClient, capacity, concurrency int, placements map[string]string) (*virtualRouter, error) {
 	if client == nil || client.control == nil || capacity <= 0 || concurrency <= 0 {
 		return nil, vivid.ErrorIllegalArgument
 	}
 	r := &virtualRouter{backend: client, ctx: client.control.system.options.Context, slots: make(chan struct{}, concurrency), limit: capacity, cache: make(map[virtualKey]*virtualRouteHint)}
 	if len(placements) > 0 {
-		r.placements = make(map[string]clusterstore.VirtualOwner, len(placements))
-		for kind, owner := range placements {
+		r.placements = make(map[string]string, len(placements))
+		for kind, address := range placements {
+			ref, err := NewRef(address, virtualDeliveryPath)
+			if err != nil {
+				return nil, err
+			}
+			// 复用归属协议的地址与身份约束，不生成将被丢弃的随机启动 ID。
+			owner := clusterstore.VirtualOwner{Address: ref.GetAddress(), InstanceID: [16]byte{1}}
 			if _, err := clusterstore.ClaimVirtualOwnership(kind, "validate", owner, 0); err != nil {
 				return nil, err
 			}
-			r.placements[kind] = owner
+			r.placements[kind] = owner.Address
 		}
 	}
 	// 系统取消后释放缓存；不为每个缓存项安排定时任务。
@@ -183,11 +189,20 @@ func (r *virtualRouter) resolve(ctx context.Context, key virtualKey) (*virtualRo
 		if activation, ok := r.backend.(virtualActivationBackend); ok {
 			target, generation := ownership.Owner, ownership.Generation
 			if !exists {
-				target = r.placements[key.kind]
+				address := r.placements[key.kind]
+				if address == "" {
+					err = errVirtualRouteNotFound
+				} else {
+					target, err = activation.discover(ctx, address, key.kind)
+					if err == nil && target.Address != address {
+						err = clusterstore.ErrInvalidVirtualOwnership
+					}
+				}
 			}
-			if target == (clusterstore.VirtualOwner{}) {
-				err = errVirtualRouteNotFound
-			} else {
+			if err == nil {
+				err = ctx.Err()
+			}
+			if err == nil {
 				ownership, err = activation.activate(ctx, key, target, generation)
 				initialized = err == nil
 				if err == nil {
