@@ -8,22 +8,11 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/bridge"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/pkg/log"
 	"github.com/kercylan98/vivid/pkg/ves"
 	"github.com/stretchr/testify/require"
 )
-
-type stoppedRequestCoordinator struct {
-	bridge.VirtualCoordinator
-	calls atomic.Int32
-}
-
-func (c *stoppedRequestCoordinator) ResolveVirtual(recipient vivid.ActorRef) (vivid.ActorRef, error) {
-	c.calls.Add(1)
-	return nil, vivid.ErrorIllegalArgument
-}
 
 func requireStoppedRequest(t *testing.T, request interface {
 	Wait() error
@@ -37,15 +26,19 @@ func requireStoppedRequest(t *testing.T, request interface {
 }
 
 func TestSystem_RequestsAfterStop(t *testing.T) {
-	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
+	var activations atomic.Int32
+	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))),
+		vivid.WithActorSystemVirtualActorProvider("worker", vivid.VirtualActorProviderFN(func(kind, name string) vivid.Actor {
+			activations.Add(1)
+			return vivid.ActorFN(func(ctx vivid.ActorContext) {})
+		})),
+	)
 	local, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {}))
 	require.NoError(t, err)
 	remote, err := system.CreateRef("127.0.0.1:1", "/peer")
 	require.NoError(t, err)
 	virtual := system.VirtualRef("worker", "one")
 	require.NoError(t, system.Stop(time.Second))
-	coordinator := &stoppedRequestCoordinator{}
-	system.virtualCoordinator = coordinator
 	var tasks atomic.Int32
 	for _, request := range []struct {
 		name string
@@ -66,7 +59,7 @@ func TestSystem_RequestsAfterStop(t *testing.T) {
 	} {
 		t.Run(request.name, request.run)
 	}
-	require.Zero(t, coordinator.calls.Load(), "停止后不能进入虚拟激活")
+	require.Zero(t, activations.Load(), "停止后不能进入虚拟激活")
 	require.Zero(t, tasks.Load(), "被拒绝的托管任务不能启动")
 	system.futureLock.RLock()
 	require.Empty(t, system.futureAgents)

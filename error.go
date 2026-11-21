@@ -74,6 +74,7 @@ var (
 var (
 	ErrorVirtualActorProviderNotFound = RegisterError(160000, "virtual actor provider not found", ErrorNotFound) // 虚拟 Actor 种类未找到
 	ErrorVirtualRecipientException    = RegisterError(160001, "virtual recipient exception", ErrorException)     // 虚拟 Actor 接收者异常，该错误通常是框架内部逻辑错误，正常不应该产生
+	ErrorVirtualPendingMessagesFull   = RegisterError(160002, "virtual pending messages full")                   // 等待虚拟 Actor 激活或钝化的消息已满
 )
 
 // Gossip 相关错误。

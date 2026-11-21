@@ -166,14 +166,13 @@ func (c *systemChains) initializeRemoting(system *System) chain.Chain {
 	})
 }
 
-func (c *systemChains) initializeVirtualCoordinator(system *System) chain.Chain {
-	return chain.ChainFN(func() (err error) {
-		if len(system.options.VirtualActorProviders) == 0 {
-			return nil
+func (c *systemChains) validateVirtualActors(system *System) chain.Chain {
+	return chain.ChainFN(func() error {
+		options := system.virtualCoordinator.options
+		if options.ActivationConcurrency < 0 || options.PendingMessageLimit < 0 {
+			return vivid.ErrorIllegalArgument.WithMessage("virtual activation concurrency and pending message limit must not be negative")
 		}
-		coordinatorInjecter := virtual.NewCoordinatorActor(system)
-		system.virtualCoordinator, err = coordinatorInjecter.Inject(system)
-		return err
+		return nil
 	})
 }
 

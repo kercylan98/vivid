@@ -173,7 +173,7 @@ func TestScheduler_FrameworkMessage(t *testing.T) {
 func TestScheduler_VirtualDelivery(t *testing.T) {
 	system := NewTestSystem(t,
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))),
-		vivid.WithActorSystemVirtualActorProvider("timer", vivid.ActorProviderFN(func() vivid.Actor {
+		vivid.WithActorSystemVirtualActorProvider("timer", vivid.VirtualActorProviderFN(func(kind, name string) vivid.Actor {
 			return vivid.ActorFN(func(ctx vivid.ActorContext) {
 				if _, ok := ctx.Message().(int); ok {
 					ctx.Reply(ctx.Sender())

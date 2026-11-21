@@ -19,9 +19,10 @@ func newContextInitializer(ctx *Context, actor vivid.Actor, options ...vivid.Act
 }
 
 type contextInitializer struct {
-	ctx     *Context
-	options []vivid.ActorOption
-	actor   vivid.Actor
+	ctx            *Context
+	options        []vivid.ActorOption
+	actor          vivid.Actor
+	mailboxFactory func(*Context) vivid.Mailbox // 仅内部虚拟激活使用，不包装业务 Actor
 }
 
 func (i *contextInitializer) applyOptions() error {
@@ -99,7 +100,11 @@ func (i *contextInitializer) prelaunch() error {
 }
 
 func (i *contextInitializer) initMailbox() error {
-	i.ctx.mailbox = mailbox.NewUnboundedMailbox(256, i.ctx)
+	if i.mailboxFactory != nil {
+		i.ctx.mailbox = i.mailboxFactory(i.ctx)
+	} else {
+		i.ctx.mailbox = mailbox.NewUnboundedMailbox(256, i.ctx)
+	}
 	return nil
 }
 

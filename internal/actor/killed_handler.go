@@ -124,8 +124,9 @@ func (h *killedHandler) cleanupIfNotRestarting() {
 		h.ctx.tell(true, watcher, h.selfKilledMessage)
 	}
 
-	// 通知父节点
-	if h.ctx.parent != nil {
+	virtual, virtualActor := h.ctx.mailbox.(*virtualMailbox)
+	// 虚拟实例先完成激活登记释放，再允许父级把该子级视为收尾完成。
+	if h.ctx.parent != nil && !virtualActor {
 		h.ctx.tell(true, h.ctx.parent, h.selfKilledMessage)
 	}
 
@@ -135,6 +136,12 @@ func (h *killedHandler) cleanupIfNotRestarting() {
 		Type:     reflect.TypeOf(h.ctx.actor),
 		Duration: time.Since(h.ctx.launchTime),
 	})
+	if virtualActor {
+		virtual.release()
+		if h.ctx.parent != nil {
+			h.ctx.tell(true, h.ctx.parent, h.selfKilledMessage)
+		}
+	}
 	if h.ctx.parent == nil {
 		// 根行为结束不等于框架清理完成，系统须等待登记释放及事件发布返回。
 		// 根邮箱串行执行，完成信号只通知一次。

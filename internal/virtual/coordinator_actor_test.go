@@ -34,7 +34,7 @@ func TestCoordinatorActor(t *testing.T) {
 	t.Run("normal", func(t *testing.T) {
 		system := bootstrap.NewActorSystem(
 			vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
-			vivid.WithActorSystemVirtualActorProvider("counter", vivid.ActorProviderFN(func() vivid.Actor {
+			vivid.WithActorSystemVirtualActorProvider("counter", vivid.VirtualActorProviderFN(func(kind, name string) vivid.Actor {
 				return &CounterVirtualActorMock{}
 			})),
 		)
@@ -54,7 +54,7 @@ func TestCoordinatorActor(t *testing.T) {
 	t.Run("multiple virtual actors in the same kind", func(t *testing.T) {
 		system := bootstrap.NewActorSystem(
 			vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelDebug))),
-			vivid.WithActorSystemVirtualActorProvider("counter", vivid.ActorProviderFN(func() vivid.Actor {
+			vivid.WithActorSystemVirtualActorProvider("counter", vivid.VirtualActorProviderFN(func(kind, name string) vivid.Actor {
 				return &CounterVirtualActorMock{}
 			})),
 		)

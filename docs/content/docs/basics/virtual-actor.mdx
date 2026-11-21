@@ -1,0 +1,75 @@
+---
+title: 虚拟 Actor
+description: 按逻辑身份激活和空闲钝化本地 Actor
+---
+
+虚拟 Actor 使用 `(kind, name)` 标识。注册 kind 的 Provider 后，通过 `VirtualRef` 发送消息；同一系统内同一身份的并发首次投递合并为一次激活，不同身份可以并行初始化。
+
+```go
+package main
+
+import (
+    "fmt"
+
+    "github.com/kercylan98/vivid"
+    "github.com/kercylan98/vivid/pkg/bootstrap"
+)
+
+func main() {
+    system := bootstrap.NewActorSystem(
+        vivid.WithActorSystemVirtualActorProvider("counter",
+            vivid.VirtualActorProviderFN(func(kind, name string) vivid.Actor {
+                var count int
+                return vivid.ActorFN(func(ctx vivid.ActorContext) {
+                    if increment, ok := ctx.Message().(int); ok {
+                        count += increment
+                        ctx.Reply(fmt.Sprintf("%s/%s: %d", kind, name, count))
+                    }
+                })
+            }),
+        ),
+    )
+    if err := system.Start(); err != nil {
+        panic(err)
+    }
+    defer system.Stop()
+
+    result, err := system.Ask(system.VirtualRef("counter", "one"), 1).Result()
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(result) // counter/one: 1
+}
+```
+
+`kind` 和 `name` 不能为空。同一 kind 只能注册一次；Provider 应为每次调用返回新实例，不同身份的初始化可能并行执行。Provider 接收逻辑身份，便于业务加载该身份的状态；框架不自动保存或恢复业务状态。
+
+## 空闲与生命周期
+
+默认空闲 10 分钟后钝化，执行正常的 `OnKill`、子 Actor 收尾和 `OnKilled`。处理中的消息、待处理普通消息以及 Stash 中的消息会阻止自动钝化。业务需要定期工作时可使用 [Scheduler](/docs/basics/scheduler)，其投递同样算作活动。
+
+钝化开始后，新发往逻辑身份的消息等待旧实例完成收尾，再触发新实例；物理 `ctx.Ref()` 只代表当前激活，不能代替长期保存的 `VirtualRef`。`ctx.Name()` 是框架生成的物理名称，业务身份从 Provider 参数取得。
+
+业务 Actor 的生命周期钩子、Become 和 Stash 保持普通 Actor 语义。物理名称及重启 Provider 由框架管理；重启再次使用原来的 `(kind, name)` 调用虚拟 Provider。
+
+## 容量与超时
+
+通过系统选项调整默认行为：
+
+```go
+vivid.WithActorSystemVirtualActorOptions(vivid.VirtualActorOptions{
+    IdleTimeout:           10 * time.Minute,
+    ActivationConcurrency: 16,
+    PendingMessageLimit:   4096,
+})
+```
+
+示例中的 `time` 来自标准库。各字段为 0 时使用上述默认值；`IdleTimeout < 0` 关闭自动钝化。并发数和等待上限不能为负，配置无效时 `Start` 返回错误。
+
+等待上限统计全系统等待激活或钝化结束的消息，不限制活跃 Actor 的邮箱长度或消息字节数。超限时 Ask 返回 `ErrorVirtualPendingMessagesFull`；Provider 或预启动失败会结束本次等待，后续投递可以重新尝试。Tell 没有确认回执，失败通过日志报告；已经接纳后异步失败的 Tell 同时进入死信。
+
+Ask 超时包含排队和初始化等待，并沿用发起 Actor 的默认超时。尚未投递就已结束的 Ask 会跳过；超时不强制中断 Provider，也不能撤回已经投递的业务消息。阻塞初始化仍占用并发名额及等待登记，初始化和收尾中不要同步等待自身身份，也不要形成循环依赖；并发名额耗尽时，等待另一未激活身份同样可能互相阻塞。
+
+## 使用边界
+
+虚拟 Actor 目前仅在本系统内按需激活。多个系统使用同一逻辑身份时，各自可以创建实例；没有跨节点唯一激活、位置迁移或业务状态持久化保证。启用集群不会改变这一边界。

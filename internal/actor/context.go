@@ -36,6 +36,10 @@ const (
 )
 
 func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, options ...vivid.ActorOption) (*Context, error) {
+	return newContext(system, parent, actor, nil, options...)
+}
+
+func newContext(system *System, parent vivid.ActorRef, actor vivid.Actor, configure func(*contextInitializer), options ...vivid.ActorOption) (*Context, error) {
 	ctx := &Context{
 		options: &vivid.ActorOptions{
 			DefaultAskTimeout: system.options.DefaultAskTimeout, // 默认继承系统默认的 Ask 超时时间
@@ -55,6 +59,9 @@ func NewContext(system *System, parent vivid.ActorRef, actor vivid.Actor, option
 	}()
 
 	initializer := newContextInitializer(ctx, actor, initContextOptions(ctx, actor, options)...)
+	if configure != nil {
+		configure(initializer)
+	}
 
 	if err := chain.New().
 		Append(chain.ChainFN(initializer.applyOptions)).
@@ -198,12 +205,16 @@ func (c *Context) Scheduler() vivid.Scheduler {
 }
 
 func (c *Context) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {
+	return c.actorOf(actor, nil, options...)
+}
+
+func (c *Context) actorOf(actor vivid.Actor, configure func(*contextInitializer), options ...vivid.ActorOption) (vivid.ActorRef, error) {
 	var status = atomic.LoadInt32(&c.state)
 	if status == killed {
 		return nil, vivid.ErrorActorDeaded
 	}
 
-	childCtx, err := NewContext(c.system, c.ref, actor, options...)
+	childCtx, err := newContext(c.system, c.ref, actor, configure, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +316,7 @@ func (c *Context) tellWithSender(system bool, sender vivid.ActorRef, recipient v
 		}
 		receiverMailbox.Enqueue(mailbox.NewEnvelop(system, sender, recipient, message))
 	} else {
-		err = c.system.virtualCoordinator.TellVirtual(sender, recipient, message)
+		err = c.system.dispatchVirtual(system, sender, recipient, message, nil)
 	}
 	return
 }
@@ -341,13 +352,6 @@ func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vi
 		askTimeout = timeout[0]
 	}
 
-	if recipient.IsVirtual() {
-		resolved, err := c.system.virtualCoordinator.ResolveVirtual(recipient)
-		if err != nil {
-			return future.NewFutureFail[vivid.Message](err)
-		}
-		recipient = resolved
-	}
 	// Context 本身被构建后，其 ref 一定是有效的，此处错误可忽略。
 	agentRef, _ := NewAgentRef(sender.(*Ref))
 	futureIns := future.NewFuture[vivid.Message](c, askTimeout, func() {
@@ -358,8 +362,13 @@ func (c *Context) askWithSender(system bool, sender vivid.ActorRef, recipient vi
 		return futureIns
 	}
 
-	envelop := mailbox.NewEnvelop(system, agentRef.ref, recipient, message)
-	c.enqueueToMailbox(recipient, envelop)
+	if recipient.IsVirtual() {
+		if err := c.system.dispatchVirtual(system, agentRef.ref, recipient, message, futureIns); err != nil {
+			futureIns.Close(err)
+		}
+	} else {
+		c.enqueueToMailbox(recipient, mailbox.NewEnvelop(system, agentRef.ref, recipient, message))
+	}
 	return futureIns
 }
 

@@ -66,7 +66,8 @@ type ActorSystem interface {
 	// 创建子 Actor 时应在所属 Actor 的消息处理流程内调用 ActorContext.ActorOf。
 	ActorOf(actor Actor, options ...ActorOption) (ActorRef, error)
 
-	// VirtualRef 创建一个虚拟 Actor 的引用。
+	// VirtualRef 创建以 (kind, name) 标识的本地虚拟 Actor 引用，首次投递时按需激活。
+	// 空闲钝化后再次投递会创建新实例；不提供跨节点唯一激活或业务状态持久化。
 	VirtualRef(kind string, name string) ActorRef
 
 	// Probe 查询指定 Actor 的框架可用状态；重启初始化中或重启失败的 Actor 不可用。
@@ -180,7 +181,10 @@ type ActorSystemOptions struct {
 	// VirtualActorProviders 指定虚拟 Actor 的提供者。
 	//
 	// 其中 key 为虚拟 Actor 的种类，value 为 VirtualActorProvider。
-	VirtualActorProviders map[string]ActorProvider
+	VirtualActorProviders map[string]VirtualActorProvider
+
+	// VirtualActorOptions 配置虚拟 Actor 的激活并发、等待容量和空闲钝化。
+	VirtualActorOptions VirtualActorOptions
 
 	// MessageRegister 指定消息注册器。
 	MessageRegister []MessageRegister
@@ -406,13 +410,13 @@ func WithActorSystemCodec(codec Codec) ActorSystemOption {
 //   - provider: 虚拟 Actor 的提供者。
 //
 // 如果 kind 已存在，将会发生 panic。
-func WithActorSystemVirtualActorProvider(kind string, provider ActorProvider) ActorSystemOption {
+func WithActorSystemVirtualActorProvider(kind string, provider VirtualActorProvider) ActorSystemOption {
 	return func(opts *ActorSystemOptions) {
 		if provider == nil {
 			return
 		}
 		if opts.VirtualActorProviders == nil {
-			opts.VirtualActorProviders = make(map[string]ActorProvider)
+			opts.VirtualActorProviders = make(map[string]VirtualActorProvider)
 		}
 		if _, ok := opts.VirtualActorProviders[kind]; ok {
 			panic("virtual actor provider already exists for kind: " + kind)

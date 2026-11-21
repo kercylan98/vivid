@@ -31,7 +31,7 @@ description: Remoting 启用、消息注册、Codec 与位置透明
 配置好 Remoting 与 Codec 后，业务侧**无需区分**目标 Actor 在本机还是远程：`ctx.Tell(ref, msg)`、`ctx.Ask(ref, msg)` 等调用方式完全一致，框架根据 `ref` 的地址自动完成本地投递或跨网络序列化与发送。这就是 **location transparency**（位置透明）。
 </Callout>
 
-位置透明表示投递 API 一致。普通 ActorRef 绑定具体地址和路径，目标更换地址后需使用新的引用，已有引用不会自动跟随迁移。当前虚拟 Actor 在本系统内按逻辑标识激活，不提供跨节点位置解析或迁移。
+位置透明表示投递 API 一致。普通 ActorRef 绑定具体地址和路径，目标更换地址后需使用新的引用，已有引用不会自动跟随迁移。当前[虚拟 Actor](/docs/basics/virtual-actor)在本系统内按逻辑标识激活，不提供跨节点位置解析或迁移。
 
 ## 启用 Remoting
 

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/bridge"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/mailbox"
 	"github.com/kercylan98/vivid/pkg/log"
@@ -105,8 +104,6 @@ func TestContext_ShutdownRequestsLifetime(t *testing.T) {
 				return true
 			})
 			require.Zero(t, retained, "Actor 结束后两张索引均不能保留请求")
-			coordinator := &stoppedRequestCoordinator{}
-			system.virtualCoordinator = coordinator
 			var tasks atomic.Int32
 			require.ErrorIs(t, ctx.Ask(target, "late request", 0).Wait(), vivid.ErrorActorDeaded)
 			require.ErrorIs(t, ctx.Ask(system.VirtualRef("worker", "late"), "late request", 0).Wait(), vivid.ErrorActorDeaded)
@@ -115,7 +112,9 @@ func TestContext_ShutdownRequestsLifetime(t *testing.T) {
 				return nil, nil
 			})).Wait(), vivid.ErrorActorDeaded)
 			require.Zero(t, tasks.Load())
-			require.Zero(t, coordinator.calls.Load())
+			system.virtualCoordinator.mu.Lock()
+			require.Empty(t, system.virtualCoordinator.entries)
+			system.virtualCoordinator.mu.Unlock()
 			unblock()
 			for range 2 {
 				receiveRetryResult(t, finished)
@@ -211,7 +210,7 @@ func TestContext_ShutdownRequestsWaitForChildren(t *testing.T) {
 func TestContext_VirtualShutdownRequestsLifetime(t *testing.T) {
 	system := NewTestSystem(t,
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))),
-		vivid.WithActorSystemVirtualActorProvider("worker", vivid.ActorProviderFN(func() vivid.Actor {
+		vivid.WithActorSystemVirtualActorProvider("worker", vivid.VirtualActorProviderFN(func(kind, name string) vivid.Actor {
 			return vivid.ActorFN(func(ctx vivid.ActorContext) {})
 		})),
 	)
@@ -283,33 +282,29 @@ func TestContext_RestartRequestsLifetime(t *testing.T) {
 	require.False(t, current.(*future.Future[vivid.Message]).IsCompleted(), "旧实例清理不能结束新实例的初始化请求")
 }
 
-type heldLifetimeCoordinator struct {
-	bridge.VirtualCoordinator
-	target  vivid.ActorRef
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (c *heldLifetimeCoordinator) ResolveVirtual(recipient vivid.ActorRef) (vivid.ActorRef, error) {
-	close(c.entered)
-	<-c.release
-	return c.target, nil
-}
-
 func TestContext_VirtualRequestAcrossRestart(t *testing.T) {
-	system := NewTestSystem(t, vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))))
-	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
+	entered, release := make(chan struct{}), make(chan struct{})
 	var delivered atomic.Int32
-	target, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
-		switch ctx.Message().(type) {
-		case string:
-			delivered.Add(1)
-			ctx.Reply("reply")
-		case int:
-			ctx.Reply("barrier")
-		}
-	}))
-	require.NoError(t, err)
+	system := NewTestSystem(t,
+		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))),
+		vivid.WithActorSystemVirtualActorProvider("worker", vivid.VirtualActorProviderFN(func(kind, name string) vivid.Actor {
+			close(entered)
+			<-release
+			return vivid.ActorFN(func(ctx vivid.ActorContext) {
+				switch ctx.Message().(type) {
+				case string:
+					delivered.Add(1)
+					ctx.Reply("reply")
+				case int:
+					ctx.Reply("barrier")
+				}
+			})
+		})),
+	)
+	t.Cleanup(func() { require.NoError(t, system.Stop(time.Second)) })
+	var once sync.Once
+	resume := func() { once.Do(func() { close(release) }) }
+	defer resume()
 	launched := make(chan *Context, 2)
 	owner, err := system.ActorOf(vivid.ActorFN(func(ctx vivid.ActorContext) {
 		if _, ok := ctx.Message().(*vivid.OnLaunch); ok {
@@ -318,28 +313,23 @@ func TestContext_VirtualRequestAcrossRestart(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	ctx := receiveRetryResult(t, launched)
-	coordinator := &heldLifetimeCoordinator{target: target, entered: make(chan struct{}), release: make(chan struct{})}
-	system.virtualCoordinator = coordinator
-	var once sync.Once
-	resume := func() { once.Do(func() { close(coordinator.release) }) }
-	defer resume()
-	result := make(chan error, 1)
-	go func() { result <- ctx.Ask(system.VirtualRef("worker", "one"), "pending", 0).Wait() }()
-	receiveRetryResult(t, coordinator.entered)
+	ref := system.VirtualRef("worker", "one")
+	request := ctx.Ask(ref, "pending", 0)
+	receiveRetryResult(t, entered)
 	ctx.mailbox.Enqueue(mailbox.NewEnvelop(true, owner, owner, &RestartMessage{Reason: "held virtual request"}))
 	require.Same(t, ctx, receiveRetryResult(t, launched))
+	require.ErrorIs(t, request.Wait(), vivid.ErrorActorDeaded,
+		"激活等待归属于原生命周期，不能转移给重启后的实例")
 	resume()
-	require.ErrorIs(t, receiveRetryResult(t, result), vivid.ErrorActorDeaded,
-		"转发开始于旧生命周期，即使重启后才返回也必须结束等待")
-	require.NoError(t, system.Ask(target, 1, time.Second).Wait())
-	require.Zero(t, delivered.Load(), "旧请求应在投递前被拒绝，不能由新实例接纳")
+	require.NoError(t, system.Ask(ref, 1, time.Second).Wait())
+	require.Zero(t, delivered.Load(), "旧请求应在激活后投递前被丢弃")
 }
 
 func TestContext_VirtualRequestDefaultTimeout(t *testing.T) {
 	system := NewTestSystem(t,
 		vivid.WithActorSystemLogger(log.NewTextLogger(log.WithLevel(log.LevelError))),
 		vivid.WithActorSystemDefaultAskTimeout(0),
-		vivid.WithActorSystemVirtualActorProvider("worker", vivid.ActorProviderFN(func() vivid.Actor {
+		vivid.WithActorSystemVirtualActorProvider("worker", vivid.VirtualActorProviderFN(func(kind, name string) vivid.Actor {
 			return vivid.ActorFN(func(ctx vivid.ActorContext) {})
 		})),
 	)

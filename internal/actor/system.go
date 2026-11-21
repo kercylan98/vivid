@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/kercylan98/vivid"
-	"github.com/kercylan98/vivid/internal/bridge"
 	"github.com/kercylan98/vivid/internal/chain"
 	"github.com/kercylan98/vivid/internal/future"
 	"github.com/kercylan98/vivid/internal/gossip"
@@ -37,7 +36,6 @@ var (
 	_ remoting.ActorSystemEnvelopTarget = (*System)(nil)
 	_ vivid.SystemStateProvider         = (*System)(nil)
 	_ vivid.MetricsProvider             = (*System)(nil)
-	_ bridge.VirtualActorSystem         = (*System)(nil)
 )
 
 var (
@@ -63,6 +61,8 @@ func NewSystem(options ...vivid.ActorSystemOption) *System {
 
 	system.eventStream = newEventStream(system)
 	system.remotingEnvelopHandler = remoting.NewActorSystemEnvelopHandler(system, system)
+	// 在任何 Actor 回调启动前固定协调器引用，启动期间不再并发替换路由入口。
+	system.virtualCoordinator = newVirtualCoordinator(system)
 	return system
 }
 
@@ -96,7 +96,7 @@ type System struct {
 	startTime              time.Time                                         // 启动时间，Start() 时记录
 	gossipRef              vivid.ActorRef                                    // 集群 gossip 引用
 	clusterReadiness       *gossip.Readiness                                 // 本次启动的初始加入结果
-	virtualCoordinator     bridge.VirtualCoordinator                         // 虚拟协调器
+	virtualCoordinator     *virtualCoordinator                               // 虚拟协调器
 	closingActors          sync.Map                                          // 即将关闭的本地实例引用，不按可复用路径索引
 }
 
@@ -227,6 +227,16 @@ func (s *System) ResolveMailbox(receiver vivid.ActorRef) vivid.Mailbox {
 }
 
 func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid.ActorRef, error) {
+	ctx, err := s.beginActorCreation()
+	if err != nil {
+		return nil, err
+	}
+	defer s.actorCreations.Done()
+	return ctx.ActorOf(actor, options...)
+}
+
+// beginActorCreation 在停止等待开始前登记创建，登记覆盖 Provider 与初始化回调。
+func (s *System) beginActorCreation() (*Context, error) {
 	s.statusLock.Lock()
 	if s.status == stopping || s.status == stop {
 		s.statusLock.Unlock()
@@ -240,8 +250,7 @@ func (s *System) ActorOf(actor vivid.Actor, options ...vivid.ActorOption) (vivid
 	// 与停止状态转换共用准入边界，关闭等待开始后不会再增加在途创建。
 	s.actorCreations.Add(1)
 	s.statusLock.Unlock()
-	defer s.actorCreations.Done()
-	return ctx.ActorOf(actor, options...)
+	return ctx, nil
 }
 
 func (s *System) Start() error {
@@ -296,7 +305,7 @@ func (s *System) Start() error {
 			Append(systemChains.initializeMetrics(s)).
 			Append(systemChains.initializeRemoting(s)).
 			Append(systemChains.initializeCluster(s)).
-			Append(systemChains.initializeVirtualCoordinator(s)).
+			Append(systemChains.validateVirtualActors(s)).
 			Run()
 	}()
 
@@ -397,6 +406,10 @@ func (s *System) finishStop() {
 		readiness.Stop()
 	}
 	s.Logger().Debug("actor system stopping")
+
+	if s.virtualCoordinator != nil {
+		s.virtualCoordinator.close()
+	}
 
 	// 等待已开始的外部创建完成后再通知根 Actor，避免遗漏刚创建的子节点。
 	// 协调发生在独立的关闭任务中，调用方仍按自身预算超时返回。
@@ -657,10 +670,6 @@ func isRemoteMailbox(m vivid.Mailbox) bool {
 	default:
 		return false
 	}
-}
-
-func (s *System) GetVirtualActorProvider(kind string) vivid.ActorProvider {
-	return s.options.VirtualActorProviders[kind]
 }
 
 func (s *System) TellWithSender(sender vivid.ActorRef, recipient vivid.ActorRef, message vivid.Message) {
