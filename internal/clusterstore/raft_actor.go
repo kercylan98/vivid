@@ -28,9 +28,10 @@ type RaftActorOptions struct {
 }
 
 type RaftRuntimeStatusRequest struct{}
-type RaftRuntimePropose struct{ Data []byte }
-type RaftRuntimeCompact struct{ Data []byte }
+type RaftRuntimePropose struct{ Command Command }
+type RaftRuntimeCompact struct{}
 type RaftRuntimeRead struct{ After uint64 }
+type RaftRuntimeGet struct{ Key string }
 type RaftRuntimeRoute struct {
 	ID  uint64
 	Ref vivid.ActorRef
@@ -44,12 +45,21 @@ type RaftRuntimeResult struct {
 
 type RaftRuntimeStatus struct {
 	RaftStatus
+	Applied      uint64
 	PendingBytes uint64
 	Err          error
 }
 
+// RaftRuntimeRecord 只查询本地已应用状态，Index 是应用位置，不保证线性一致或多数派仍可用。
+type RaftRuntimeRecord struct {
+	Record
+	Exists bool
+	Index  uint64
+	Err    error
+}
+
 // RaftRuntimeLog 是本地已提交日志副本，落后于压缩基准时同时返回需要先恢复的快照。
-// 不提供线性一致读，也不代替状态机的顺序应用。
+// 用于内部恢复诊断，不提供线性一致读。
 type RaftRuntimeLog struct {
 	Snapshot *RaftSnapshot
 	Entries  []RaftEntry
@@ -75,11 +85,13 @@ type raftWriteDone struct {
 }
 
 // RaftActor 用所属邮箱串行驱动固定成员共识，复用系统 Scheduler 和 Remoting。
-// 不自动创建业务状态机，不将 Leader 状态当作多数派租约；错误通过状态查询暴露。
+// 串行应用已提交协调命令，不将 Leader 状态当作多数派租约；错误通过状态查询暴露。
 type RaftActor struct {
 	opts              RaftActorOptions
 	storage           *RaftStorage
 	node              *RaftNode
+	store             *Store
+	applied           uint64
 	transfer          *RaftSnapshotTransfer
 	lifetime          *raftActorLifetime
 	timer             vivid.ScheduledTask
@@ -132,6 +144,7 @@ func NewRaftActor(options RaftActorOptions) (*RaftActor, error) {
 }
 
 func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
+	defer a.apply()
 	switch message := ctx.Message().(type) {
 	case *vivid.OnLaunch:
 		a.start(ctx)
@@ -150,20 +163,27 @@ func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
 				a.status = status
 			}
 		}
-		ctx.Reply(RaftRuntimeStatus{RaftStatus: a.status, PendingBytes: a.pendingBytes, Err: a.err})
+		ctx.Reply(RaftRuntimeStatus{RaftStatus: a.status, Applied: a.applied, PendingBytes: a.pendingBytes, Err: a.err})
 	case RaftRuntimePropose:
 		result := RaftRuntimeResult{Err: a.available()}
 		if result.Err == nil {
-			var out []RaftMessage
-			result.Index, out, result.Err = a.node.Propose(message.Data)
-			a.messages(ctx, out)
-			a.checkFailure()
+			data, err := EncodeCommand(message.Command)
+			result.Err = err
+			if err == nil && len(data) == 0 {
+				result.Err = ErrInvalidCommand // 空操作只由共识选举产生
+			}
+			if result.Err == nil {
+				var out []RaftMessage
+				result.Index, out, result.Err = a.node.Propose(data)
+				a.messages(ctx, out)
+				a.checkFailure()
+			}
 		}
 		ctx.Reply(result)
 	case RaftRuntimeCompact:
 		err := a.available()
 		if err == nil {
-			err = a.node.Compact(message.Data)
+			err = a.node.Compact(a.store.Snapshot())
 			if err == nil {
 				err = a.transfer.Expire(time.Now())
 			}
@@ -172,6 +192,16 @@ func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
 		ctx.Reply(RaftRuntimeResult{Err: err})
 	case RaftRuntimeRead:
 		a.read(ctx, message.After)
+	case RaftRuntimeGet:
+		result := RaftRuntimeRecord{Index: a.applied, Err: a.available()}
+		if result.Err == nil {
+			if !validKey(message.Key) {
+				result.Err = ErrInvalidCommand
+			} else {
+				result.Record, result.Exists = a.store.Get(message.Key)
+			}
+		}
+		ctx.Reply(result)
 	case RaftRuntimeRoute:
 		ctx.Reply(RaftRuntimeResult{Err: a.route(message)})
 	case raftActorTick:
@@ -219,6 +249,11 @@ func (a *RaftActor) start(ctx vivid.ActorContext) {
 	}
 	if err != nil {
 		a.fail(err)
+		return
+	}
+	a.store, a.applied = &Store{}, 0
+	a.apply()
+	if a.available() != nil {
 		return
 	}
 	a.resetElection(time.Now())
@@ -466,6 +501,17 @@ func (a *RaftActor) checkFailure() {
 	}
 }
 
+func (a *RaftActor) apply() {
+	if a.available() != nil || a.applied == a.node.hard.Commit {
+		return
+	}
+	store, err := replayRaftStore(a.node, a.store)
+	a.store, a.applied = store, store.Index()
+	if err != nil {
+		a.fail(err)
+	}
+}
+
 func (a *RaftActor) fail(err error) {
 	a.close()
 	a.err = errors.Join(err, a.err)
@@ -492,4 +538,5 @@ func (a *RaftActor) close() {
 		a.err = errors.Join(a.err, a.storage.Close())
 	}
 	a.node, a.storage, a.transfer, a.pending, a.pendingBytes = nil, nil, nil, nil, 0
+	a.store = nil
 }

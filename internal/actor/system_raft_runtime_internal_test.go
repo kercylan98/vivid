@@ -217,18 +217,33 @@ func (n *raftRuntimeNetwork) leader(t *testing.T, ids ...uint64) uint64 {
 
 func (n *raftRuntimeNetwork) propose(t *testing.T, id uint64, value string) uint64 {
 	t.Helper()
-	result, err := n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimePropose{Data: []byte(value)}, time.Second).Result()
+	return n.command(t, id, clusterstore.Command{Operation: clusterstore.Put, Key: value, Value: []byte(value)})
+}
+
+func (n *raftRuntimeNetwork) command(t *testing.T, id uint64, command clusterstore.Command) uint64 {
+	t.Helper()
+	result, err := n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimePropose{Command: command}, time.Second).Result()
 	require.NoError(t, err)
 	accepted := result.(clusterstore.RaftRuntimeResult)
 	require.NoError(t, accepted.Err)
 	return accepted.Index
 }
 
+func (n *raftRuntimeNetwork) get(t *testing.T, id uint64, key string) clusterstore.RaftRuntimeRecord {
+	t.Helper()
+	result, err := n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimeGet{Key: key}, time.Second).Result()
+	require.NoError(t, err)
+	record := result.(clusterstore.RaftRuntimeRecord)
+	require.NoError(t, record.Err)
+	return record
+}
+
 func (n *raftRuntimeNetwork) committed(t *testing.T, index uint64, ids ...uint64) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		for _, id := range ids {
-			if n.status(t, id).Commit < index {
+			status := n.status(t, id)
+			if status.Commit < index || status.Applied < index {
 				return false
 			}
 		}
@@ -251,6 +266,7 @@ func TestSystem_RaftRuntimePartitionRecovery(t *testing.T) {
 	next := n.leader(t, majority...)
 	minority := n.propose(t, old, "minority-uncommitted")
 	require.Less(t, n.status(t, old).Commit, minority, "旧 Leader 的本地接纳不能冒充多数派提交")
+	require.False(t, n.get(t, old, "minority-uncommitted").Exists, "未提交后缀不能进入本地状态机")
 	index = n.propose(t, next, "majority")
 	n.committed(t, index, majority...)
 	n.partition()
@@ -263,7 +279,9 @@ func TestSystem_RaftRuntimePartitionRecovery(t *testing.T) {
 		var values []string
 		for _, entry := range log.Entries {
 			if len(entry.Data) != 0 {
-				values = append(values, string(entry.Data))
+				command, err := clusterstore.DecodeCommand(entry.Data)
+				require.NoError(t, err)
+				values = append(values, string(command.Value))
 			}
 		}
 		require.Equal(t, []string{"first", "majority"}, values)
@@ -277,6 +295,11 @@ func TestSystem_RaftRuntimePartitionRecovery(t *testing.T) {
 	}
 	_ = n.leader(t, 1, 2, 3)
 	n.committed(t, index, 1, 2, 3)
+	for id := uint64(1); id <= 3; id++ {
+		require.True(t, n.get(t, id, "first").Exists)
+		require.Equal(t, []byte("majority"), n.get(t, id, "majority").Value)
+		require.False(t, n.get(t, id, "minority-uncommitted").Exists)
+	}
 }
 
 func TestSystem_RaftRuntimeIsolatedBootstrap(t *testing.T) {
@@ -337,7 +360,9 @@ func TestSystem_RaftRuntimeLargeSnapshot(t *testing.T) {
 		record, exists := state.Get(fmt.Sprint(i))
 		require.True(t, exists)
 		require.Equal(t, bytes.Repeat([]byte{byte(i)}, 1<<20), record.Value)
+		require.Equal(t, record, n.get(t, 3, fmt.Sprint(i)).Record)
 	}
+	require.Equal(t, []byte("snapshot-suffix"), n.get(t, 3, "snapshot-suffix").Value)
 	require.Eventually(t, func() bool {
 		for _, budget := range n.budgets {
 			if budget.Usage() != (clusterstore.SnapshotTransferUsage{}) {
@@ -346,4 +371,76 @@ func TestSystem_RaftRuntimeLargeSnapshot(t *testing.T) {
 		}
 		return true
 	}, 3*time.Second, 20*time.Millisecond)
+}
+
+func TestSystem_RaftRuntimeCoordinationState(t *testing.T) {
+	n := newRaftRuntimeNetwork(t, false, nil)
+	leader := n.leader(t, 1, 2, 3)
+	before := n.status(t, leader)
+	for _, command := range []clusterstore.Command{{}, {Operation: clusterstore.Put}} {
+		result, err := n.systems[leader].Ask(n.refs[leader], clusterstore.RaftRuntimePropose{Command: command}, time.Second).Result()
+		require.NoError(t, err)
+		require.ErrorIs(t, result.(clusterstore.RaftRuntimeResult).Err, clusterstore.ErrInvalidCommand)
+		require.Zero(t, result.(clusterstore.RaftRuntimeResult).Index)
+	}
+	require.Equal(t, before.LastIndex, n.status(t, leader).LastIndex, "非法命令不能进入 WAL")
+	first := n.command(t, leader, clusterstore.Command{Operation: clusterstore.Put, Key: "owner", Value: []byte("node-a")})
+	conflict := n.command(t, leader, clusterstore.Command{Operation: clusterstore.Put, Key: "owner", Value: []byte("node-b")})
+	n.committed(t, conflict, 1, 2, 3)
+	for id := uint64(1); id <= 3; id++ {
+		record := n.get(t, id, "owner")
+		require.True(t, record.Exists)
+		require.Equal(t, clusterstore.Record{Value: []byte("node-a"), Revision: first}, record.Record)
+		record.Value[0] = 'x'
+		require.Equal(t, []byte("node-a"), n.get(t, id, "owner").Value)
+	}
+	deleted := n.command(t, leader, clusterstore.Command{Operation: clusterstore.Delete, Key: "owner", ExpectedRevision: first})
+	n.committed(t, deleted, 1, 2, 3)
+	require.False(t, n.get(t, leader, "owner").Exists)
+	recreated := n.command(t, leader, clusterstore.Command{Operation: clusterstore.Put, Key: "owner", Value: []byte("node-c")})
+	stale := n.command(t, leader, clusterstore.Command{Operation: clusterstore.Delete, Key: "owner", ExpectedRevision: first})
+	n.committed(t, stale, 1, 2, 3)
+	result, err := n.systems[leader].Ask(n.refs[leader], clusterstore.RaftRuntimeCompact{}, time.Second).Result()
+	require.NoError(t, err)
+	require.NoError(t, result.(clusterstore.RaftRuntimeResult).Err)
+	require.GreaterOrEqual(t, n.status(t, leader).BaseIndex, stale)
+	for id, system := range n.systems {
+		require.NoError(t, system.Stop(3*time.Second))
+		delete(n.systems, id)
+	}
+	for id := uint64(1); id <= 3; id++ {
+		n.start(t, id, false)
+	}
+	_ = n.leader(t, 1, 2, 3)
+	n.committed(t, stale, 1, 2, 3)
+	for id := uint64(1); id <= 3; id++ {
+		require.Equal(t, clusterstore.Record{Value: []byte("node-c"), Revision: recreated}, n.get(t, id, "owner").Record)
+	}
+}
+
+func TestSystem_RaftRuntimeInvalidCommittedCommand(t *testing.T) {
+	n := newRaftRuntimeNetwork(t, false, func(id uint64, path string) {
+		storage, err := clusterstore.CreateRaftStorage(path, clusterstore.RaftConfig{GroupID: "runtime", NodeID: id, Voters: []uint64{1, 2, 3}})
+		require.NoError(t, err)
+		defer storage.Close()
+		require.NoError(t, storage.Save(clusterstore.RaftUpdate{
+			HardState: clusterstore.RaftHardState{Term: 1, Vote: 1, Commit: 1},
+			Entries:   []clusterstore.RaftEntry{{Index: 1, Term: 1, Data: []byte("invalid")}},
+		}))
+	})
+	for id := uint64(1); id <= 3; id++ {
+		result, err := n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimeStatusRequest{}, time.Second).Result()
+		require.NoError(t, err)
+		status := result.(clusterstore.RaftRuntimeStatus)
+		require.ErrorIs(t, status.Err, clusterstore.ErrInvalidCommand)
+		require.EqualValues(t, 1, status.Commit)
+		require.Zero(t, status.Applied)
+		result, err = n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimeGet{Key: "owner"}, time.Second).Result()
+		require.NoError(t, err)
+		require.ErrorIs(t, result.(clusterstore.RaftRuntimeRecord).Err, clusterstore.ErrInvalidCommand)
+		// 应用失败已关闭 WAL；Actor 仍保留可查询的诊断，不再参与共识。
+		storage, err := clusterstore.OpenRaftStorage(n.paths[id], clusterstore.RaftConfig{GroupID: "runtime", NodeID: id, Voters: []uint64{1, 2, 3}})
+		require.NoError(t, err)
+		require.NoError(t, storage.Close())
+	}
 }
