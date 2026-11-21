@@ -193,6 +193,14 @@ func (s *RaftStorage) LastIndex() (uint64, error) {
 	return s.state.lastIndex(), nil
 }
 
+// LogBase 返回快照基准位置与任期，不读取快照负载。
+func (s *RaftStorage) LogBase() (uint64, uint64, error) {
+	if err := s.available(); err != nil {
+		return 0, 0, err
+	}
+	return s.state.baseIndex, s.state.baseTerm, nil
+}
+
 // Term 可查询快照基准位置的任期，未压缩时位置 0 的任期为 0。
 func (s *RaftStorage) Term(index uint64) (uint64, error) {
 	if err := s.available(); err != nil {

@@ -1,4 +1,4 @@
-// Package clusterstore 提供协调元数据的确定性状态机和本地日志，不负责共识或线性一致读取。
+// Package clusterstore 提供协调状态机、本地持久化和固定成员 Raft 核心，尚未接入运行时网络或线性一致读取。
 package clusterstore
 
 import (
