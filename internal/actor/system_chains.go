@@ -3,6 +3,7 @@ package actor
 import (
 	"github.com/kercylan98/vivid"
 	"github.com/kercylan98/vivid/internal/chain"
+	"github.com/kercylan98/vivid/internal/clusterstore"
 	"github.com/kercylan98/vivid/internal/gossip"
 	"github.com/kercylan98/vivid/internal/gossip/endpoint"
 	"github.com/kercylan98/vivid/internal/gossip/gossipmessages"
@@ -57,6 +58,7 @@ func (c *systemChains) initializeCodec(system *System) chain.Chain {
 		registry.RegisterMessage("*vivid.Error", new(vivid.Error))
 		registry.RegisterMessage("*actor.Ref", new(Ref))
 		registry.RegisterMessage("*actor.AgentRef", new(AgentRef))
+		registry.RegisterMessage("*clusterstore.RaftWire", new(clusterstore.RaftWire))
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnLaunch", new(vivid.OnLaunch), messagecodecs.OnLaunchEncoder(), messagecodecs.OnLaunchDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKill", new(vivid.OnKill), messagecodecs.OnKillEncoder(), messagecodecs.OnKillDecoder())
 		registry.RegisterMessageWithEncoderAndDecoder("*vivid.OnKilled", new(vivid.OnKilled), messagecodecs.OnKilledEncoder(), messagecodecs.OnKilledDecoder())

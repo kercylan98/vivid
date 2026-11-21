@@ -527,13 +527,13 @@ func (n *RaftNode) sendAppend(id uint64) ([]RaftMessage, error) {
 	}
 	m := n.message(RaftAppendRequest, id, request, previous, term)
 	m.Commit = n.hard.Commit
-	size := raftUpdateHeaderBytes
+	size := raftPacketHeaderBytes
 	for index := previous + 1; previous != ^uint64(0) && index <= last && len(m.Entries) < maxRaftMessageEntries; index++ {
 		entry, err := n.storage.Entry(index)
 		if err != nil {
 			return nil, n.fail(err)
 		}
-		if size+raftEntryHeaderBytes+len(entry.Data) > maxJournalRecordBytes {
+		if size+raftEntryHeaderBytes+len(entry.Data) > maxRaftPacketBytes {
 			break
 		}
 		m.Entries = append(m.Entries, entry)
@@ -600,6 +600,13 @@ func (n *RaftNode) validMessage(m RaftMessage) bool {
 	}
 	member := sort.Search(len(n.config.Voters), func(i int) bool { return n.config.Voters[i] >= m.From })
 	if member == len(n.config.Voters) || n.config.Voters[member] != m.From {
+		return false
+	}
+	return validRaftMessage(m)
+}
+
+func validRaftMessage(m RaftMessage) bool {
+	if m.From == 0 || m.To == 0 || m.From == m.To || m.Term == 0 {
 		return false
 	}
 	if m.Snapshot != nil && m.Type != RaftSnapshotRequest {

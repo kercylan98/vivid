@@ -88,11 +88,11 @@ func EncodeSnapshotPacket(p SnapshotPacket) ([]byte, error) {
 		binary.LittleEndian.PutUint64(data[96+i*8:], value)
 	}
 	copy(data[snapshotPacketHeaderBytes:], p.Data)
-	binary.LittleEndian.PutUint32(data[12:16], snapshotPacketChecksum(data))
+	binary.LittleEndian.PutUint32(data[12:16], packetChecksum(data))
 	return data, nil
 }
 
-func snapshotPacketChecksum(data []byte) uint32 {
+func packetChecksum(data []byte) uint32 {
 	checksum := crc32.Checksum(data[:12], snapshotPacketCRCTable)
 	return crc32.Update(checksum, snapshotPacketCRCTable, data[16:])
 }
@@ -100,7 +100,7 @@ func snapshotPacketChecksum(data []byte) uint32 {
 // DecodeSnapshotPacket 借用输入负载，输入须保持有效且不可修改，直至本次 Step 返回。
 // 在解析或分配前先限制整包长度；持有解码结果不能提前释放其 SnapshotFrame。
 func DecodeSnapshotPacket(data []byte) (SnapshotPacket, error) {
-	if len(data) < snapshotPacketHeaderBytes || len(data) > snapshotPacketHeaderBytes+SnapshotChunkBytes || string(data[:8]) != snapshotPacketMagic || data[9]&^byte(3) != 0 || data[10] != 0 || data[11] != 0 || binary.LittleEndian.Uint32(data[12:16]) != snapshotPacketChecksum(data) {
+	if len(data) < snapshotPacketHeaderBytes || len(data) > snapshotPacketHeaderBytes+SnapshotChunkBytes || string(data[:8]) != snapshotPacketMagic || data[9]&^byte(3) != 0 || data[10] != 0 || data[11] != 0 || binary.LittleEndian.Uint32(data[12:16]) != packetChecksum(data) {
 		return SnapshotPacket{}, ErrInvalidSnapshotPacket
 	}
 	p := SnapshotPacket{Type: SnapshotPacketType(data[8]), Done: data[9]&1 != 0, Reject: data[9]&2 != 0}
