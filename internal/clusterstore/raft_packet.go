@@ -38,7 +38,9 @@ func (*RaftWire) Decode(r *serialization.Reader, message any) error {
 }
 
 func raftPacketSize(m RaftMessage) (int, error) {
-	if m.Type < RaftVoteRequest || m.Type > RaftAppendResponse || !validRaftMessage(m) {
+	ordinary := m.Type >= RaftVoteRequest && m.Type <= RaftAppendResponse
+	read := m.Type == RaftReadRequest || m.Type == RaftReadResponse
+	if !ordinary && !read || !validRaftMessage(m) {
 		return 0, ErrInvalidRaftMessage
 	}
 	size := raftPacketHeaderBytes
@@ -51,7 +53,7 @@ func raftPacketSize(m RaftMessage) (int, error) {
 	return size, nil
 }
 
-// EncodeRaftPacket 编码投票或普通复制消息，CRC32C 覆盖头部与负载，不提供认证。
+// EncodeRaftPacket 编码投票、普通复制或读取确认消息，CRC32C 覆盖头部与负载，不提供认证。
 func EncodeRaftPacket(m RaftMessage) ([]byte, error) {
 	size, err := raftPacketSize(m)
 	if err != nil {

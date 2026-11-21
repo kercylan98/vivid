@@ -17,6 +17,9 @@ func TestRaftPacket_RoundTripAndDamage(t *testing.T) {
 		{Type: RaftVoteResponse, From: 2, To: 1, Term: 2, Reject: true},
 		{Type: RaftAppendRequest, From: 1, To: 2, Term: 2, Request: 1, Entries: []RaftEntry{{Index: 1, Term: 2, Data: []byte("command")}}},
 		{Type: RaftAppendResponse, From: 2, To: 1, Term: 2, Request: 1, Match: 1},
+		{Type: RaftReadRequest, From: 1, To: 2, Term: 2, Request: 9, Index: 1},
+		{Type: RaftReadResponse, From: 2, To: 1, Term: 2, Request: 9, Index: 1},
+		{Type: RaftReadResponse, From: 2, To: 1, Term: 3, Request: 9, Index: 1, Reject: true},
 	} {
 		data, err := EncodeRaftPacket(message)
 		require.NoError(t, err)

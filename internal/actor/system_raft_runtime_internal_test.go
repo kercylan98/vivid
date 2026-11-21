@@ -230,7 +230,7 @@ func (n *raftRuntimeNetwork) command(t *testing.T, id uint64, command clustersto
 
 func (n *raftRuntimeNetwork) get(t *testing.T, id uint64, key string) clusterstore.RaftRuntimeRecord {
 	t.Helper()
-	result, err := n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimeGet{Key: key}, time.Second).Result()
+	result, err := n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimeLocalGet{Key: key}, time.Second).Result()
 	require.NoError(t, err)
 	record := result.(clusterstore.RaftRuntimeRecord)
 	require.NoError(t, record.Err)
@@ -276,7 +276,7 @@ func TestSystem_RaftRuntimePartitionRecovery(t *testing.T) {
 	n.partition()
 	n.committed(t, index, 1, 2, 3)
 	for id := uint64(1); id <= 3; id++ {
-		result, err := n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimeRead{}, time.Second).Result()
+		result, err := n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimeLocalLog{}, time.Second).Result()
 		require.NoError(t, err)
 		log := result.(clusterstore.RaftRuntimeLog)
 		require.NoError(t, log.Err)
@@ -352,7 +352,7 @@ func TestSystem_RaftRuntimeLargeSnapshot(t *testing.T) {
 	index := n.propose(t, leader, "snapshot-suffix")
 	n.committed(t, index, 1, 2, 3)
 	require.EqualValues(t, 6, n.status(t, 3).BaseIndex)
-	result, err := n.systems[3].Ask(n.refs[3], clusterstore.RaftRuntimeRead{}, time.Second).Result()
+	result, err := n.systems[3].Ask(n.refs[3], clusterstore.RaftRuntimeLocalLog{}, time.Second).Result()
 	require.NoError(t, err)
 	log := result.(clusterstore.RaftRuntimeLog)
 	require.NoError(t, log.Err)
@@ -439,7 +439,7 @@ func TestSystem_RaftRuntimeInvalidCommittedCommand(t *testing.T) {
 		require.ErrorIs(t, status.Err, clusterstore.ErrInvalidCommand)
 		require.EqualValues(t, 1, status.Commit)
 		require.Zero(t, status.Applied)
-		result, err = n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimeGet{Key: "owner"}, time.Second).Result()
+		result, err = n.systems[id].Ask(n.refs[id], clusterstore.RaftRuntimeLocalGet{Key: "owner"}, time.Second).Result()
 		require.NoError(t, err)
 		require.ErrorIs(t, result.(clusterstore.RaftRuntimeRecord).Err, clusterstore.ErrInvalidCommand)
 		// 应用失败已关闭 WAL；Actor 仍保留可查询的诊断，不再参与共识。

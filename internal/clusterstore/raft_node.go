@@ -32,12 +32,15 @@ const (
 	RaftAppendResponse
 	RaftSnapshotRequest
 	RaftSnapshotResponse
+	RaftReadRequest
+	RaftReadResponse
 )
 
 // RaftMessage 的 Cluster 绑定组名与固定投票成员，不提供认证。
 // Append 的 Index/LogTerm 表示前一条位置/任期；Vote 表示候选者末尾位置/任期。
 // 响应回显 Request；Append 成功时 Match 为本次匹配末尾，失败时 Hint 为重试位置。
 // Snapshot 请求的 Index/LogTerm 与快照末尾一致，确认只表示已持久化，不代表业务已应用。
+// Read 的 Request/Index 绑定一次读取确认及其提交下界，不推进复制或提交进度。
 type RaftMessage struct {
 	Cluster                 [sha256.Size]byte
 	Type                    RaftMessageType
@@ -95,6 +98,7 @@ type RaftNode struct {
 	votes    map[uint64]bool
 	peers    map[uint64]*raftPeer
 	failed   error
+	read     *raftReadRound
 }
 
 func NewRaftNode(storage *RaftStorage) (*RaftNode, error) {
@@ -239,7 +243,7 @@ func (n *RaftNode) Step(m RaftMessage) ([]RaftMessage, error) {
 		return nil, err
 	}
 	if m.Term < n.hard.Term {
-		if m.Type == RaftVoteRequest || m.Type == RaftAppendRequest || m.Type == RaftSnapshotRequest {
+		if m.Type == RaftVoteRequest || m.Type == RaftAppendRequest || m.Type == RaftSnapshotRequest || m.Type == RaftReadRequest {
 			typeID := RaftVoteResponse
 			index := uint64(0)
 			if m.Type == RaftAppendRequest {
@@ -248,6 +252,9 @@ func (n *RaftNode) Step(m RaftMessage) ([]RaftMessage, error) {
 			}
 			if m.Type == RaftSnapshotRequest {
 				typeID, index = RaftSnapshotResponse, m.Index
+			}
+			if m.Type == RaftReadRequest {
+				typeID, index = RaftReadResponse, m.Index
 			}
 			reply := n.message(typeID, m.From, m.Request, index, 0)
 			reply.Reject = true
@@ -274,6 +281,10 @@ func (n *RaftNode) Step(m RaftMessage) ([]RaftMessage, error) {
 		return n.snapshotRequest(m)
 	case RaftSnapshotResponse:
 		return n.snapshotResponse(m)
+	case RaftReadRequest:
+		return n.readRequest(m), nil
+	case RaftReadResponse:
+		n.readResponse(m)
 	}
 	return nil, nil
 }
@@ -554,6 +565,7 @@ func (n *RaftNode) message(kind RaftMessageType, to, request, index, term uint64
 func (n *RaftNode) follow(leader uint64) {
 	n.role, n.leader = RaftFollower, leader
 	n.votes = nil
+	n.read = nil
 	clear(n.peers)
 }
 
@@ -624,6 +636,8 @@ func validRaftMessage(m RaftMessage) bool {
 		return m.Request != 0 && m.Snapshot != nil && m.Index == m.Snapshot.Index && m.LogTerm == m.Snapshot.Term && m.LogTerm <= m.Term && m.Commit == 0 && len(m.Entries) == 0 && !m.Reject && m.Match == 0 && m.Hint == 0 && validateRaftSnapshot(*m.Snapshot) == nil
 	case RaftSnapshotResponse:
 		return m.Request != 0 && m.Index != 0 && m.LogTerm == 0 && m.Commit == 0 && len(m.Entries) == 0 && m.Hint == 0 && (m.Reject && m.Match == 0 || !m.Reject && m.Match == m.Index)
+	case RaftReadRequest, RaftReadResponse:
+		return m.Request != 0 && m.Index != 0 && m.LogTerm == 0 && m.Commit == 0 && len(m.Entries) == 0 && m.Hint == 0 && m.Match == 0 && (m.Type == RaftReadResponse || !m.Reject)
 	case RaftAppendRequest:
 		if m.Request == 0 || m.LogTerm > m.Term || (m.Index == 0) != (m.LogTerm == 0) || len(m.Entries) > maxRaftMessageEntries || m.Reject || m.Match != 0 || m.Hint != 0 {
 			return false

@@ -25,13 +25,15 @@ type RaftActorOptions struct {
 	ElectionMax          time.Duration
 	MaxPendingBytes      uint64 // 本驱动持有的协议字节，不含 Codec、网络队列和恢复状态机分配
 	MaxPendingExecutions int    // 本地等待提交及执行回执的请求数
+	MaxPendingReads      int    // 等待多数派确认及应用的读取请求数，0 使用 1024
 	SnapshotBudget       *SnapshotTransferBudget
 }
 
 type RaftRuntimeStatusRequest struct{}
 type RaftRuntimeCompact struct{}
-type RaftRuntimeRead struct{ After uint64 }
-type RaftRuntimeGet struct{ Key string }
+
+// RaftRuntimeLocalLog 查询本地已提交日志，仅用于恢复诊断。
+type RaftRuntimeLocalLog struct{ After uint64 }
 type RaftRuntimeRoute struct {
 	ID  uint64
 	Ref vivid.ActorRef
@@ -47,14 +49,18 @@ type RaftRuntimeStatus struct {
 	Applied           uint64
 	PendingBytes      uint64
 	PendingExecutions int
+	PendingReads      int
 	Err               error
 }
 
-// RaftRuntimeRecord 只查询本地已应用状态，Index 是应用位置，不保证线性一致或多数派仍可用。
+// RaftRuntimeRecord 的 Index 是读取时的应用位置；返回值与内部状态互不别名。
+// RaftRuntimeGet 成功时 Term 标识本轮多数派确认的任期；本地查询的 Term 为 0。
+// 确认仅适用于本次读取，不保证返回时仍有多数派，也不能授权下一次写入。
 type RaftRuntimeRecord struct {
 	Record
 	Exists bool
 	Index  uint64
+	Term   uint64
 	Err    error
 }
 
@@ -76,6 +82,7 @@ type raftWrite struct {
 	peer      uint64
 	size      uint64
 	keepalive bool
+	read      bool
 	snapshot  SnapshotTransferID
 	offset    uint64
 }
@@ -97,6 +104,9 @@ type RaftActor struct {
 	timer             vivid.ScheduledTask
 	pending           map[uint64]*raftWrite
 	pendingBytes      uint64
+	readPending       map[uint64]*raftWrite // 与复制分别持有每成员一个写出，共用字节额度
+	reads             []raftReadWait
+	readRequest       uint64
 	executions        map[uint64]raftExecutionWait
 	executionTerm     uint64
 	electionDeadline  time.Time
@@ -125,7 +135,10 @@ func NewRaftActor(options RaftActorOptions) (*RaftActor, error) {
 	if options.MaxPendingExecutions == 0 {
 		options.MaxPendingExecutions = 1024
 	}
-	if options.Path == "" || options.HeartbeatInterval <= 0 || options.ElectionMin <= 0 || options.HeartbeatInterval > options.ElectionMin/3 || options.ElectionMax <= options.ElectionMin || options.MaxPendingBytes < maxRaftPacketBytes || options.MaxPendingExecutions < 1 || len(options.Routes) != len(config.Voters) {
+	if options.MaxPendingReads == 0 {
+		options.MaxPendingReads = 1024
+	}
+	if options.Path == "" || options.HeartbeatInterval <= 0 || options.ElectionMin <= 0 || options.HeartbeatInterval > options.ElectionMin/3 || options.ElectionMax <= options.ElectionMin || options.MaxPendingBytes < maxRaftPacketBytes || options.MaxPendingExecutions < 1 || options.MaxPendingReads < 1 || len(options.Routes) != len(config.Voters) {
 		return nil, ErrInvalidRaftConfig
 	}
 	routes := make(map[uint64]vivid.ActorRef, len(options.Routes))
@@ -152,6 +165,7 @@ func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
 	defer func() {
 		a.apply(ctx)
 		a.checkExecutions(ctx)
+		a.checkReads(ctx)
 	}()
 	switch message := ctx.Message().(type) {
 	case *vivid.OnLaunch:
@@ -171,7 +185,7 @@ func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
 				a.status = status
 			}
 		}
-		ctx.Reply(RaftRuntimeStatus{RaftStatus: a.status, Applied: a.applied, PendingBytes: a.pendingBytes, PendingExecutions: len(a.executions), Err: a.err})
+		ctx.Reply(RaftRuntimeStatus{RaftStatus: a.status, Applied: a.applied, PendingBytes: a.pendingBytes, PendingExecutions: len(a.executions), PendingReads: len(a.reads), Err: a.err})
 	case RaftRuntimeExecute:
 		a.execute(ctx, message, time.Now())
 	case RaftRuntimeCompact:
@@ -184,9 +198,11 @@ func (a *RaftActor) OnReceive(ctx vivid.ActorContext) {
 			a.checkFailure()
 		}
 		ctx.Reply(RaftRuntimeResult{Err: err})
-	case RaftRuntimeRead:
+	case RaftRuntimeLocalLog:
 		a.read(ctx, message.After)
 	case RaftRuntimeGet:
+		a.get(ctx, message, time.Now())
+	case RaftRuntimeLocalGet:
 		result := RaftRuntimeRecord{Index: a.applied, Err: a.available()}
 		if result.Err == nil {
 			if !validKey(message.Key) {
@@ -220,6 +236,7 @@ func (a *RaftActor) start(ctx vivid.ActorContext) {
 	}
 	a.lifetime, a.err = &raftActorLifetime{}, nil
 	a.pending, a.pendingBytes = make(map[uint64]*raftWrite), 0
+	a.readPending = make(map[uint64]*raftWrite)
 	if _, ok := ctx.System().(raftTransportSystem); !ok {
 		a.fail(ErrInvalidRaftConfig)
 		return
@@ -293,6 +310,7 @@ func (a *RaftActor) tick(ctx vivid.ActorContext, now time.Time) {
 		return
 	}
 	a.heartbeatDeadline = now.Add(a.opts.HeartbeatInterval)
+	a.messages(ctx, a.node.retryRead())
 	out, err := a.node.Heartbeat()
 	if err != nil {
 		a.fail(err)
@@ -348,7 +366,7 @@ func (a *RaftActor) receive(ctx vivid.ActorContext, data []byte, now time.Time) 
 		}
 		out, err := a.node.Step(message)
 		if err == nil {
-			activity = message.Term == a.node.hard.Term && (message.Type == RaftAppendRequest || message.Type == RaftVoteRequest && len(out) == 1 && !out[0].Reject)
+			activity = message.Term == a.node.hard.Term && (message.Type == RaftAppendRequest || message.Type == RaftReadRequest || message.Type == RaftVoteRequest && len(out) == 1 && !out[0].Reject)
 			a.messages(ctx, out)
 		}
 	}
@@ -379,7 +397,12 @@ func (a *RaftActor) messages(ctx vivid.ActorContext, messages []RaftMessage) {
 }
 
 func (a *RaftActor) message(ctx vivid.ActorContext, message RaftMessage, keepalive bool) {
-	if a.available() != nil || a.pending[message.To] != nil {
+	read := message.Type == RaftReadRequest || message.Type == RaftReadResponse
+	pending := a.pending
+	if read {
+		pending = a.readPending
+	}
+	if a.available() != nil || pending[message.To] != nil {
 		return
 	}
 	size, err := raftPacketSize(message)
@@ -395,7 +418,7 @@ func (a *RaftActor) message(ctx vivid.ActorContext, message RaftMessage, keepali
 		a.fail(err)
 		return
 	}
-	a.send(ctx, &raftWrite{peer: message.To, size: uint64(size), keepalive: keepalive}, data, nil)
+	a.send(ctx, &raftWrite{peer: message.To, size: uint64(size), keepalive: keepalive, read: read}, data, nil)
 }
 
 func (a *RaftActor) frame(ctx vivid.ActorContext, peer uint64, frame *SnapshotFrame) {
@@ -413,7 +436,12 @@ func (a *RaftActor) frame(ctx vivid.ActorContext, peer uint64, frame *SnapshotFr
 }
 
 func (a *RaftActor) send(ctx vivid.ActorContext, write *raftWrite, data []byte, frame *SnapshotFrame) {
-	a.pending[write.peer], a.pendingBytes = write, a.pendingBytes+write.size
+	if write.read {
+		a.readPending[write.peer] = write
+	} else {
+		a.pending[write.peer] = write
+	}
+	a.pendingBytes += write.size
 	system, self, lifetime := ctx.System().(raftTransportSystem), ctx.Ref(), a.lifetime
 	envelop := mailbox.NewEnvelop(false, self, a.opts.Routes[write.peer], &RaftWire{Data: data})
 	system.ResolveMailbox(a.opts.Routes[write.peer]).Enqueue(remoting.NewOwnedEnvelop(envelop, func(bool) {
@@ -425,11 +453,18 @@ func (a *RaftActor) send(ctx vivid.ActorContext, write *raftWrite, data []byte, 
 }
 
 func (a *RaftActor) written(ctx vivid.ActorContext, message raftWriteDone) {
-	if message.lifetime != a.lifetime || a.available() != nil || a.pending[message.write.peer] != message.write {
+	pending := a.pending
+	if message.write.read {
+		pending = a.readPending
+	}
+	if message.lifetime != a.lifetime || a.available() != nil || pending[message.write.peer] != message.write {
 		return
 	}
-	delete(a.pending, message.write.peer)
+	delete(pending, message.write.peer)
 	a.pendingBytes -= message.write.size
+	if message.write.read {
+		return
+	}
 	peer := a.node.peers[message.write.peer]
 	if peer == nil || !peer.snapshot {
 		return
@@ -540,5 +575,6 @@ func (a *RaftActor) close() {
 		a.err = errors.Join(a.err, a.storage.Close())
 	}
 	a.node, a.storage, a.transfer, a.pending, a.pendingBytes = nil, nil, nil, nil, 0
+	a.readPending = nil
 	a.store = nil
 }
